@@ -1,4 +1,4 @@
-# NeuroTool Core
+# BrainStory Core
 
 A high-performance, modular neural dataflow engine for real-time and offline brain signal analysis. Built for speed, extensibility, and clarity.
 
