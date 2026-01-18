@@ -1,0 +1,17 @@
+[package]
+name = "brainstory_engine"
+version = "0.1.0"
+edition = "2026"
+description = "Real-time neural dataflow engine for EEG and biosignal pipelines"
+authors = ["Jonathan Drucker <jondrucker86@gmail.com>"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+crossbeam = "0.8"
+ndarray = "0.15"
+realfft = "3.0"
+biquad = "0.4"  # For filters
+uuid = { version = "1", features = ["v4"] }
