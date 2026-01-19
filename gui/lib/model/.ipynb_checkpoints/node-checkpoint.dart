@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import '../nodes/node_type.dart';
 
 class NodeModel {
   final String id;
-  final String title;
+  final NodeType type;
   Offset position;
   Map<String, dynamic> params;
 
+  String get title => type.title;
+
   NodeModel({
     required this.id,
-    required this.title,
+    required this.type,
     required this.position,
-    this.params = const {},
+    required this.params,
   });
 }

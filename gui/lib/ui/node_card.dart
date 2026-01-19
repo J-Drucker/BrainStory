@@ -54,12 +54,12 @@ class NodeCard extends StatelessWidget {
         if (showPorts) ...[
           const Positioned(
             top: -8,
-            left: 60,
+            left: 0,
             child: _PortDot(),
           ),
           const Positioned(
             bottom: -8,
-            left: 60,
+            left: 0,
             child: _PortDot(),
           ),
         ],
