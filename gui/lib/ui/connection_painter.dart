@@ -9,18 +9,15 @@ class ConnectionPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.tealAccent
+      ..color = Colors.orangeAccent
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
-    final path = Path()
-      ..moveTo(start.dx, start.dy)
-      ..cubicTo(
-        start.dx + 60, start.dy,
-        end.dx - 60, end.dy,
-        end.dx, end.dy,
-      );
-
+    final path = Path();
+    final cp1 = Offset(start.dx + 100, start.dy);
+    final cp2 = Offset(end.dx - 100, end.dy);
+    path.moveTo(start.dx, start.dy);
+    path.cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, end.dx, end.dy);
     canvas.drawPath(path, paint);
   }
 
