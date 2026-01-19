@@ -1,10 +1,11 @@
-// Step 6: Ports top & bottom + wires target port centers
+// Step 7: Add per-node parameters, editable via double-click, and included in JSON export
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../model/node.dart';
 import 'node_card.dart';
 import 'connection_painter.dart';
+import 'node_config.dart';
 
 class BrainStoryCanvas extends StatefulWidget {
   const BrainStoryCanvas({super.key});
@@ -15,8 +16,18 @@ class BrainStoryCanvas extends StatefulWidget {
 
 class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
   final List<NodeModel> nodes = [
-    NodeModel(id: '1', title: 'Bandpass Filter', position: const Offset(100, 150)),
-    NodeModel(id: '2', title: 'PSD', position: const Offset(400, 250)),
+    NodeModel(
+      id: '1',
+      title: 'Bandpass Filter',
+      position: const Offset(100, 150),
+      params: {'low': 1.0, 'high': 40.0, 'steepness': 0.8, 'notch': null},
+    ),
+    NodeModel(
+      id: '2',
+      title: 'PSD',
+      position: const Offset(400, 250),
+      params: {},
+    ),
   ];
 
   String? startConnectionId;
@@ -28,8 +39,24 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title: title,
       position: const Offset(100, 100),
+      params: title == 'Bandpass Filter'
+          ? {'low': 1.0, 'high': 40.0, 'steepness': 0.8, 'notch': null}
+          : {},
     );
     setState(() => nodes.add(newNode));
+  }
+
+  void openConfigDialog(NodeModel node) {
+    if (node.title == 'Bandpass Filter') {
+      showDialog(
+        context: context,
+        builder: (_) => BandpassConfigWidget(
+          initialParams: node.params,
+          onSave: (updated) => setState(() => node.params = updated),
+        ),
+      );
+    }
+    // more types can be added here later
   }
 
   void exportNodesAsJson() {
@@ -38,6 +65,7 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
       'title': node.title,
       'x': node.position.dx,
       'y': node.position.dy,
+      'params': node.params,
     }).toList();
 
     final connectionList = connections.map((c) => {
@@ -119,15 +147,8 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
                     final startNode = nodes.firstWhere((n) => n.id == c['from']);
                     final endNode = nodes.firstWhere((n) => n.id == c['to']);
 
-                    final start = Offset(
-                      startNode.position.dx + 60, // center-ish horizontally
-                      startNode.position.dy - 8,   // top port
-                    );
-
-                    final end = Offset(
-                      endNode.position.dx + 60,
-                      endNode.position.dy + 80, // bottom port (card ~64 tall)
-                    );
+                    final start = Offset(startNode.position.dx + 60, startNode.position.dy + 80);
+                    final end = Offset(endNode.position.dx + 60, endNode.position.dy - 8);
 
                     return CustomPaint(
                       painter: ConnectionPainter(start: start, end: end),
@@ -137,9 +158,7 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
                   ...nodes.map((node) => NodeCard(
                         title: node.title,
                         position: node.position,
-                        onDragEnd: (offset) {
-                          setState(() => node.position = offset);
-                        },
+                        onDragEnd: (offset) => setState(() => node.position = offset),
                         onTap: () {
                           if (startConnectionId == null) {
                             setState(() => startConnectionId = node.id);
@@ -152,6 +171,7 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
                           setState(() => selectedNodeId = node.id);
                         },
                         onLongPress: () => deleteNode(node.id),
+                        onDoubleTap: () => openConfigDialog(node),
                         showPorts: true,
                       )),
                 ],

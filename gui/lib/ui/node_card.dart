@@ -5,6 +5,7 @@ class NodeCard extends StatelessWidget {
   final Offset position;
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
+  final void Function()? onDoubleTap;
   final void Function()? onLongPress;
   final bool showPorts;
 
@@ -14,6 +15,7 @@ class NodeCard extends StatelessWidget {
     required this.position,
     required this.onDragEnd,
     this.onTap,
+    this.onDoubleTap,
     this.onLongPress,
     this.showPorts = false,
   });
@@ -25,6 +27,7 @@ class NodeCard extends StatelessWidget {
       top: position.dy,
       child: GestureDetector(
         onTap: onTap,
+        onDoubleTap: onDoubleTap,
         onSecondaryTap: onLongPress,
         child: Draggable(
           feedback: _buildCard(),
