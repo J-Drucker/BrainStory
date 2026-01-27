@@ -7,6 +7,10 @@ class NodeModel {
   Offset position;
   Map<String, dynamic> params;
 
+  /// Port specs (copied from type at creation)
+  final List<PortSpec> inputPorts;
+  final List<PortSpec> outputPorts;
+
   String get title => type.title;
 
   NodeModel({
@@ -14,5 +18,6 @@ class NodeModel {
     required this.type,
     required this.position,
     required this.params,
-  });
+  })  : inputPorts = List<PortSpec>.from(type.inputs),
+        outputPorts = List<PortSpec>.from(type.outputs);
 }

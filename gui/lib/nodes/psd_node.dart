@@ -1,4 +1,3 @@
-// lib/nodes/psd_node.dart
 import 'package:flutter/material.dart';
 import 'node_type.dart';
 
@@ -10,12 +9,38 @@ class PSDNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => {};
 
   @override
-  Widget buildConfigWidget(Map<String, dynamic> params, void Function(Map<String, dynamic>) onSave) {
-    // No parameters to edit yet
+  List<PortSpec> get inputs => const [
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  List<PortSpec> get outputs => const [
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  Widget buildConfigWidget(
+      Map<String, dynamic> params,
+      void Function(Map<String, dynamic>) onSave,
+      ) {
+    return const _PSDConfigDialog();
+  }
+}
+
+class _PSDConfigDialog extends StatelessWidget {
+  const _PSDConfigDialog();
+
+  @override
+  Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('PSD Node'),
-      content: const Text('No configurable parameters'),
-      actions: [TextButton(onPressed: () => Navigator.pop(onSave as BuildContext), child: const Text('Close'))],
+      content: const Text('No configurable parameters yet.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }
