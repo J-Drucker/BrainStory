@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'node_type.dart';
+import '../model/dataset.dart';
 import '../ui/node_config.dart';
 
 class BandpassNodeType extends NodeType {
@@ -27,11 +28,28 @@ class BandpassNodeType extends NodeType {
   @override
   Widget buildConfigWidget(
       Map<String, dynamic> params,
-      void Function(Map<String, dynamic>) onSave,
-      ) {
+      void Function(Map<String, dynamic>) onSave, {
+        Map<String, Dataset>? datasets,
+      }) {
     return BandpassConfigWidget(
       initialParams: params,
       onSave: onSave,
     );
+  }
+
+  @override
+  @override
+  Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    await Future.delayed(const Duration(milliseconds: 50));
+  }
+
+
+  @override
+  Widget buildBody(
+      Map<String, dynamic> params, {
+        required Map<String, Dataset> datasets,
+        required void Function(void Function()) setState,
+      }) {
+    return const Text('Parameters coming soon');
   }
 }

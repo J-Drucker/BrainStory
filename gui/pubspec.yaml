@@ -9,6 +9,7 @@ dependencies:
   flutter:
     sdk: flutter
   provider: ^6.1.1
+  file_selector: ^1.0.0
 
 flutter:
   uses-material-design: true

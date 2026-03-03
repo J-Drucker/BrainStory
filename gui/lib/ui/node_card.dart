@@ -8,7 +8,12 @@ class NodeCard extends StatelessWidget {
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
   final void Function()? onDoubleTap;
-  final void Function()? onLongPress;
+
+  final void Function()? onRunThis;
+  final void Function()? onRunFromStart;
+  final void Function()? onRunToEnd;
+  final void Function()? onEditParams;
+  final void Function()? onDelete;
 
   final List<PortSpec> inputPorts;
   final List<PortSpec> outputPorts;
@@ -16,16 +21,23 @@ class NodeCard extends StatelessWidget {
   final ValueChanged<int>? onInputPortTap;
   final ValueChanged<int>? onOutputPortTap;
 
+  final Color color;
+
   const NodeCard({
     super.key,
     required this.title,
     required this.position,
     required this.onDragEnd,
-    this.onTap,
-    this.onDoubleTap,
-    this.onLongPress,
     required this.inputPorts,
     required this.outputPorts,
+    required this.color,
+    this.onTap,
+    this.onDoubleTap,
+    this.onRunThis,
+    this.onRunFromStart,
+    this.onRunToEnd,
+    this.onEditParams,
+    this.onDelete,
     this.onInputPortTap,
     this.onOutputPortTap,
   });
@@ -38,10 +50,15 @@ class NodeCard extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         onDoubleTap: onDoubleTap,
-        onSecondaryTap: onLongPress,
+        onSecondaryTapDown: (details) {
+          _showContextMenu(context, details.globalPosition);
+        },
         child: Draggable(
           feedback: _buildCard(),
-          childWhenDragging: Opacity(opacity: 0.5, child: _buildCard()),
+          childWhenDragging: Opacity(
+            opacity: 0.5,
+            child: _buildCard(),
+          ),
           onDragEnd: (details) => onDragEnd(details.offset),
           child: _buildCard(),
         ),
@@ -55,11 +72,13 @@ class NodeCard extends StatelessWidget {
       children: [
         if (inputPorts.isNotEmpty) _buildPortRow(inputPorts, isInput: true),
         Card(
+          color: color,
           elevation: 6,
-          color: Colors.blueGrey[800],
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
             child: Text(
               title,
               style: const TextStyle(color: Colors.white),
@@ -93,6 +112,47 @@ class NodeCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _showContextMenu(BuildContext context, Offset pos) async {
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        pos.dx,
+        pos.dy,
+        pos.dx + 1,
+        pos.dy + 1,
+      ),
+      items: [
+        const PopupMenuItem(value: 'run_this', child: Text('Run This Step')),
+        const PopupMenuItem(value: 'run_start', child: Text('Run From Start')),
+        const PopupMenuItem(value: 'run_end', child: Text('Run To End')),
+        const PopupMenuItem(value: 'edit', child: Text('Edit Parameters')),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Text('Delete Node', style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    );
+
+    switch (choice) {
+      case 'run_this':
+        onRunThis?.call();
+        break;
+      case 'run_start':
+        onRunFromStart?.call();
+        break;
+      case 'run_end':
+        onRunToEnd?.call();
+        break;
+      case 'edit':
+        onEditParams?.call();
+        break;
+      case 'delete':
+        onDelete?.call();
+        break;
+    }
   }
 }
 
@@ -136,20 +196,8 @@ class _PortWidget extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            _symbol,
-            style: const TextStyle(
-              fontSize: 16,
-              color: Colors.orange,
-            ),
-          ),
-          Text(
-            _label,
-            style: const TextStyle(
-              fontSize: 10,
-              color: Colors.white70,
-            ),
-          ),
+          Text(_symbol, style: const TextStyle(fontSize: 16, color: Colors.orange)),
+          Text(_label, style: const TextStyle(fontSize: 10, color: Colors.white70)),
         ],
       ),
     );
