@@ -275,7 +275,11 @@ class CanvasLogic {
                 _markDescendantsStale(node.id, dataset.id);
               }
               update();
-            }, datasets: datasets),
+            },
+              datasets: _datasetsById(),
+              availableDatasetIds: _availableDatasetIdsForNode(node),
+              processedDatasetStates: _processedDatasetStatesForNode(node),
+            ),
           );
         },
         onRunThis: () async {
@@ -504,16 +508,10 @@ class CanvasLogic {
     }
 
     if (node.type is ImportNodeType) {
-      final List<dynamic> selectedDatasetIds =
-          (node.params['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[]);
-      return datasets.values
-          .where(
-            (Dataset dataset) =>
-                selectedDatasetIds.contains(dataset.id) ||
-                selectedDatasetIds.contains(dataset.path),
-          )
+      final Set<String> availableDatasetIds = datasets.values
           .map((Dataset dataset) => dataset.id)
           .toSet();
+      return _selectedDatasetIdsForNode(node, availableDatasetIds);
     }
 
     final Set<String> upstreamImports = <String>{};
@@ -521,7 +519,7 @@ class CanvasLogic {
     _collectUpstreamImports(node.id, upstreamImports, visited);
 
     if (upstreamImports.isEmpty) {
-      return datasets.values.map((Dataset dataset) => dataset.id).toSet();
+      return <String>{};
     }
 
     final Set<String> datasetIds = <String>{};
@@ -538,7 +536,72 @@ class CanvasLogic {
         }
       }
     }
-    return datasetIds;
+    return _selectedDatasetIdsForNode(node, datasetIds);
+  }
+
+  Map<String, Dataset> _datasetsById() {
+    return <String, Dataset>{
+      for (final Dataset dataset in datasets.values) dataset.id: dataset,
+    };
+  }
+
+  Set<String> _availableDatasetIdsForNode(NodeModel node) {
+    if (node.type is ImportNodeType) {
+      return datasets.values.map((Dataset dataset) => dataset.id).toSet();
+    }
+
+    final List<NodeModel> parents = _immediateParents(node.id);
+    if (parents.isEmpty) {
+      return <String>{};
+    }
+
+    return datasets.values
+        .where((Dataset dataset) {
+          return parents.every(
+            (NodeModel parent) => parent.datasetStates[dataset.id] == DatasetState.done,
+          );
+        })
+        .map((Dataset dataset) => dataset.id)
+        .toSet();
+  }
+
+  Map<String, DatasetState> _processedDatasetStatesForNode(NodeModel node) {
+    return <String, DatasetState>{
+      for (final Dataset dataset in datasets.values)
+        dataset.id: node.datasetStates[dataset.id] ?? DatasetState.notReady,
+    };
+  }
+
+  Set<String> _selectedDatasetIdsForNode(
+    NodeModel node,
+    Set<String> availableDatasetIds,
+  ) {
+    final List<dynamic> selectedDatasetIds =
+        (node.params['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[]);
+    if (selectedDatasetIds.isEmpty) {
+      return Set<String>.from(availableDatasetIds);
+    }
+
+    final Set<String> resolvedSelection = <String>{};
+    for (final Dataset dataset in datasets.values) {
+      if (selectedDatasetIds.contains(dataset.id) ||
+          selectedDatasetIds.contains(dataset.path)) {
+        resolvedSelection.add(dataset.id);
+      }
+    }
+    return resolvedSelection.intersection(availableDatasetIds);
+  }
+
+  List<NodeModel> _immediateParents(String nodeId) {
+    final List<NodeModel> parents = <NodeModel>[];
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['toNode'] != nodeId) continue;
+      final NodeModel? parent = _findNode(connection['fromNode'] as String);
+      if (parent != null) {
+        parents.add(parent);
+      }
+    }
+    return parents;
   }
 
   List<NodeModel> _orderedNodes(Set<String> nodeIds) {
