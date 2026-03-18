@@ -4,6 +4,43 @@ import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 
 enum PortType { signal, metadata, markers }
+enum NodeCategory { import, transform, markerFunctions, visualize, export, other }
+
+extension NodeCategoryPresentation on NodeCategory {
+  String get label {
+    switch (this) {
+      case NodeCategory.import:
+        return 'Import';
+      case NodeCategory.transform:
+        return 'Transform';
+      case NodeCategory.markerFunctions:
+        return 'Markers and Metadata';
+      case NodeCategory.visualize:
+        return 'Visualize';
+      case NodeCategory.export:
+        return 'Export';
+      case NodeCategory.other:
+        return 'Other';
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case NodeCategory.import:
+        return Colors.teal;
+      case NodeCategory.transform:
+        return Colors.indigo;
+      case NodeCategory.markerFunctions:
+        return Colors.pinkAccent;
+      case NodeCategory.visualize:
+        return Colors.orange;
+      case NodeCategory.export:
+        return Colors.green;
+      case NodeCategory.other:
+        return Colors.grey;
+    }
+  }
+}
 
 class PortSpec {
   final String name;
@@ -17,6 +54,7 @@ class PortSpec {
 
 abstract class NodeType {
   String get title;
+  NodeCategory get category => NodeCategory.other;
   Map<String, dynamic> get defaultParams;
 
   List<PortSpec> get inputs;

@@ -2,12 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import 'node_type.dart';
 
 class BandpassNodeType extends NodeType {
   @override
   String get title => 'Bandpass Filter';
+
+  @override
+  NodeCategory get category => NodeCategory.transform;
 
   @override
   Map<String, dynamic> get defaultParams => {
@@ -29,11 +33,12 @@ class BandpassNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
-    final List<double>? samples = dataset.ram['signal.samples'] as List<double>?;
-    final double? sampleRate = dataset.ram['signal.fs'] as double?;
-    if (samples == null || samples.isEmpty || sampleRate == null) {
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries == null || timeSeries.samples.isEmpty) {
       return;
     }
+    final List<double> samples = timeSeries.samples;
+    final double sampleRate = timeSeries.sampleRate;
 
     final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
     final double high = (params['high'] as num?)?.toDouble() ?? 40.0;
@@ -44,13 +49,18 @@ class BandpassNodeType extends NodeType {
       'signal.originalSamples',
       () => List<double>.from(samples),
     );
-    dataset.ram['signal.samples'] = applyBandpassFilter(
-      samples,
+    dataset.timeSeries = TimeSeriesData(
+      samples: applyBandpassFilter(
+        samples,
+        sampleRate: sampleRate,
+        lowCutHz: low,
+        highCutHz: high,
+        steepness: steepness,
+        notchHz: notch,
+      ),
       sampleRate: sampleRate,
-      lowCutHz: low,
-      highCutHz: high,
-      steepness: steepness,
-      notchHz: notch,
+      channelLabels: timeSeries.channelLabels,
+      source: timeSeries.source,
     );
     dataset.ram['bandpass.params'] = <String, dynamic>{
       'low': low,

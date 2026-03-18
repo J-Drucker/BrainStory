@@ -8,11 +8,15 @@ class VisualizationNodeType extends NodeType {
   String get title => 'EEG Visualization';
 
   @override
+  NodeCategory get category => NodeCategory.visualize;
+
+  @override
   Map<String, dynamic> get defaultParams => {
     'backend': 'mne',
     'view': 'raw',
     'window_sec': 5.0,
     'channel': 'all',
+    'display_mode': 'panel',
   };
 
   @override
@@ -34,6 +38,7 @@ class VisualizationNodeType extends NodeType {
     params.putIfAbsent('view', () => 'raw');
     params.putIfAbsent('window_sec', () => 5.0);
     params.putIfAbsent('channel', () => 'all');
+    params.putIfAbsent('display_mode', () => 'panel');
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -66,6 +71,36 @@ class VisualizationNodeType extends NodeType {
               params['view'] = value;
             });
           },
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Display',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        RadioGroup<String>(
+          groupValue: params['display_mode']?.toString() ?? 'panel',
+          onChanged: (String? value) {
+            if (value == null) {
+              return;
+            }
+            setState(() {
+              params['display_mode'] = value;
+            });
+          },
+          child: Column(
+            children: const <Widget>[
+              RadioListTile<String>(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Show in panel'),
+                value: 'panel',
+              ),
+              RadioListTile<String>(
+                contentPadding: EdgeInsets.zero,
+                title: Text('New window'),
+                value: 'window',
+              ),
+            ],
+          ),
         ),
         TextFormField(
           initialValue: params['window_sec']?.toString() ?? '5.0',

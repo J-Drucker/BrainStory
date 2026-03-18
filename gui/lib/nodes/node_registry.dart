@@ -4,37 +4,29 @@ import 'import_node.dart';
 import 'bandpass_node.dart';
 import 'psd_node.dart';
 import 'debug_output_node.dart';
+import 'export_edf_node.dart';
 
 enum NodeGroup {
-  input,
-  output,
-  signalProcessing,
-  metadataEdit,
-  markerEdit,
-  view,
+  import,
+  transform,
+  markerFunctions,
+  visualize,
   export,
-  ml,
 }
 
 extension NodeGroupLabel on NodeGroup {
   String get label {
     switch (this) {
-      case NodeGroup.input:
-        return 'Input';
-      case NodeGroup.output:
-        return 'Output';
-      case NodeGroup.signalProcessing:
-        return 'Signal Processing';
-      case NodeGroup.metadataEdit:
-        return 'Metadata Edit';
-      case NodeGroup.markerEdit:
-        return 'Marker Edit';
-      case NodeGroup.view:
-        return 'View';
+      case NodeGroup.import:
+        return 'Import';
+      case NodeGroup.transform:
+        return 'Transform';
+      case NodeGroup.markerFunctions:
+        return 'Markers and Metadata';
+      case NodeGroup.visualize:
+        return 'Visualize';
       case NodeGroup.export:
         return 'Export';
-      case NodeGroup.ml:
-        return 'ML';
     }
   }
 }
@@ -53,25 +45,25 @@ class NodeRegistryEntry {
 /// Node (overall) -> Group (Input/Output/...) -> Type (Import/PSD/etc)
 class NodeRegistry {
   static final List<NodeGroup> groupOrder = [
-    NodeGroup.input,
-    NodeGroup.output,
-    NodeGroup.signalProcessing,
-    NodeGroup.metadataEdit,
-    NodeGroup.markerEdit,
-    NodeGroup.view,
+    NodeGroup.import,
+    NodeGroup.transform,
+    NodeGroup.markerFunctions,
+    NodeGroup.visualize,
     NodeGroup.export,
-    NodeGroup.ml,
   ];
 
   static final List<NodeRegistryEntry> entries = [
     // Input
-    NodeRegistryEntry(group: NodeGroup.input, create: () => ImportNodeType()),
+    NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
 
-    // Signal Processing
-    NodeRegistryEntry(group: NodeGroup.signalProcessing, create: () => BandpassNodeType()),
-    NodeRegistryEntry(group: NodeGroup.signalProcessing, create: () => PSDNodeType()),
+    // Transform
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => BandpassNodeType()),
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
 
-    // Output
-    NodeRegistryEntry(group: NodeGroup.output, create: () => DebugOutputNodeType()),
+    // Visualize
+    NodeRegistryEntry(group: NodeGroup.visualize, create: () => DebugOutputNodeType()),
+
+    // Export
+    NodeRegistryEntry(group: NodeGroup.export, create: () => ExportEdfNodeType()),
   ];
 }

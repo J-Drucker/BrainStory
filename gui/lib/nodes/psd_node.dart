@@ -2,12 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import 'node_type.dart';
 
 class PSDNodeType extends NodeType {
   @override
   String get title => 'PSD';
+
+  @override
+  NodeCategory get category => NodeCategory.transform;
 
   @override
   Map<String, dynamic> get defaultParams => {
@@ -94,13 +98,13 @@ class PSDNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
-    final samples = dataset.ram['signal.samples'] as List<double>?;
-    final fs = dataset.ram['signal.fs'] as double?;
-
-    if (samples == null || fs == null) {
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries == null) {
       // No signal loaded yet
       return;
     }
+    final List<double> samples = timeSeries.samples;
+    final double fs = timeSeries.sampleRate;
 
     final fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
     final fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
@@ -113,9 +117,12 @@ class PSDNodeType extends NodeType {
       averageSegments: mode != 'segments',
     );
 
-    dataset.ram['psd.freqs'] = spectrum.freqs;
-    dataset.ram['psd.power'] = spectrum.power;
-    dataset.ram['psd.segmentCount'] = spectrum.segmentCount;
+    dataset.spectrum = FrequencySpectrumData(
+      frequencies: spectrum.freqs,
+      power: spectrum.power,
+      segmentCount: spectrum.segmentCount,
+      source: timeSeries.source,
+    );
   }
 }
 

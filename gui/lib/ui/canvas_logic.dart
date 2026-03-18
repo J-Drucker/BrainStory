@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/debug_output_node.dart';
+import '../nodes/export_edf_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
@@ -25,6 +27,7 @@ class CanvasLogic {
     PSDNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
+    ExportEdfNodeType(),
   ];
 
   final List<NodeModel> nodes = <NodeModel>[];
@@ -33,8 +36,8 @@ class CanvasLogic {
   /// Connection schema:
   /// {
   ///   fromNode: String,
-  ///   fromPort: int,
   ///   toNode: String,
+  ///   fromPort: int,
   ///   toPort: int,
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
@@ -42,21 +45,47 @@ class CanvasLogic {
   String? selectedNodeId;
 
   String? _pendingFromNodeId;
-  int? _pendingFromPortIndex;
-  PortType? _pendingFromPortType;
+  final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
 
   static const double _cardWidth = 160;
-  static const double _cardHeight = 80;
+  static const double _cardHeight = 72;
+  static const double _spawnGap = 48;
+  static const double _canvasPadding = 120;
+  static const double _gridSize = 24;
 
   void addNode(NodeType type) {
+    final Offset spawnPosition = _nextSpawnPosition();
     nodes.add(
       NodeModel(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
         type: type,
-        position: const Offset(100, 100),
+        position: spawnPosition,
         params: Map<String, dynamic>.from(type.defaultParams),
       ),
     );
+  }
+
+  Offset snapToGrid(Offset offset) {
+    return Offset(
+      _snapCoordinate(offset.dx),
+      _snapCoordinate(offset.dy),
+    );
+  }
+
+  Size canvasSizeForViewport(Size viewport) {
+    double width = viewport.width;
+    double height = viewport.height;
+
+    for (final NodeModel node in nodes) {
+      width = width < node.position.dx + _cardWidth + _canvasPadding
+          ? node.position.dx + _cardWidth + _canvasPadding
+          : width;
+      height = height < node.position.dy + _cardHeight + _canvasPadding
+          ? node.position.dy + _cardHeight + _canvasPadding
+          : height;
+    }
+
+    return Size(width, height);
   }
 
   void clearAll() {
@@ -104,8 +133,6 @@ class CanvasLogic {
 
   void _clearPendingConnection() {
     _pendingFromNodeId = null;
-    _pendingFromPortIndex = null;
-    _pendingFromPortType = null;
   }
 
   void export(BuildContext context) {
@@ -160,12 +187,21 @@ class CanvasLogic {
   }
 
   Widget sidebar({
+    required double width,
     required VoidCallback export,
     required VoidCallback clear,
     required VoidCallback update,
   }) {
+    final List<NodeCategory> categoryOrder = <NodeCategory>[
+      NodeCategory.import,
+      NodeCategory.transform,
+      NodeCategory.markerFunctions,
+      NodeCategory.visualize,
+      NodeCategory.export,
+    ];
+
     return Container(
-      width: 220,
+      width: width,
       color: Colors.grey[900],
       child: Column(
         children: <Widget>[
@@ -175,23 +211,20 @@ class CanvasLogic {
             style: TextStyle(color: Colors.white, fontSize: 18),
           ),
           const SizedBox(height: 10),
-          for (final NodeType type in availableNodes)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-              child: SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    addNode(type);
-                    update();
-                  },
-                  child: Text('+ ${type.title}'),
-                ),
-              ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              children: <Widget>[
+                for (final NodeCategory category in categoryOrder)
+                  ..._sidebarCategorySection(
+                    category: category,
+                    update: update,
+                  ),
+              ],
             ),
-          const Spacer(),
+          ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -202,7 +235,7 @@ class CanvasLogic {
           ),
           const SizedBox(height: 10),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -217,6 +250,91 @@ class CanvasLogic {
     );
   }
 
+  List<Widget> _sidebarCategorySection({
+    required NodeCategory category,
+    required VoidCallback update,
+  }) {
+    final List<NodeType> categoryNodes = availableNodes
+        .where((NodeType node) => node.category == category)
+        .toList(growable: false);
+    final bool collapsed = _collapsedCategories[category] ?? false;
+
+    return <Widget>[
+      InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {
+          _collapsedCategories[category] = !collapsed;
+          update();
+        },
+        child: Padding(
+          padding: const EdgeInsets.only(top: 12, bottom: 8),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                collapsed ? Icons.chevron_right : Icons.expand_more,
+                color: category.color,
+                size: 20,
+              ),
+              const SizedBox(width: 4),
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: category.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  category.label,
+                  style: TextStyle(
+                    color: category.color,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      if (!collapsed && categoryNodes.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(left: 32, right: 4, bottom: 6),
+          child: Text(
+            'No nodes yet',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.45),
+              fontSize: 12,
+            ),
+          ),
+        ),
+      if (!collapsed)
+        for (final NodeType type in categoryNodes)
+          Padding(
+            padding: const EdgeInsets.only(left: 28, bottom: 6),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: category.color.withValues(alpha: 0.18),
+                  foregroundColor: Colors.white,
+                  side: BorderSide(
+                    color: category.color.withValues(alpha: 0.35),
+                  ),
+                ),
+                onPressed: () {
+                  addNode(type);
+                  update();
+                },
+                child: Text('+ ${type.title}'),
+              ),
+            ),
+          ),
+    ];
+  }
+
   List<Widget> connectionWidgets() {
     return connections.map((Map<String, dynamic> connection) {
       final NodeModel? fromNode = _findNode(connection['fromNode'] as String);
@@ -226,11 +344,8 @@ class CanvasLogic {
         return const SizedBox.shrink();
       }
 
-      final int fromPort = connection['fromPort'] as int;
-      final int toPort = connection['toPort'] as int;
-
-      final Offset start = _outputPortPosition(fromNode, fromPort);
-      final Offset end = _inputPortPosition(toNode, toPort);
+      final Offset start = _outputAnchor(fromNode, toNode);
+      final Offset end = _inputAnchor(fromNode, toNode);
 
       return CustomPaint(
         painter: ConnectionPainter(start: start, end: end),
@@ -243,13 +358,12 @@ class CanvasLogic {
     required BuildContext context,
     required VoidCallback update,
     required Offset Function(Offset globalOffset) translateDropOffset,
+    required void Function(NodeModel node) openVisualizationWindow,
   }) {
     return nodes.map((NodeModel node) {
       return NodeCard(
         title: node.title,
         position: node.position,
-        inputPorts: node.inputPorts,
-        outputPorts: node.outputPorts,
         color: _nodeColor(node),
         statusLabel: _statusLabel(node),
         onDragEnd: (Offset globalOffset) {
@@ -257,8 +371,16 @@ class CanvasLogic {
           update();
         },
         onTap: () {
-          selectedNodeId = node.id;
+          _handleNodeTap(node);
           update();
+        },
+        onDoubleTap: () {
+          selectedNodeId = node.id;
+          _openNodeEditor(
+            context: context,
+            node: node,
+            update: update,
+          );
         },
         onDelete: () {
           selectedNodeId = node.id;
@@ -266,26 +388,20 @@ class CanvasLogic {
           update();
         },
         onEditParams: () {
-          showDialog<void>(
+          _openNodeEditor(
             context: context,
-            builder: (_) => node.type.buildConfigWidget(node.params, (params) {
-              node.params = params;
-              for (final Dataset dataset in datasets.values) {
-                node.datasetStates[dataset.id] = DatasetState.stale;
-                _markDescendantsStale(node.id, dataset.id);
-              }
-              update();
-            },
-              datasets: _datasetsById(),
-              availableDatasetIds: _availableDatasetIdsForNode(node),
-              processedDatasetStates: _processedDatasetStatesForNode(node),
-            ),
+            node: node,
+            update: update,
           );
         },
         onRunThis: () async {
           try {
             await runThisStep(node.id);
             update();
+            if (node.type is VisualizationNodeType &&
+                visualizationDisplayMode(node) == 'window') {
+              openVisualizationWindow(node);
+            }
             if (context.mounted) {
               _showStatusSnackBar(
                 context,
@@ -304,6 +420,10 @@ class CanvasLogic {
           try {
             await runFromStart(node.id);
             update();
+            if (node.type is VisualizationNodeType &&
+                visualizationDisplayMode(node) == 'window') {
+              openVisualizationWindow(node);
+            }
             if (context.mounted) {
               _showStatusSnackBar(
                 context,
@@ -322,6 +442,10 @@ class CanvasLogic {
           try {
             await runToEnd(node.id);
             update();
+            if (node.type is VisualizationNodeType &&
+                visualizationDisplayMode(node) == 'window') {
+              openVisualizationWindow(node);
+            }
             if (context.mounted) {
               _showStatusSnackBar(
                 context,
@@ -336,75 +460,57 @@ class CanvasLogic {
             }
           }
         },
-        onInputPortTap: (int portIndex) {
-          _tryCompleteConnection(
-            toNode: node,
-            toPortIndex: portIndex,
-            onChanged: update,
-          );
-        },
-        onOutputPortTap: (int portIndex) {
-          _startConnectionFrom(
-            node: node,
-            outputPortIndex: portIndex,
-          );
-          update();
-        },
       );
     }).toList();
   }
 
-  void _startConnectionFrom({
-    required NodeModel node,
-    required int outputPortIndex,
-  }) {
-    if (outputPortIndex < 0 || outputPortIndex >= node.outputPorts.length) {
+  void _handleNodeTap(NodeModel node) {
+    if (_pendingFromNodeId == null) {
+      selectedNodeId = node.id;
+      if (node.outputPorts.isNotEmpty) {
+        _pendingFromNodeId = node.id;
+      }
+      return;
+    }
+
+    if (_pendingFromNodeId == node.id) {
+      selectedNodeId = node.id;
       _clearPendingConnection();
       return;
     }
 
-    _pendingFromNodeId = node.id;
-    _pendingFromPortIndex = outputPortIndex;
-    _pendingFromPortType = node.outputPorts[outputPortIndex].type;
-  }
-
-  void _tryCompleteConnection({
-    required NodeModel toNode,
-    required int toPortIndex,
-    required VoidCallback onChanged,
-  }) {
-    if (_pendingFromNodeId == null ||
-        _pendingFromPortIndex == null ||
-        _pendingFromPortType == null) {
-      return;
-    }
-
-    if (toPortIndex < 0 || toPortIndex >= toNode.inputPorts.length) {
+    final NodeModel? fromNode = _findNode(_pendingFromNodeId!);
+    if (fromNode == null) {
+      selectedNodeId = node.id;
       _clearPendingConnection();
       return;
     }
 
-    if (_pendingFromNodeId == toNode.id) {
-      _clearPendingConnection();
-      return;
-    }
+    final Map<String, int>? portPair = _matchingPortPair(fromNode, node);
+    final bool validDirection = _isValidDownstreamPlacement(fromNode, node);
+    final bool introducesCycle =
+        _collectDescendantsInclusive(node.id).contains(fromNode.id);
 
-    final PortSpec targetPort = toNode.inputPorts[toPortIndex];
-    if (targetPort.type != _pendingFromPortType) {
-      _clearPendingConnection();
+    if (portPair == null || !validDirection || introducesCycle) {
+      selectedNodeId = node.id;
+      if (node.outputPorts.isNotEmpty) {
+        _pendingFromNodeId = node.id;
+      } else {
+        _clearPendingConnection();
+      }
       return;
     }
 
     final Map<String, dynamic> nextConnection = <String, dynamic>{
-      'fromNode': _pendingFromNodeId!,
-      'fromPort': _pendingFromPortIndex!,
-      'toNode': toNode.id,
-      'toPort': toPortIndex,
+      'fromNode': fromNode.id,
+      'fromPort': portPair['fromPort']!,
+      'toNode': node.id,
+      'toPort': portPair['toPort']!,
     };
 
     final bool duplicate = connections.any(
-          (connection) =>
-      connection['fromNode'] == nextConnection['fromNode'] &&
+      (Map<String, dynamic> connection) =>
+          connection['fromNode'] == nextConnection['fromNode'] &&
           connection['fromPort'] == nextConnection['fromPort'] &&
           connection['toNode'] == nextConnection['toNode'] &&
           connection['toPort'] == nextConnection['toPort'],
@@ -412,10 +518,14 @@ class CanvasLogic {
 
     if (!duplicate) {
       connections.add(nextConnection);
-      onChanged();
     }
 
-    _clearPendingConnection();
+    selectedNodeId = node.id;
+    if (node.outputPorts.isNotEmpty) {
+      _pendingFromNodeId = node.id;
+    } else {
+      _clearPendingConnection();
+    }
   }
 
   NodeModel? _findNode(String id) {
@@ -423,6 +533,28 @@ class CanvasLogic {
       if (node.id == id) return node;
     }
     return null;
+  }
+
+  void _openNodeEditor({
+    required BuildContext context,
+    required NodeModel node,
+    required VoidCallback update,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => node.type.buildConfigWidget(node.params, (params) {
+        node.params = params;
+        for (final Dataset dataset in datasets.values) {
+          node.datasetStates[dataset.id] = DatasetState.stale;
+          _markDescendantsStale(node.id, dataset.id);
+        }
+        update();
+      },
+        datasets: _datasetsById(),
+        availableDatasetIds: _availableDatasetIdsForNode(node),
+        processedDatasetStates: _processedDatasetStatesForNode(node),
+      ),
+    );
   }
 
   NodeModel? get selectedNode =>
@@ -442,11 +574,27 @@ class CanvasLogic {
       return <Dataset>[];
     }
 
+    return datasetsForVisualizationNode(node.id);
+  }
+
+  List<Dataset> datasetsForVisualizationNode(String nodeId) {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null || node.type is! VisualizationNodeType) {
+      return <Dataset>[];
+    }
+
     final Set<String> datasetIds = _datasetsForNode(node);
     return datasets.values
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
         .toList()
       ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+  }
+
+  String visualizationDisplayMode(NodeModel? node) {
+    if (node == null || node.type is! VisualizationNodeType) {
+      return 'panel';
+    }
+    return (node.params['display_mode'] ?? 'panel').toString();
   }
 
   int _lastRunDatasetCount = 0;
@@ -731,22 +879,31 @@ class CanvasLogic {
     }
 
     switch (node.type.title) {
-      case 'Import':
-        return Colors.teal.shade700;
-      case 'Bandpass Filter':
-        return Colors.indigo.shade700;
-      case 'PSD':
-        return Colors.deepPurple.shade700;
-      case 'EEG Visualization':
-        return Colors.orange.shade700;
-      case 'Debug Output':
-        return Colors.brown.shade700;
       default:
+        break;
+    }
+
+    switch (node.type.category) {
+      case NodeCategory.import:
+        return Colors.teal.shade700;
+      case NodeCategory.transform:
+        return Colors.indigo.shade700;
+      case NodeCategory.markerFunctions:
+        return Colors.pink.shade700;
+      case NodeCategory.visualize:
+        return Colors.orange.shade700;
+      case NodeCategory.export:
+        return Colors.green.shade700;
+      case NodeCategory.other:
         return Colors.grey.shade800;
     }
   }
 
   String? _statusLabel(NodeModel node) {
+    if (_pendingFromNodeId == node.id) {
+      return 'Connecting...';
+    }
+
     switch (node.visualState) {
       case DatasetState.notReady:
         return null;
@@ -759,19 +916,91 @@ class CanvasLogic {
     }
   }
 
-  Offset _outputPortPosition(NodeModel node, int portIndex) {
-    final int count = node.outputPorts.length;
-    final double step = _cardWidth / (count + 1);
-    final double x = node.position.dx + step * (portIndex + 1);
-    final double y = node.position.dy + _cardHeight + 4;
-    return Offset(x, y);
+  Offset _nextSpawnPosition() {
+    if (nodes.isEmpty) {
+      return snapToGrid(const Offset(100, 100));
+    }
+
+    NodeModel lowestNode = nodes.first;
+    for (final NodeModel node in nodes.skip(1)) {
+      if (node.position.dy > lowestNode.position.dy) {
+        lowestNode = node;
+      }
+    }
+
+    return snapToGrid(
+      Offset(
+        lowestNode.position.dx,
+        lowestNode.position.dy + _cardHeight + _spawnGap,
+      ),
+    );
   }
 
-  Offset _inputPortPosition(NodeModel node, int portIndex) {
-    final int count = node.inputPorts.length;
-    final double step = _cardWidth / (count + 1);
-    final double x = node.position.dx + step * (portIndex + 1);
-    final double y = node.position.dy - 4;
-    return Offset(x, y);
+  double _snapCoordinate(double value) {
+    return math.max(
+      0,
+      (value / _gridSize).roundToDouble() * _gridSize,
+    ).toDouble();
+  }
+
+  Map<String, int>? _matchingPortPair(NodeModel fromNode, NodeModel toNode) {
+    for (int fromPortIndex = 0;
+        fromPortIndex < fromNode.outputPorts.length;
+        fromPortIndex++) {
+      final PortType outputType = fromNode.outputPorts[fromPortIndex].type;
+      for (int toPortIndex = 0;
+          toPortIndex < toNode.inputPorts.length;
+          toPortIndex++) {
+        if (toNode.inputPorts[toPortIndex].type == outputType) {
+          return <String, int>{
+            'fromPort': fromPortIndex,
+            'toPort': toPortIndex,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  bool _isValidDownstreamPlacement(NodeModel fromNode, NodeModel toNode) {
+    final double dx = toNode.position.dx - fromNode.position.dx;
+    final double dy = toNode.position.dy - fromNode.position.dy;
+    return dx >= 24 || dy >= 24;
+  }
+
+  Offset _outputAnchor(NodeModel fromNode, NodeModel toNode) {
+    final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
+    if (preferVertical) {
+      return Offset(
+        fromNode.position.dx + (_cardWidth / 2),
+        fromNode.position.dy + _cardHeight,
+      );
+    }
+
+    return Offset(
+      fromNode.position.dx + _cardWidth,
+      fromNode.position.dy + (_cardHeight / 2),
+    );
+  }
+
+  Offset _inputAnchor(NodeModel fromNode, NodeModel toNode) {
+    final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
+    if (preferVertical) {
+      return Offset(
+        toNode.position.dx + (_cardWidth / 2),
+        toNode.position.dy,
+      );
+    }
+
+    return Offset(
+      toNode.position.dx,
+      toNode.position.dy + (_cardHeight / 2),
+    );
+  }
+
+  bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
+    final double dx = (toNode.position.dx - fromNode.position.dx).abs();
+    final double dy = toNode.position.dy - fromNode.position.dy;
+    return dy > 0 && dy >= dx;
   }
 }

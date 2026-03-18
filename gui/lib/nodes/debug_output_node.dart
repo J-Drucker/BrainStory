@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
-import 'node_type.dart';
+
+import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import 'node_type.dart';
 
 class DebugOutputNodeType extends NodeType {
   @override
   String get title => 'Debug Output';
+
+  @override
+  NodeCategory get category => NodeCategory.visualize;
 
   @override
   Map<String, dynamic> get defaultParams => {
@@ -76,8 +81,9 @@ class DebugOutputNodeType extends NodeType {
     final lines = ((params['lines'] as num?)?.toInt() ?? 5).clamp(1, 200);
 
     if (artifact == 'signal') {
-      final fs = dataset.ram['signal.fs'];
-      final samples = dataset.ram['signal.samples'];
+      final TimeSeriesData? timeSeries = dataset.timeSeries;
+      final fs = timeSeries?.sampleRate;
+      final samples = timeSeries?.samples;
 
       debugPrint('--- Debug Output: SIGNAL for ${dataset.label} (${dataset.id}) ---');
       debugPrint('fs: $fs');
@@ -95,8 +101,9 @@ class DebugOutputNodeType extends NodeType {
     }
 
     if (artifact == 'psd') {
-      final freqs = dataset.ram['psd.freqs'];
-      final power = dataset.ram['psd.power'];
+      final FrequencySpectrumData? spectrum = dataset.spectrum;
+      final freqs = spectrum?.frequencies;
+      final power = spectrum?.power;
 
       debugPrint('--- Debug Output: PSD for ${dataset.label} (${dataset.id}) ---');
       if (freqs is List<double> && power is List<double>) {
