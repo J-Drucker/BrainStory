@@ -11,17 +11,7 @@ class BrainStoryCanvas extends StatefulWidget {
 }
 
 class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
-  late final CanvasLogic logic;
-
-  @override
-  void initState() {
-    super.initState();
-    logic = CanvasLogic(onUpdate: _handleUpdate);
-  }
-
-  void _handleUpdate() {
-    setState(() {});
-  }
+  late final CanvasLogic logic = CanvasLogic();
 
   @override
   Widget build(BuildContext context) {

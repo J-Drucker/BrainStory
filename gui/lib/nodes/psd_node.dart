@@ -70,16 +70,19 @@ class PSDNodeType extends NodeType {
         ),
         const SizedBox(height: 20),
         const Text('Output', style: TextStyle(fontWeight: FontWeight.bold)),
-        RadioListTile<String>(
-          title: const Text('As segments'),
-          value: 'segments',
-          groupValue: params['outputMode'],
-          onChanged: (v) => setState(() => params['outputMode'] = v),
-        ),
-        RadioListTile<String>(
-          title: const Text('Averaged'),
-          value: 'averaged',
-          groupValue: params['outputMode'],
+        DropdownButtonFormField<String>(
+          initialValue: params['outputMode']?.toString() ?? 'averaged',
+          decoration: const InputDecoration(labelText: 'Mode'),
+          items: const <DropdownMenuItem<String>>[
+            DropdownMenuItem<String>(
+              value: 'segments',
+              child: Text('As segments'),
+            ),
+            DropdownMenuItem<String>(
+              value: 'averaged',
+              child: Text('Averaged'),
+            ),
+          ],
           onChanged: (v) => setState(() => params['outputMode'] = v),
         ),
       ],

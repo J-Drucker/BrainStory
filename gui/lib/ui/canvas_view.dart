@@ -1,88 +1,115 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 import 'canvas_logic.dart';
-import '../nodes/node_registry.dart';
 import 'dataset_panel.dart';
+import 'visualization_panel.dart';
 
-class CanvasView extends StatelessWidget {
-  final CanvasLogic logic;
-
+class CanvasView extends StatefulWidget {
   const CanvasView({
     super.key,
     required this.logic,
   });
 
+  final CanvasLogic logic;
+
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        // ---- LEFT: Sidebar (grouped nodes) ----
-        Container(
-          width: 240,
-          color: Colors.grey[900],
-          padding: const EdgeInsets.all(10),
-          child: ListView(
-            children: [
-              const Text(
-                'Nodes',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-
-              for (final group in NodeRegistry.groupOrder) ...[
-                _GroupHeader(title: group.label),
-                const SizedBox(height: 6),
-
-                for (final entry in logic.entriesForGroup(group))
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: ElevatedButton(
-                      onPressed: () => logic.addNode(entry.create()),
-                      child: Text(entry.create().title),
-                    ),
-                  ),
-
-                const SizedBox(height: 14),
-              ],
-            ],
-          ),
-        ),
-
-        // ---- CENTER: Canvas ----
-        Expanded(
-          child: GestureDetector(
-            onTap: logic.clearSelection,
-            child: Stack(
-              children: [
-                ...logic.connectionWidgets(),
-                ...logic.nodeWidgets(
-                  context: context,
-                  update: () => logic.update(),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // ---- RIGHT: Dataset Panel ----
-        DatasetPanel(logic: logic),
-      ],
-    );
-  }
+  State<CanvasView> createState() => _CanvasViewState();
 }
 
-class _GroupHeader extends StatelessWidget {
-  final String title;
-  const _GroupHeader({required this.title});
+class _CanvasViewState extends State<CanvasView> {
+  late final FocusNode _keyboardFocusNode;
+  final GlobalKey _canvasKey = GlobalKey();
+
+  CanvasLogic get logic => widget.logic;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyboardFocusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _keyboardFocusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: Colors.white70,
-        fontSize: 13,
-        fontWeight: FontWeight.bold,
-      ),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool compactRail = constraints.maxWidth < 1200;
+        final double sideRailWidth = compactRail ? 300 : 360;
+
+        return KeyboardListener(
+          focusNode: _keyboardFocusNode,
+          autofocus: true,
+          onKeyEvent: (KeyEvent event) {
+            if (event is KeyDownEvent &&
+                event.logicalKey == LogicalKeyboardKey.delete) {
+              setState(() => logic.deleteSelected());
+            }
+          },
+          child: Row(
+            children: <Widget>[
+              logic.sidebar(
+                export: () => logic.export(context),
+                clear: () => setState(() => logic.clearAll()),
+                update: () => setState(() {}),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => logic.clearConnectionDraft()),
+                  child: Container(
+                    key: _canvasKey,
+                    color: Colors.transparent,
+                    child: Stack(
+                      children: <Widget>[
+                        ...logic.connectionWidgets(),
+                        ...logic.nodeWidgets(
+                          context: context,
+                          update: () => setState(() {}),
+                          translateDropOffset: _globalToCanvasOffset,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SizedBox(
+                width: sideRailWidth,
+                child: Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: DatasetPanel(
+                        logic: logic,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: VisualizationPanel(
+                        logic: logic,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  Offset _globalToCanvasOffset(Offset globalOffset) {
+    final RenderBox? renderBox =
+        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return globalOffset;
+    }
+    return renderBox.globalToLocal(globalOffset);
   }
 }

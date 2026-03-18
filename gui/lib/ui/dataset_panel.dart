@@ -3,10 +3,12 @@ import 'canvas_logic.dart';
 
 class DatasetPanel extends StatelessWidget {
   final CanvasLogic logic;
+  final VoidCallback onChanged;
 
   const DatasetPanel({
     super.key,
     required this.logic,
+    required this.onChanged,
   });
 
   @override
@@ -16,7 +18,6 @@ class DatasetPanel extends StatelessWidget {
       ..sort((a, b) => a.label.compareTo(b.label));
 
     return Container(
-      width: 260,
       color: Colors.grey[850],
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -33,7 +34,10 @@ class DatasetPanel extends StatelessWidget {
           const SizedBox(height: 10),
 
           ElevatedButton.icon(
-            onPressed: () => logic.pickFiles(),
+            onPressed: () async {
+              await logic.pickFiles();
+              onChanged();
+            },
             icon: const Icon(Icons.add),
             label: const Text('Add files'),
           ),

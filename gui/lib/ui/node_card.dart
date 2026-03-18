@@ -4,6 +4,7 @@ import '../nodes/node_type.dart';
 class NodeCard extends StatelessWidget {
   final String title;
   final Offset position;
+  final String? statusLabel;
 
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
@@ -31,6 +32,7 @@ class NodeCard extends StatelessWidget {
     required this.inputPorts,
     required this.outputPorts,
     required this.color,
+    this.statusLabel,
     this.onTap,
     this.onDoubleTap,
     this.onRunThis,
@@ -54,6 +56,7 @@ class NodeCard extends StatelessWidget {
           _showContextMenu(context, details.globalPosition);
         },
         child: Draggable(
+          dragAnchorStrategy: childDragAnchorStrategy,
           feedback: _buildCard(),
           childWhenDragging: Opacity(
             opacity: 0.5,
@@ -78,10 +81,25 @@ class NodeCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
-            child: Text(
-              title,
-              style: const TextStyle(color: Colors.white),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                if (statusLabel != null) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    statusLabel!,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ),

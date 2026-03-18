@@ -35,12 +35,17 @@ class ImportNodeType extends NodeType {
       height: 300,
       child: ListView(
         children: entries.map((e) {
+          final Dataset dataset = e.value;
           return CheckboxListTile(
-            title: Text(e.value.label),
-            value: selected.contains(e.key),
+            title: Text(dataset.label),
+            value: selected.contains(dataset.id) || selected.contains(e.key),
             onChanged: (v) {
               setState(() {
-                v == true ? selected.add(e.key) : selected.remove(e.key);
+                selected.remove(e.key);
+                selected.remove(dataset.id);
+                if (v == true) {
+                  selected.add(dataset.id);
+                }
                 params['selectedDatasetIds'] = selected.toList();
               });
             },
