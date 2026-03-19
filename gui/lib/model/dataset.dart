@@ -23,13 +23,19 @@ class Dataset {
     if (value == null) {
       ram.remove('artifact.timeSeries');
       ram.remove('signal.samples');
+      ram.remove('signal.channels');
       ram.remove('signal.fs');
+      ram.remove('signal.channelLabels');
+      ram.remove('signal.markers');
       ram.remove('signal.source');
       return;
     }
     ram['artifact.timeSeries'] = value;
-    ram['signal.samples'] = value.samples;
+    ram['signal.samples'] = value.primaryChannel;
+    ram['signal.channels'] = value.channels;
     ram['signal.fs'] = value.sampleRate;
+    ram['signal.channelLabels'] = value.channelLabels;
+    ram['signal.markers'] = value.markers.map((TimeMarker marker) => marker.toJson()).toList();
     ram['signal.source'] = value.source;
   }
 

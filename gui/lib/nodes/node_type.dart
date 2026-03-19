@@ -74,6 +74,7 @@ abstract class NodeType {
         required Map<String, Dataset> datasets,
         required Set<String> availableDatasetIds,
         required Map<String, DatasetState> processedDatasetStates,
+        required List<String> processingSteps,
       }) {
     return _NodeConfigDialog(
       title: title,
@@ -81,6 +82,7 @@ abstract class NodeType {
       datasets: datasets,
       availableDatasetIds: availableDatasetIds,
       processedDatasetStates: processedDatasetStates,
+      processingSteps: processingSteps,
       buildBody: buildBody,
       onSave: onSave,
     );
@@ -96,6 +98,7 @@ class _NodeConfigDialog extends StatefulWidget {
   final Map<String, Dataset> datasets;
   final Set<String> availableDatasetIds;
   final Map<String, DatasetState> processedDatasetStates;
+  final List<String> processingSteps;
   final Widget Function(
       Map<String, dynamic> params, {
       required Map<String, Dataset> datasets,
@@ -109,6 +112,7 @@ class _NodeConfigDialog extends StatefulWidget {
     required this.datasets,
     required this.availableDatasetIds,
     required this.processedDatasetStates,
+    required this.processingSteps,
     required this.buildBody,
     required this.onSave,
   });
@@ -159,6 +163,23 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
                 datasets: widget.datasets,
                 setState: setState,
               ),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton(
+                  onPressed: () {
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => _MetadataDialog(
+                        datasets: widget.datasets,
+                        selectedDatasetIds: selectedDatasetIds,
+                        processingSteps: widget.processingSteps,
+                      ),
+                    );
+                  },
+                  child: const Text('Metadata'),
+                ),
+              ),
               const SizedBox(height: 20),
               const Text(
                 'Datasets',
@@ -194,6 +215,158 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         ),
       ],
     );
+  }
+}
+
+class _MetadataDialog extends StatelessWidget {
+  const _MetadataDialog({
+    required this.datasets,
+    required this.selectedDatasetIds,
+    required this.processingSteps,
+  });
+
+  final Map<String, Dataset> datasets;
+  final Set<String> selectedDatasetIds;
+  final List<String> processingSteps;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Dataset> selectedDatasets = datasets.values
+        .where((Dataset dataset) => selectedDatasetIds.contains(dataset.id))
+        .toList()
+      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+
+    return AlertDialog(
+      title: const Text('Metadata'),
+      content: SizedBox(
+        width: 760,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text(
+                'Checked Datasets',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              if (selectedDatasets.isEmpty)
+                const Text('No datasets are currently checked for this node.')
+              else
+                ...selectedDatasets.map(_datasetMetadataCard),
+              const SizedBox(height: 20),
+              const Text(
+                'Processing Steps',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              if (processingSteps.isEmpty)
+                const Text('No upstream processing steps are available yet.')
+              else
+                ...processingSteps.asMap().entries.map(
+                      (MapEntry<int, String> entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text('${entry.key + 1}. ${entry.value}'),
+                      ),
+                    ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _datasetMetadataCard(Dataset dataset) {
+    final List<Widget> rows = <Widget>[
+      _metadataRow('Label', dataset.label),
+      _metadataRow('Path', dataset.path.isEmpty ? 'unsaved' : dataset.path),
+      _metadataRow('Loaded', dataset.loaded ? 'Yes' : 'No'),
+    ];
+
+    final timeSeries = dataset.timeSeries;
+    if (timeSeries != null) {
+      rows.add(_metadataRow(
+        'Time series',
+        '${timeSeries.sampleCount} samples across ${timeSeries.channelCount} channel(s) @ ${_formatDouble(timeSeries.sampleRate)} Hz',
+      ));
+      if (timeSeries.source.isNotEmpty) {
+        rows.add(_metadataRow('Signal source', timeSeries.source));
+      }
+    }
+
+    final spectrum = dataset.spectrum;
+    if (spectrum != null) {
+      rows.add(_metadataRow(
+        'Spectrum',
+        '${spectrum.frequencies.length} bins, ${spectrum.segmentCount} segment(s)',
+      ));
+    }
+
+    final timeFrequency = dataset.timeFrequency;
+    if (timeFrequency != null) {
+      rows.add(_metadataRow(
+        'Time-frequency',
+        '${timeFrequency.times.length} times x ${timeFrequency.frequencies.length} freqs',
+      ));
+    }
+
+    final matrixTransformation = dataset.matrixTransformation;
+    if (matrixTransformation != null) {
+      final int rowCount = matrixTransformation.matrix.length;
+      final int columnCount =
+          rowCount == 0 ? 0 : matrixTransformation.matrix.first.length;
+      rows.add(_metadataRow(
+        'Matrix transform',
+        '$rowCount x $columnCount',
+      ));
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.black12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: rows,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _metadataRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: RichText(
+        text: TextSpan(
+          style: const TextStyle(color: Colors.black87),
+          children: <TextSpan>[
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            TextSpan(text: value),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatDouble(double value) {
+    return value.truncateToDouble() == value
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
   }
 }
 

@@ -83,13 +83,15 @@ class DebugOutputNodeType extends NodeType {
     if (artifact == 'signal') {
       final TimeSeriesData? timeSeries = dataset.timeSeries;
       final fs = timeSeries?.sampleRate;
-      final samples = timeSeries?.samples;
+      final channels = timeSeries?.channels;
 
       debugPrint('--- Debug Output: SIGNAL for ${dataset.label} (${dataset.id}) ---');
       debugPrint('fs: $fs');
-      if (samples is List<double>) {
+      if (channels is List<List<double>> && channels.isNotEmpty) {
+        final List<double> samples = channels.first;
         final n = samples.length;
         final k = lines.clamp(1, n);
+        debugPrint('channels: ${channels.length}');
         for (int i = 0; i < k; i++) {
           debugPrint('sample[$i] = ${samples[i]}');
         }

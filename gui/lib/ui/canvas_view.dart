@@ -75,7 +75,13 @@ class _CanvasViewState extends State<CanvasView> {
             }
             if (event is KeyDownEvent &&
                 event.logicalKey == LogicalKeyboardKey.delete) {
-              setState(() => logic.deleteSelected());
+              setState(() {
+                if (logic.selectedConnectionIndex != null) {
+                  logic.deleteSelectedConnection();
+                } else {
+                  logic.deleteSelected();
+                }
+              });
             }
           },
           child: Row(
@@ -106,8 +112,26 @@ class _CanvasViewState extends State<CanvasView> {
                           primary: false,
                           scrollDirection: Axis.horizontal,
                           child: GestureDetector(
-                            onTapDown: (_) => _keyboardFocusNode.requestFocus(),
-                            onTap: () => setState(() => logic.clearConnectionDraft()),
+                            onTapDown: (TapDownDetails details) {
+                              _keyboardFocusNode.requestFocus();
+                              setState(() {
+                                if (!logic.selectConnectionAt(
+                                  _globalToRawCanvasOffset(details.globalPosition),
+                                )) {
+                                  logic.selectedConnectionIndex = null;
+                                  logic.clearConnectionDraft();
+                                }
+                              });
+                            },
+                            onSecondaryTapDown: (TapDownDetails details) {
+                              setState(() {
+                                if (!logic.deleteConnectionAt(
+                                  _globalToRawCanvasOffset(details.globalPosition),
+                                )) {
+                                  logic.selectedConnectionIndex = null;
+                                }
+                              });
+                            },
                             child: SizedBox(
                               key: _canvasKey,
                               width: canvasSize.width,
@@ -170,6 +194,15 @@ class _CanvasViewState extends State<CanvasView> {
       return localOffset;
     }
     return logic.snapToGrid(localOffset);
+  }
+
+  Offset _globalToRawCanvasOffset(Offset globalOffset) {
+    final RenderBox? renderBox =
+        _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      return globalOffset;
+    }
+    return renderBox.globalToLocal(globalOffset);
   }
 
   void _openSelectedVisualizationWindow() {

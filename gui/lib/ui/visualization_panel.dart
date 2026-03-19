@@ -7,6 +7,7 @@ import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../model/node.dart';
 import 'canvas_logic.dart';
+import 'raw_signal_browser.dart';
 
 class VisualizationPanel extends StatelessWidget {
   const VisualizationPanel({
@@ -119,6 +120,7 @@ class VisualizationSurface extends StatefulWidget {
 
 class _VisualizationSurfaceState extends State<VisualizationSurface> {
   final Set<String> _selectedDatasetIds = <String>{};
+  String? _activeDatasetId;
 
   CanvasLogic get logic => widget.logic;
 
@@ -183,8 +185,14 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                   setState(() {
                     if (nextValue) {
                       _selectedDatasetIds.add(dataset.id);
+                      _activeDatasetId ??= dataset.id;
                     } else {
                       _selectedDatasetIds.remove(dataset.id);
+                      if (_activeDatasetId == dataset.id) {
+                        _activeDatasetId = _selectedDatasetIds.isEmpty
+                            ? null
+                            : _selectedDatasetIds.first;
+                      }
                     }
                   });
                 },
@@ -192,10 +200,33 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
             }).toList(),
           ),
           const SizedBox(height: 12),
+          if (_selectedDatasets(datasets).length > 1)
+            DropdownButtonFormField<String>(
+              initialValue: _activeDatasetId ?? _selectedDatasets(datasets).first.id,
+              decoration: const InputDecoration(
+                labelText: 'Active dataset for raw browser',
+              ),
+              items: _selectedDatasets(datasets)
+                  .map(
+                    (Dataset dataset) => DropdownMenuItem<String>(
+                      value: dataset.id,
+                      child: Text(dataset.label),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: (String? value) {
+                setState(() {
+                  _activeDatasetId = value;
+                });
+              },
+            ),
+          if (_selectedDatasets(datasets).length > 1) const SizedBox(height: 12),
           Expanded(
             child: _VisualizationChart(
               datasets: _selectedDatasets(datasets),
+              activeDatasetId: _activeDatasetId,
               params: node.params,
+              onChanged: () => setState(() {}),
             ),
           ),
         ],
@@ -219,6 +250,9 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
     final Set<String> availableIds =
         datasets.map((Dataset dataset) => dataset.id).toSet();
     _selectedDatasetIds.removeWhere((String id) => !availableIds.contains(id));
+    if (_activeDatasetId != null && !_selectedDatasetIds.contains(_activeDatasetId)) {
+      _activeDatasetId = _selectedDatasetIds.isEmpty ? null : _selectedDatasetIds.first;
+    }
   }
 }
 
@@ -265,11 +299,15 @@ class _WindowModeMessage extends StatelessWidget {
 class _VisualizationChart extends StatelessWidget {
   const _VisualizationChart({
     required this.datasets,
+    required this.activeDatasetId,
     required this.params,
+    required this.onChanged,
   });
 
   final List<Dataset> datasets;
+  final String? activeDatasetId;
   final Map<String, dynamic> params;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -285,101 +323,14 @@ class _VisualizationChart extends StatelessWidget {
     if (view == 'psd') {
       return _PsdChart(datasets: datasets);
     }
-    return _RawSignalChart(
-      datasets: datasets,
-      windowSec: (params['window_sec'] as num?)?.toDouble() ?? 5.0,
+    final Dataset activeDataset = datasets.firstWhere(
+      (Dataset dataset) => dataset.id == activeDatasetId,
+      orElse: () => datasets.first,
     );
-  }
-}
-
-class _RawSignalChart extends StatelessWidget {
-  const _RawSignalChart({
-    required this.datasets,
-    required this.windowSec,
-  });
-
-  final List<Dataset> datasets;
-  final double windowSec;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<_SeriesData> series = <_SeriesData>[];
-    for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
-      final Dataset dataset = datasets[datasetIndex];
-      final TimeSeriesData? timeSeries = dataset.timeSeries;
-      if (timeSeries == null || timeSeries.samples.isEmpty) {
-        continue;
-      }
-      final List<double> samples = timeSeries.samples;
-      final double fs = timeSeries.sampleRate;
-
-      final int maxSamples = math.max(64, (windowSec * fs).round());
-      final List<double> visibleSamples = samples.length > maxSamples
-          ? samples.sublist(samples.length - maxSamples)
-          : samples;
-
-      final List<FlSpot> points = <FlSpot>[
-        for (int i = 0; i < visibleSamples.length; i++)
-          FlSpot(i / fs, visibleSamples[i]),
-      ];
-
-      series.add(
-        _SeriesData(
-          label: dataset.label,
-          color: _seriesColor(datasetIndex),
-          points: points,
-          subtitle:
-              '${visibleSamples.length} samples at ${fs.toStringAsFixed(1)} Hz',
-        ),
-      );
-    }
-
-    if (series.isEmpty) {
-      return const _ChartMessage(
-        title: 'No raw signal',
-        body:
-            'Run an Import or signal-processing path upstream of the visualization node first.',
-      );
-    }
-
-    final List<double> allY =
-        series.expand((_SeriesData s) => s.points.map((FlSpot p) => p.y)).toList();
-    final double minY = allY.reduce(math.min);
-    final double maxY = allY.reduce(math.max);
-    final double amplitudePad = math.max(0.1, (maxY - minY) * 0.15);
-    final double maxX = series
-        .map((_SeriesData s) => s.points.isEmpty ? 0.0 : s.points.last.x)
-        .reduce(math.max);
-
-    return _ChartCard(
-      title: 'Raw Signal',
-      subtitle: '${series.length} overlay${series.length == 1 ? '' : 's'}',
-      legend: series,
-      child: LineChart(
-        LineChartData(
-          minX: 0,
-          maxX: maxX == 0 ? 1 : maxX,
-          minY: minY - amplitudePad,
-          maxY: maxY + amplitudePad,
-          gridData: const FlGridData(show: true),
-          borderData: FlBorderData(show: false),
-          titlesData: _chartTitles(
-            bottomLabel: 'Time (s)',
-            leftLabel: 'Amp',
-          ),
-          lineBarsData: series
-              .map(
-                (_SeriesData seriesData) => LineChartBarData(
-                  spots: seriesData.points,
-                  isCurved: false,
-                  barWidth: 2,
-                  color: seriesData.color,
-                  dotData: const FlDotData(show: false),
-                ),
-              )
-              .toList(),
-        ),
-      ),
+    return RawSignalBrowser(
+      dataset: activeDataset,
+      params: params,
+      onChanged: onChanged,
     );
   }
 }
@@ -447,7 +398,7 @@ class _PsdChart extends StatelessWidget {
           borderData: FlBorderData(show: false),
           titlesData: _chartTitles(
             bottomLabel: 'Hz',
-            leftLabel: 'Power',
+            leftLabel: 'uV^2/Hz',
           ),
           lineBarsData: series
               .map(

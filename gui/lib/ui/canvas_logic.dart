@@ -13,6 +13,7 @@ import '../nodes/export_edf_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
+import '../nodes/resample_node.dart';
 import '../nodes/visualization_node.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
@@ -23,6 +24,7 @@ class CanvasLogic {
   /// Registry of available node types in the sidebar.
   final List<NodeType> availableNodes = <NodeType>[
     ImportNodeType(),
+    ResampleNodeType(),
     BandpassNodeType(),
     PSDNodeType(),
     VisualizationNodeType(),
@@ -43,6 +45,7 @@ class CanvasLogic {
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
 
   String? selectedNodeId;
+  int? selectedConnectionIndex;
 
   String? _pendingFromNodeId;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
@@ -92,6 +95,7 @@ class CanvasLogic {
     nodes.clear();
     connections.clear();
     selectedNodeId = null;
+    selectedConnectionIndex = null;
     _clearPendingConnection();
   }
 
@@ -124,7 +128,38 @@ class CanvasLogic {
     );
 
     selectedNodeId = null;
+    selectedConnectionIndex = null;
     _clearPendingConnection();
+  }
+
+  void deleteSelectedConnection() {
+    final int? index = selectedConnectionIndex;
+    if (index == null || index < 0 || index >= connections.length) {
+      return;
+    }
+    connections.removeAt(index);
+    selectedConnectionIndex = null;
+  }
+
+  bool selectConnectionAt(Offset canvasOffset) {
+    final int? index = _connectionIndexAt(canvasOffset);
+    if (index == null) {
+      return false;
+    }
+    selectedNodeId = null;
+    selectedConnectionIndex = index;
+    _clearPendingConnection();
+    return true;
+  }
+
+  bool deleteConnectionAt(Offset canvasOffset) {
+    final int? index = _connectionIndexAt(canvasOffset);
+    if (index == null) {
+      return false;
+    }
+    connections.removeAt(index);
+    selectedConnectionIndex = null;
+    return true;
   }
 
   void clearConnectionDraft() {
@@ -348,7 +383,11 @@ class CanvasLogic {
       final Offset end = _inputAnchor(fromNode, toNode);
 
       return CustomPaint(
-        painter: ConnectionPainter(start: start, end: end),
+        painter: ConnectionPainter(
+          start: start,
+          end: end,
+          selected: selectedConnectionIndex == connections.indexOf(connection),
+        ),
         size: Size.infinite,
       );
     }).toList();
@@ -467,6 +506,7 @@ class CanvasLogic {
   void _handleNodeTap(NodeModel node) {
     if (_pendingFromNodeId == null) {
       selectedNodeId = node.id;
+      selectedConnectionIndex = null;
       if (node.outputPorts.isNotEmpty) {
         _pendingFromNodeId = node.id;
       }
@@ -475,6 +515,7 @@ class CanvasLogic {
 
     if (_pendingFromNodeId == node.id) {
       selectedNodeId = node.id;
+      selectedConnectionIndex = null;
       _clearPendingConnection();
       return;
     }
@@ -482,6 +523,7 @@ class CanvasLogic {
     final NodeModel? fromNode = _findNode(_pendingFromNodeId!);
     if (fromNode == null) {
       selectedNodeId = node.id;
+      selectedConnectionIndex = null;
       _clearPendingConnection();
       return;
     }
@@ -493,6 +535,7 @@ class CanvasLogic {
 
     if (portPair == null || !validDirection || introducesCycle) {
       selectedNodeId = node.id;
+      selectedConnectionIndex = null;
       if (node.outputPorts.isNotEmpty) {
         _pendingFromNodeId = node.id;
       } else {
@@ -521,6 +564,7 @@ class CanvasLogic {
     }
 
     selectedNodeId = node.id;
+    selectedConnectionIndex = null;
     if (node.outputPorts.isNotEmpty) {
       _pendingFromNodeId = node.id;
     } else {
@@ -553,6 +597,7 @@ class CanvasLogic {
         datasets: _datasetsById(),
         availableDatasetIds: _availableDatasetIdsForNode(node),
         processedDatasetStates: _processedDatasetStatesForNode(node),
+        processingSteps: processingStepsForNode(node.id),
       ),
     );
   }
@@ -588,6 +633,14 @@ class CanvasLogic {
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
         .toList()
       ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+  }
+
+  List<String> processingStepsForNode(String nodeId) {
+    final Set<String> ancestorIds = _collectAncestorsInclusive(nodeId);
+    final List<NodeModel> orderedNodes = _orderedNodes(ancestorIds);
+    return orderedNodes
+        .map((NodeModel node) => '${node.type.category.label}: ${node.title}')
+        .toList(growable: false);
   }
 
   String visualizationDisplayMode(NodeModel? node) {
@@ -1002,5 +1055,77 @@ class CanvasLogic {
     final double dx = (toNode.position.dx - fromNode.position.dx).abs();
     final double dy = toNode.position.dy - fromNode.position.dy;
     return dy > 0 && dy >= dx;
+  }
+
+  int? _connectionIndexAt(Offset point) {
+    for (int index = connections.length - 1; index >= 0; index--) {
+      final Map<String, dynamic> connection = connections[index];
+      final NodeModel? fromNode = _findNode(connection['fromNode'] as String);
+      final NodeModel? toNode = _findNode(connection['toNode'] as String);
+      if (fromNode == null || toNode == null) {
+        continue;
+      }
+
+      final Offset start = _outputAnchor(fromNode, toNode);
+      final Offset end = _inputAnchor(fromNode, toNode);
+      if (_isPointNearConnection(point, start, end)) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  bool _isPointNearConnection(Offset point, Offset start, Offset end) {
+    final Offset cp1 = Offset(start.dx + 100, start.dy);
+    final Offset cp2 = Offset(end.dx - 100, end.dy);
+    const double threshold = 12.0;
+    const int steps = 32;
+
+    Offset previous = start;
+    for (int step = 1; step <= steps; step++) {
+      final double t = step / steps;
+      final Offset current = _sampleCubic(start, cp1, cp2, end, t);
+      if (_distanceToSegment(point, previous, current) <= threshold) {
+        return true;
+      }
+      previous = current;
+    }
+    return false;
+  }
+
+  Offset _sampleCubic(
+    Offset p0,
+    Offset p1,
+    Offset p2,
+    Offset p3,
+    double t,
+  ) {
+    final double mt = 1 - t;
+    final double x = (mt * mt * mt * p0.dx) +
+        (3 * mt * mt * t * p1.dx) +
+        (3 * mt * t * t * p2.dx) +
+        (t * t * t * p3.dx);
+    final double y = (mt * mt * mt * p0.dy) +
+        (3 * mt * mt * t * p1.dy) +
+        (3 * mt * t * t * p2.dy) +
+        (t * t * t * p3.dy);
+    return Offset(x, y);
+  }
+
+  double _distanceToSegment(Offset point, Offset a, Offset b) {
+    final double dx = b.dx - a.dx;
+    final double dy = b.dy - a.dy;
+    if (dx == 0 && dy == 0) {
+      return (point - a).distance;
+    }
+
+    final double t = (((point.dx - a.dx) * dx) + ((point.dy - a.dy) * dy)) /
+        ((dx * dx) + (dy * dy));
+    final double clampedT = t.clamp(0.0, 1.0);
+    final Offset projection = Offset(
+      a.dx + (dx * clampedT),
+      a.dy + (dy * clampedT),
+    );
+    return (point - projection).distance;
   }
 }

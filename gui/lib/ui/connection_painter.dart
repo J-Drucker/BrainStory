@@ -3,14 +3,19 @@ import 'package:flutter/material.dart';
 class ConnectionPainter extends CustomPainter {
   final Offset start;
   final Offset end;
+  final bool selected;
 
-  ConnectionPainter({required this.start, required this.end});
+  ConnectionPainter({
+    required this.start,
+    required this.end,
+    this.selected = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.orangeAccent
-      ..strokeWidth = 2
+      ..color = selected ? Colors.redAccent : Colors.orangeAccent
+      ..strokeWidth = selected ? 4 : 2
       ..style = PaintingStyle.stroke;
 
     final path = Path();

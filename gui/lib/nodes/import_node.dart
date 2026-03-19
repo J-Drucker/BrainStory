@@ -11,14 +11,19 @@ import 'node_type.dart';
 
 class ParsedSignalData {
   const ParsedSignalData({
-    required this.samples,
+    required this.channelSamples,
     required this.sampleRate,
+    required this.channelLabels,
     required this.sourceDescription,
   });
 
-  final List<double> samples;
+  final List<List<double>> channelSamples;
   final double sampleRate;
+  final List<String> channelLabels;
   final String sourceDescription;
+
+  List<double> get samples =>
+      channelSamples.isEmpty ? const <double>[] : channelSamples.first;
 }
 
 class ImportNodeType extends NodeType {
@@ -78,7 +83,7 @@ class ImportNodeType extends NodeType {
           ),
           const SizedBox(height: 8),
           const Text(
-            'CSV, TSV, whitespace-delimited text, and EDF are supported. EDF imports the first non-annotation channel for now.',
+            'CSV, TSV, whitespace-delimited text, and EDF are supported. Multi-channel text tables and EDF channel sets are preserved.',
           ),
         ],
       ),
@@ -97,8 +102,9 @@ class ImportNodeType extends NodeType {
 
     dataset.loaded = true;
     dataset.timeSeries = TimeSeriesData(
-      samples: parsed.samples,
+      channelSamples: parsed.channelSamples,
       sampleRate: parsed.sampleRate,
+      channelLabels: parsed.channelLabels,
       source: parsed.sourceDescription,
     );
   }
@@ -137,15 +143,22 @@ ParsedSignalData parseSignalText(
   required String sourceDescription,
 }) {
   final List<List<double>> rows = <List<double>>[];
+  List<String>? headerTokens;
   for (final String rawLine in contents.split(RegExp(r'\r?\n'))) {
     final String line = rawLine.trim();
     if (line.isEmpty || line.startsWith('#')) {
       continue;
     }
 
-    final List<double> numericValues = _parseNumericRow(line);
-    if (numericValues.isNotEmpty) {
+    final List<String> tokens = _splitRow(line);
+    final List<double> numericValues = tokens
+        .map((String token) => double.tryParse(token.trim()))
+        .whereType<double>()
+        .toList();
+    if (numericValues.length == tokens.length && numericValues.isNotEmpty) {
       rows.add(numericValues);
+    } else if (headerTokens == null && tokens.length > 1) {
+      headerTokens = tokens.map((String token) => token.trim()).toList();
     }
   }
 
@@ -153,20 +166,45 @@ ParsedSignalData parseSignalText(
     throw const FormatException('No numeric rows were found in the dataset.');
   }
 
+  final int columnCount = rows
+      .map((List<double> row) => row.length)
+      .reduce((int left, int right) => left < right ? left : right);
+
   if (_looksLikeTimeSeries(rows)) {
     final List<double> timeColumn = rows.map((List<double> row) => row[0]).toList();
-    final List<double> samples = rows.map((List<double> row) => row[1]).toList();
+    final int channelCount = math.max(1, columnCount - 1);
+    final List<List<double>> channelSamples = List<List<double>>.generate(
+      channelCount,
+      (int channelIndex) => rows
+          .map((List<double> row) => row[channelIndex + 1])
+          .toList(growable: false),
+    );
     return ParsedSignalData(
-      samples: samples,
+      channelSamples: channelSamples,
       sampleRate: _inferSampleRate(timeColumn, fallbackSampleRate),
+      channelLabels: _resolveChannelLabels(
+        headerTokens: headerTokens,
+        count: channelCount,
+        skipLeadingTimeColumn: true,
+      ),
       sourceDescription: sourceDescription,
     );
   }
 
-  final List<double> samples = rows.map((List<double> row) => row.first).toList();
+  final List<List<double>> channelSamples = List<List<double>>.generate(
+    columnCount,
+    (int channelIndex) => rows
+        .map((List<double> row) => row[channelIndex])
+        .toList(growable: false),
+  );
   return ParsedSignalData(
-    samples: samples,
+    channelSamples: channelSamples,
     sampleRate: fallbackSampleRate,
+    channelLabels: _resolveChannelLabels(
+      headerTokens: headerTokens,
+      count: columnCount,
+      skipLeadingTimeColumn: false,
+    ),
     sourceDescription: sourceDescription,
   );
 }
@@ -182,21 +220,38 @@ ParsedSignalData parseEdfBytes(
   final ByteData data = ByteData.sublistView(bytes);
   final _EdfHeader header = _parseEdfHeader(bytes);
   final List<_EdfSignalHeader> signals = _parseEdfSignalHeaders(bytes, header);
-
-  final int channelIndex = signals.indexWhere(
-    (_EdfSignalHeader signal) => !signal.label.toLowerCase().contains('annotation'),
-  );
-  if (channelIndex == -1) {
+  final List<_EdfSignalHeader> dataSignals = signals
+      .where(
+        (_EdfSignalHeader signal) =>
+            !signal.label.toLowerCase().contains('annotation'),
+      )
+      .toList(growable: false);
+  if (dataSignals.isEmpty) {
     throw const FormatException('No non-annotation EDF channels were found.');
   }
 
-  final _EdfSignalHeader channel = signals[channelIndex];
+  final double targetSampleRate =
+      dataSignals.first.sampleRate(header.recordDurationSeconds);
+  final List<_EdfSignalHeader> selectedSignals = dataSignals
+      .where(
+        (_EdfSignalHeader signal) =>
+            (signal.sampleRate(header.recordDurationSeconds) - targetSampleRate).abs() <
+            0.001,
+      )
+      .toList(growable: false);
+  final Set<int> selectedSignalIndexes = selectedSignals
+      .map((_EdfSignalHeader signal) => signals.indexOf(signal))
+      .toSet();
   final int recordByteSize =
       signals.fold<int>(0, (int sum, _EdfSignalHeader signal) => sum + signal.samplesPerRecord * 2);
-  final int totalSamples = header.numDataRecords * channel.samplesPerRecord;
-  final List<double> samples = List<double>.filled(totalSamples, 0.0);
+  final int totalSamples =
+      header.numDataRecords * selectedSignals.first.samplesPerRecord;
+  final List<List<double>> channelSamples = List<List<double>>.generate(
+    selectedSignals.length,
+    (_) => List<double>.filled(totalSamples, 0.0),
+  );
 
-  int outputIndex = 0;
+  final List<int> outputIndexes = List<int>.filled(selectedSignals.length, 0);
   for (int record = 0; record < header.numDataRecords; record++) {
     int signalByteOffset = header.headerBytes + (record * recordByteSize);
 
@@ -204,10 +259,12 @@ ParsedSignalData parseEdfBytes(
       final _EdfSignalHeader signal = signals[signalIndex];
       final int signalStart = signalByteOffset;
 
-      if (signalIndex == channelIndex) {
+      if (selectedSignalIndexes.contains(signalIndex)) {
+        final int channelIndex = selectedSignals.indexOf(signal);
         for (int sampleIndex = 0; sampleIndex < signal.samplesPerRecord; sampleIndex++) {
           final int rawValue = data.getInt16(signalStart + (sampleIndex * 2), Endian.little);
-          samples[outputIndex++] = signal.toPhysicalValue(rawValue);
+          channelSamples[channelIndex][outputIndexes[channelIndex]++] =
+              signal.toPhysicalValue(rawValue);
         }
       }
 
@@ -216,22 +273,25 @@ ParsedSignalData parseEdfBytes(
   }
 
   return ParsedSignalData(
-    samples: samples,
-    sampleRate: channel.sampleRate(header.recordDurationSeconds),
-    sourceDescription: '$sourceDescription [${channel.label}]',
+    channelSamples: channelSamples,
+    sampleRate: targetSampleRate,
+    channelLabels: selectedSignals
+        .map((_EdfSignalHeader signal) => signal.label)
+        .toList(growable: false),
+    sourceDescription: selectedSignals.length == 1
+        ? '$sourceDescription [${selectedSignals.first.label}]'
+        : '$sourceDescription [${selectedSignals.first.label} + ${selectedSignals.length - 1} more]',
   );
 }
 
-List<double> _parseNumericRow(String line) {
+List<String> _splitRow(String line) {
   final String delimiter = _preferredDelimiter(line);
-  final Iterable<String> tokens = delimiter.isEmpty
+  return (delimiter.isEmpty
       ? line.split(RegExp(r'\s+'))
-      : line.split(delimiter);
-
-  return tokens
-      .map((String token) => double.tryParse(token.trim()))
-      .whereType<double>()
-      .toList();
+      : line.split(delimiter))
+      .map((String token) => token.trim())
+      .where((String token) => token.isNotEmpty)
+      .toList(growable: false);
 }
 
 String _preferredDelimiter(String line) {
@@ -277,8 +337,8 @@ double _inferSampleRate(List<double> timeColumn, double fallbackSampleRate) {
     return fallbackSampleRate;
   }
 
-  final double meanDelta = deltaSum / deltaCount;
-  return meanDelta <= 0 ? fallbackSampleRate : 1.0 / meanDelta;
+  final double meanDeltaMs = deltaSum / deltaCount;
+  return meanDeltaMs <= 0 ? fallbackSampleRate : 1000.0 / meanDeltaMs;
 }
 
 ParsedSignalData _syntheticSignal(double sampleRate) {
@@ -290,9 +350,32 @@ ParsedSignalData _syntheticSignal(double sampleRate) {
   });
 
   return ParsedSignalData(
-    samples: samples,
+    channelSamples: <List<double>>[samples],
     sampleRate: sampleRate,
+    channelLabels: const <String>['Synth 1'],
     sourceDescription: 'synthetic',
+  );
+}
+
+List<String> _resolveChannelLabels({
+  required List<String>? headerTokens,
+  required int count,
+  required bool skipLeadingTimeColumn,
+}) {
+  if (headerTokens != null) {
+    final int startIndex = skipLeadingTimeColumn ? 1 : 0;
+    if (headerTokens.length >= startIndex + count) {
+      return headerTokens
+          .sublist(startIndex, startIndex + count)
+          .map((String token) => token.isEmpty ? 'Ch ${startIndex + 1}' : token)
+          .toList(growable: false);
+    }
+  }
+
+  return List<String>.generate(
+    count,
+    (int index) => 'Ch ${index + 1}',
+    growable: false,
   );
 }
 

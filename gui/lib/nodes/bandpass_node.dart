@@ -34,10 +34,10 @@ class BandpassNodeType extends NodeType {
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
     final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries == null || timeSeries.samples.isEmpty) {
+    if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
       return;
     }
-    final List<double> samples = timeSeries.samples;
+    final List<List<double>> channels = timeSeries.channels;
     final double sampleRate = timeSeries.sampleRate;
 
     final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
@@ -47,19 +47,24 @@ class BandpassNodeType extends NodeType {
 
     dataset.ram.putIfAbsent(
       'signal.originalSamples',
-      () => List<double>.from(samples),
+      () => channels.map((List<double> channel) => List<double>.from(channel)).toList(),
     );
     dataset.timeSeries = TimeSeriesData(
-      samples: applyBandpassFilter(
-        samples,
-        sampleRate: sampleRate,
-        lowCutHz: low,
-        highCutHz: high,
-        steepness: steepness,
-        notchHz: notch,
-      ),
+      channelSamples: channels
+          .map(
+            (List<double> samples) => applyBandpassFilter(
+              samples,
+              sampleRate: sampleRate,
+              lowCutHz: low,
+              highCutHz: high,
+              steepness: steepness,
+              notchHz: notch,
+            ),
+          )
+          .toList(growable: false),
       sampleRate: sampleRate,
       channelLabels: timeSeries.channelLabels,
+      markers: timeSeries.markers,
       source: timeSeries.source,
     );
     dataset.ram['bandpass.params'] = <String, dynamic>{

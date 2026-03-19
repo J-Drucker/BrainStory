@@ -3,6 +3,7 @@ import 'node_type.dart';
 import 'import_node.dart';
 import 'bandpass_node.dart';
 import 'psd_node.dart';
+import 'resample_node.dart';
 import 'debug_output_node.dart';
 import 'export_edf_node.dart';
 
@@ -57,6 +58,7 @@ class NodeRegistry {
     NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
 
     // Transform
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => ResampleNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => BandpassNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
 
