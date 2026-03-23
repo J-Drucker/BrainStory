@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 
 class NodeCard extends StatelessWidget {
+  final double width;
+  final double height;
   final String title;
+  final int nodeNumber;
   final Offset position;
   final String? statusLabel;
+  final bool highlighted;
+  final Color? highlightColor;
+  final bool done;
 
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
@@ -19,11 +25,17 @@ class NodeCard extends StatelessWidget {
 
   const NodeCard({
     super.key,
+    required this.width,
+    required this.height,
     required this.title,
+    required this.nodeNumber,
     required this.position,
     required this.onDragEnd,
     required this.color,
     this.statusLabel,
+    this.highlighted = false,
+    this.highlightColor,
+    this.done = false,
     this.onTap,
     this.onDoubleTap,
     this.onRunThis,
@@ -59,32 +71,100 @@ class NodeCard extends StatelessWidget {
   }
 
   Widget _buildCard() {
-    return Card(
-      color: color,
-      elevation: 6,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              title,
-              style: const TextStyle(color: Colors.white),
+    return SizedBox(
+      width: width,
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: done
+              ? const <BoxShadow>[
+                  BoxShadow(
+                    color: Color(0x663FD37A),
+                    blurRadius: 12,
+                    spreadRadius: 1.5,
+                  ),
+                ]
+              : const <BoxShadow>[],
+        ),
+        child: Card(
+          color: color,
+          elevation: 6,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(
+              color: highlighted
+                  ? (highlightColor ?? const Color(0xFFC3B15C))
+                  : Colors.transparent,
+              width: highlighted ? 2 : 0,
             ),
-            if (statusLabel != null) ...<Widget>[
-              const SizedBox(height: 6),
-              Text(
-                statusLabel!,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
+          ),
+          child: Stack(
+            children: <Widget>[
+            Positioned(
+              left: 8,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF30343A),
+                  borderRadius: BorderRadius.circular(4),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x44000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 1.5),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  '$nodeNumber',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+              Positioned.fill(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 10),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      Flexible(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            height: 1.1,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (statusLabel != null) ...<Widget>[
+                        const SizedBox(height: 3),
+                        Text(
+                          statusLabel!,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 10,
+                            height: 1.0,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ],
-          ],
+          ),
         ),
       ),
     );

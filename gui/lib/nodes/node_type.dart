@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 
-enum PortType { signal, metadata, markers }
+enum PortType { signal, metadata, markers, matrixTransformation }
 enum NodeCategory { import, transform, markerFunctions, visualize, export, other }
 
 extension NodeCategoryPresentation on NodeCategory {
@@ -27,15 +27,15 @@ extension NodeCategoryPresentation on NodeCategory {
   Color get color {
     switch (this) {
       case NodeCategory.import:
-        return Colors.teal;
+        return Colors.green;
       case NodeCategory.transform:
         return Colors.indigo;
       case NodeCategory.markerFunctions:
-        return Colors.pinkAccent;
+        return Colors.yellow.shade700;
       case NodeCategory.visualize:
-        return Colors.orange;
+        return Colors.teal;
       case NodeCategory.export:
-        return Colors.green;
+        return Colors.pinkAccent;
       case NodeCategory.other:
         return Colors.grey;
     }

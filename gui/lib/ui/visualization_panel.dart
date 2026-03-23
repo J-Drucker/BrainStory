@@ -23,17 +23,27 @@ class VisualizationPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final NodeModel? node = logic.selectedVisualizationNode;
+    final NodeModel? node = logic.selectedVisualizationTarget;
     if (node == null) {
       return _panelShell(
         child: _emptyState(
           'Visualization',
-          'Select an EEG Visualization node to inspect its output.',
+          'Select a node to inspect its output here.',
         ),
       );
     }
 
-    if (logic.visualizationDisplayMode(node) == 'window') {
+    if (!logic.canVisualizeNode(node)) {
+      return _panelShell(
+        child: _emptyState(
+          'No visual output',
+          '${node.title} does not produce a time-domain or spectrum view to render here.',
+        ),
+      );
+    }
+
+    if (logic.isVisualizationNode(node) &&
+        logic.visualizationDisplayMode(node) == 'window') {
       return _panelShell(
         child: _WindowModeMessage(
           title: node.title,
@@ -46,6 +56,8 @@ class VisualizationPanel extends StatelessWidget {
       child: VisualizationSurface(
         logic: logic,
         nodeId: node.id,
+        onChanged: onChanged,
+        onOpenWindow: onOpenWindow,
       ),
     );
   }
@@ -97,6 +109,8 @@ class VisualizationFullscreenPage extends StatelessWidget {
               : VisualizationSurface(
                   logic: logic,
                   nodeId: nodeId,
+                  onChanged: null,
+                  onOpenWindow: null,
                 ),
         ),
       ),
@@ -109,10 +123,14 @@ class VisualizationSurface extends StatefulWidget {
     super.key,
     required this.logic,
     required this.nodeId,
+    required this.onChanged,
+    required this.onOpenWindow,
   });
 
   final CanvasLogic logic;
   final String nodeId;
+  final VoidCallback? onChanged;
+  final VoidCallback? onOpenWindow;
 
   @override
   State<VisualizationSurface> createState() => _VisualizationSurfaceState();
@@ -127,50 +145,79 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
   @override
   void didUpdateWidget(covariant VisualizationSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.nodeId != widget.nodeId) {
+      _selectedDatasetIds.clear();
+      _activeDatasetId = null;
+    }
     _syncSelectedDatasets();
   }
 
   @override
   Widget build(BuildContext context) {
-    _syncSelectedDatasets();
-
-    NodeModel? node;
+    NodeModel? maybeNode;
     for (final NodeModel item in logic.nodes) {
       if (item.id == widget.nodeId) {
-        node = item;
+        maybeNode = item;
         break;
       }
     }
-    final List<Dataset> datasets = logic.datasetsForVisualizationNode(widget.nodeId);
 
-    if (node == null) {
+    if (maybeNode == null) {
       return _emptyState(
         'Visualization unavailable',
         'This node is no longer available.',
       );
     }
+    final NodeModel node = maybeNode;
+    _syncSelectedDatasets();
+
+      final List<Dataset> datasets = logic.datasetsForVisualizationNode(widget.nodeId);
+    final String view = logic.visualizationViewForNode(node);
+    final bool comparisonNode = logic.isVisualizationNode(node);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          node.title,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                node.title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: widget.onOpenWindow == null
+                  ? null
+                  : () {
+                      widget.logic.selectedNodeId = node.id;
+                      widget.onOpenWindow!.call();
+                    },
+              icon: const Icon(Icons.open_in_full, size: 18),
+              label: const Text('Pop Out'),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         if (datasets.isEmpty)
           _emptyState(
             'No dataset',
-            'Connect this node to an Import path and choose a dataset in the Import node settings.',
+            comparisonNode
+                ? 'Connect this visualization node to an Import-backed path and choose datasets to compare.'
+                : 'Run an Import-backed path into this node so there is output available to inspect.',
           )
         else ...<Widget>[
-          const Text(
-            'Select one or more datasets to render',
-            style: TextStyle(color: Colors.white70),
+          Text(
+            comparisonNode
+                ? 'Select one or more datasets to compare'
+                : 'Select one or more datasets to inspect',
+            style: const TextStyle(color: Colors.white70),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -200,7 +247,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
             }).toList(),
           ),
           const SizedBox(height: 12),
-          if (_selectedDatasets(datasets).length > 1)
+          if (view == 'raw' && _selectedDatasets(datasets).length > 1)
             DropdownButtonFormField<String>(
               initialValue: _activeDatasetId ?? _selectedDatasets(datasets).first.id,
               decoration: const InputDecoration(
@@ -220,13 +267,21 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                 });
               },
             ),
-          if (_selectedDatasets(datasets).length > 1) const SizedBox(height: 12),
+          if (view == 'raw' && _selectedDatasets(datasets).length > 1)
+            const SizedBox(height: 12),
           Expanded(
             child: _VisualizationChart(
+              logic: logic,
+              nodeId: node.id,
               datasets: _selectedDatasets(datasets),
               activeDatasetId: _activeDatasetId,
+              view: view,
               params: node.params,
-              onChanged: () => setState(() {}),
+              comparisonNode: comparisonNode,
+              onChanged: () {
+                setState(() {});
+                widget.onChanged?.call();
+              },
             ),
           ),
         ],
@@ -298,15 +353,23 @@ class _WindowModeMessage extends StatelessWidget {
 
 class _VisualizationChart extends StatelessWidget {
   const _VisualizationChart({
+    required this.logic,
+    required this.nodeId,
     required this.datasets,
     required this.activeDatasetId,
+    required this.view,
     required this.params,
+    required this.comparisonNode,
     required this.onChanged,
   });
 
+  final CanvasLogic logic;
+  final String nodeId;
   final List<Dataset> datasets;
   final String? activeDatasetId;
+  final String view;
   final Map<String, dynamic> params;
+  final bool comparisonNode;
   final VoidCallback onChanged;
 
   @override
@@ -318,10 +381,21 @@ class _VisualizationChart extends StatelessWidget {
       );
     }
 
-    final String view = (params['view'] ?? 'raw').toString();
+    if (view == 'time_frequency') {
+      return const _ChartMessage(
+        title: 'Time-frequency view is not implemented yet',
+        body: 'This visualizer can already infer the upstream output type, but the time-frequency renderer still needs to be built.',
+      );
+    }
 
     if (view == 'psd') {
       return _PsdChart(datasets: datasets);
+    }
+    if (comparisonNode && datasets.length > 1) {
+      return const _ChartMessage(
+        title: 'Raw comparison is not ready yet',
+        body: 'Select one dataset for the raw browser. PSD comparison overlays are inferred and rendered automatically when this node is fed from a PSD path.',
+      );
     }
     final Dataset activeDataset = datasets.firstWhere(
       (Dataset dataset) => dataset.id == activeDatasetId,
@@ -330,6 +404,13 @@ class _VisualizationChart extends StatelessWidget {
     return RawSignalBrowser(
       dataset: activeDataset,
       params: params,
+      onMarkersChanged: (List<dynamic> rawMarkers) {
+        logic.applyMarkersFromVisualization(
+          nodeId: nodeId,
+          dataset: activeDataset,
+          rawMarkers: rawMarkers,
+        );
+      },
       onChanged: onChanged,
     );
   }

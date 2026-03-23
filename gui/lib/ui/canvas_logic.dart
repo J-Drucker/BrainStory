@@ -4,19 +4,32 @@ import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 import '../model/node.dart';
+import '../nodes/add_remove_markers_node.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/debug_output_node.dart';
 import '../nodes/export_edf_node.dart';
 import '../nodes/import_node.dart';
+import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/resample_node.dart';
 import '../nodes/visualization_node.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
+
+class RunActivity {
+  const RunActivity({
+    required this.label,
+    this.detail = '',
+  });
+
+  final String label;
+  final String detail;
+}
 
 class CanvasLogic {
   CanvasLogic();
@@ -27,6 +40,11 @@ class CanvasLogic {
     ResampleNodeType(),
     BandpassNodeType(),
     PSDNodeType(),
+    MicrostatesNodeType(),
+    PCANodeType(),
+    ICANodeType(),
+    EigenvalueDecompositionNodeType(),
+    AddRemoveMarkersNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
     ExportEdfNodeType(),
@@ -43,6 +61,7 @@ class CanvasLogic {
   ///   toPort: int,
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
+  final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
 
   String? selectedNodeId;
   int? selectedConnectionIndex;
@@ -58,13 +77,29 @@ class CanvasLogic {
 
   void addNode(NodeType type) {
     final Offset spawnPosition = _nextSpawnPosition();
-    nodes.add(
-      NodeModel(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        type: type,
-        position: spawnPosition,
-        params: Map<String, dynamic>.from(type.defaultParams),
-      ),
+    nodes.add(_buildNode(type: type, position: spawnPosition));
+  }
+
+  NodeModel _buildNode({
+    required NodeType type,
+    required Offset position,
+    Map<String, dynamic>? params,
+  }) {
+    final Map<String, dynamic> initialParams = params == null
+        ? Map<String, dynamic>.from(type.defaultParams)
+        : Map<String, dynamic>.from(params);
+    initialParams.putIfAbsent(
+      'selectedDatasetIds',
+      () => datasets.values
+          .map((Dataset dataset) => dataset.id)
+          .toList(growable: false),
+    );
+
+    return NodeModel(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      type: type,
+      position: position,
+      params: initialParams,
     );
   }
 
@@ -310,15 +345,6 @@ class CanvasLogic {
                 color: category.color,
                 size: 20,
               ),
-              const SizedBox(width: 4),
-              Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: category.color,
-                  shape: BoxShape.circle,
-                ),
-              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -399,12 +425,20 @@ class CanvasLogic {
     required Offset Function(Offset globalOffset) translateDropOffset,
     required void Function(NodeModel node) openVisualizationWindow,
   }) {
-    return nodes.map((NodeModel node) {
+    return nodes.asMap().entries.map((MapEntry<int, NodeModel> entry) {
+      final int nodeNumber = entry.key + 1;
+      final NodeModel node = entry.value;
       return NodeCard(
+        width: _cardWidth,
+        height: _cardHeight,
         title: node.title,
+        nodeNumber: nodeNumber,
         position: node.position,
         color: _nodeColor(node),
         statusLabel: _statusLabel(node),
+        highlighted: _isHighlighted(node),
+        highlightColor: _nodeHighlightColor(node),
+        done: node.visualState == DatasetState.done,
         onDragEnd: (Offset globalOffset) {
           node.position = translateDropOffset(globalOffset);
           update();
@@ -435,6 +469,7 @@ class CanvasLogic {
         },
         onRunThis: () async {
           try {
+            await prepareRunUi('Running ${node.title}');
             await runThisStep(node.id);
             update();
             if (node.type is VisualizationNodeType &&
@@ -453,10 +488,13 @@ class CanvasLogic {
             if (context.mounted) {
               _showStatusSnackBar(context, 'Run failed: $error');
             }
+          } finally {
+            finishRunUi();
           }
         },
         onRunFromStart: () async {
           try {
+            await prepareRunUi('Running pipeline to ${node.title}');
             await runFromStart(node.id);
             update();
             if (node.type is VisualizationNodeType &&
@@ -475,10 +513,13 @@ class CanvasLogic {
             if (context.mounted) {
               _showStatusSnackBar(context, 'Run failed: $error');
             }
+          } finally {
+            finishRunUi();
           }
         },
         onRunToEnd: () async {
           try {
+            await prepareRunUi('Running ${node.title} to pipeline end');
             await runToEnd(node.id);
             update();
             if (node.type is VisualizationNodeType &&
@@ -497,6 +538,8 @@ class CanvasLogic {
             if (context.mounted) {
               _showStatusSnackBar(context, 'Run failed: $error');
             }
+          } finally {
+            finishRunUi();
           }
         },
       );
@@ -613,6 +656,8 @@ class CanvasLogic {
     return node;
   }
 
+  NodeModel? get selectedVisualizationTarget => selectedNode;
+
   List<Dataset> get datasetsForSelectedVisualizationNode {
     final NodeModel? node = selectedVisualizationNode;
     if (node == null) {
@@ -624,7 +669,7 @@ class CanvasLogic {
 
   List<Dataset> datasetsForVisualizationNode(String nodeId) {
     final NodeModel? node = _findNode(nodeId);
-    if (node == null || node.type is! VisualizationNodeType) {
+    if (node == null) {
       return <Dataset>[];
     }
 
@@ -633,6 +678,39 @@ class CanvasLogic {
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
         .toList()
       ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+  }
+
+  bool isVisualizationNode(NodeModel? node) => node?.type is VisualizationNodeType;
+
+  bool isMarkerEditNode(NodeModel? node) => node?.type is AddRemoveMarkersNodeType;
+
+  bool canVisualizeNode(NodeModel? node) {
+    if (node == null) {
+      return false;
+    }
+    if (node.type is VisualizationNodeType) {
+      return true;
+    }
+    if (node.type is PSDNodeType) {
+      return true;
+    }
+    return node.outputPorts.any((PortSpec port) {
+      return port.type == PortType.signal;
+    });
+  }
+
+  String visualizationViewForNode(NodeModel node) {
+    if (node.type is VisualizationNodeType) {
+      final List<NodeModel> parents = _immediateParents(node.id);
+      if (parents.any((NodeModel parent) => parent.type is PSDNodeType)) {
+        return 'psd';
+      }
+      if (parents.any((NodeModel parent) => parent.type.title.contains('Time-Frequency'))) {
+        return 'time_frequency';
+      }
+      return 'raw';
+    }
+    return node.type is PSDNodeType ? 'psd' : 'raw';
   }
 
   List<String> processingStepsForNode(String nodeId) {
@@ -651,6 +729,19 @@ class CanvasLogic {
   }
 
   int _lastRunDatasetCount = 0;
+
+  Future<void> prepareRunUi(String label) async {
+    runActivity.value = RunActivity(
+      label: label,
+      detail: 'Initializing...',
+    );
+    // Let the popup menu dismiss and the progress UI paint before heavy work starts.
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+  }
+
+  void finishRunUi() {
+    runActivity.value = null;
+  }
 
   Future<void> runThisStep(String nodeId) async {
     await _runNodeSet(<String>{nodeId});
@@ -727,15 +818,11 @@ class CanvasLogic {
     for (final String importNodeId in upstreamImports) {
       final NodeModel? importNode = _findNode(importNodeId);
       if (importNode == null) continue;
-      final List<dynamic> selectedDatasetIds =
-          (importNode.params['selectedDatasetIds'] as List<dynamic>? ??
-              <dynamic>[]);
-      for (final Dataset dataset in datasets.values) {
-        if (selectedDatasetIds.contains(dataset.id) ||
-            selectedDatasetIds.contains(dataset.path)) {
-          datasetIds.add(dataset.id);
-        }
-      }
+      final Set<String> importDatasetIds = _selectedDatasetIdsForNode(
+        importNode,
+        datasets.values.map((Dataset dataset) => dataset.id).toSet(),
+      );
+      datasetIds.addAll(importDatasetIds);
     }
     return _selectedDatasetIdsForNode(node, datasetIds);
   }
@@ -920,6 +1007,36 @@ class CanvasLogic {
     }
   }
 
+  void applyMarkersFromVisualization({
+    required String nodeId,
+    required Dataset dataset,
+    required List<dynamic> rawMarkers,
+  }) {
+    final NodeModel? sourceNode = _markerEditSourceNode(nodeId);
+    if (sourceNode == null) {
+      return;
+    }
+
+    final NodeModel markerNode = _ensureMarkerNode(sourceNode);
+    markerNode.params['markers'] = rawMarkers;
+
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries != null) {
+      dataset.timeSeries = timeSeries.copyWith(
+        markers: AddRemoveMarkersNodeType.markersForDataset(
+          dataset.id,
+          rawMarkers,
+        ),
+      );
+    }
+
+    markerNode.datasetStates[dataset.id] = DatasetState.done;
+    _markDescendantsStale(markerNode.id, dataset.id);
+    selectedNodeId = markerNode.id;
+    selectedConnectionIndex = null;
+    _clearPendingConnection();
+  }
+
   void _showStatusSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -927,15 +1044,6 @@ class CanvasLogic {
   }
 
   Color _nodeColor(NodeModel node) {
-    if (node.id == selectedNodeId) {
-      return Colors.blueGrey.shade600;
-    }
-
-    switch (node.type.title) {
-      default:
-        break;
-    }
-
     switch (node.type.category) {
       case NodeCategory.import:
         return Colors.teal.shade700;
@@ -952,11 +1060,18 @@ class CanvasLogic {
     }
   }
 
-  String? _statusLabel(NodeModel node) {
-    if (_pendingFromNodeId == node.id) {
-      return 'Connecting...';
-    }
+  bool _isHighlighted(NodeModel node) {
+    return node.id == selectedNodeId || node.id == _pendingFromNodeId;
+  }
 
+  Color _nodeHighlightColor(NodeModel node) {
+    if (node.id == _pendingFromNodeId) {
+      return const Color(0xFFC4B35F);
+    }
+    return const Color(0xFF958A52);
+  }
+
+  String? _statusLabel(NodeModel node) {
     switch (node.visualState) {
       case DatasetState.notReady:
         return null;
@@ -987,6 +1102,73 @@ class CanvasLogic {
         lowestNode.position.dy + _cardHeight + _spawnGap,
       ),
     );
+  }
+
+  NodeModel? _markerEditSourceNode(String nodeId) {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null) {
+      return null;
+    }
+    if (node.type is AddRemoveMarkersNodeType) {
+      return node;
+    }
+    if (node.type is VisualizationNodeType) {
+      final List<NodeModel> parents = _immediateParents(node.id)
+          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
+          .toList(growable: false);
+      if (parents.isNotEmpty) {
+        return parents.first;
+      }
+      return null;
+    }
+    return node;
+  }
+
+  NodeModel _ensureMarkerNode(NodeModel sourceNode) {
+    if (sourceNode.type is AddRemoveMarkersNodeType) {
+      return sourceNode;
+    }
+
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['fromNode'] != sourceNode.id) {
+        continue;
+      }
+      final NodeModel? child = _findNode(connection['toNode'] as String);
+      if (child?.type is AddRemoveMarkersNodeType) {
+        return child!;
+      }
+    }
+
+    final NodeType markerType = AddRemoveMarkersNodeType();
+    final NodeModel markerNode = _buildNode(
+      type: markerType,
+      position: snapToGrid(
+        Offset(
+          sourceNode.position.dx,
+          sourceNode.position.dy + _cardHeight + _spawnGap,
+        ),
+      ),
+      params: <String, dynamic>{
+        ...markerType.defaultParams,
+        if (sourceNode.params['selectedDatasetIds'] != null)
+          'selectedDatasetIds': List<dynamic>.from(
+            sourceNode.params['selectedDatasetIds'] as List<dynamic>,
+          ),
+      },
+    );
+    nodes.add(markerNode);
+
+    final Map<String, int>? portPair = _matchingPortPair(sourceNode, markerNode);
+    if (portPair != null) {
+      connections.add(<String, dynamic>{
+        'fromNode': sourceNode.id,
+        'fromPort': portPair['fromPort']!,
+        'toNode': markerNode.id,
+        'toPort': portPair['toPort']!,
+      });
+    }
+
+    return markerNode;
   }
 
   double _snapCoordinate(double value) {

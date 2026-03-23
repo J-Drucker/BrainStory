@@ -4,6 +4,8 @@ import 'import_node.dart';
 import 'bandpass_node.dart';
 import 'psd_node.dart';
 import 'resample_node.dart';
+import 'matrix_transform_nodes.dart';
+import 'add_remove_markers_node.dart';
 import 'debug_output_node.dart';
 import 'export_edf_node.dart';
 
@@ -61,6 +63,19 @@ class NodeRegistry {
     NodeRegistryEntry(group: NodeGroup.transform, create: () => ResampleNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => BandpassNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => MicrostatesNodeType()),
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => PCANodeType()),
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => ICANodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => EigenvalueDecompositionNodeType(),
+    ),
+
+    // Markers and metadata
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
+      create: () => AddRemoveMarkersNodeType(),
+    ),
 
     // Visualize
     NodeRegistryEntry(group: NodeGroup.visualize, create: () => DebugOutputNodeType()),

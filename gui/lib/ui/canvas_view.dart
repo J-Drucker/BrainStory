@@ -58,93 +58,170 @@ class _CanvasViewState extends State<CanvasView> {
           Size(canvasViewportWidth, constraints.maxHeight),
         );
 
-        return KeyboardListener(
-          focusNode: _keyboardFocusNode,
-          autofocus: true,
-          onKeyEvent: (KeyEvent event) {
-            final bool isAltKey =
-                event.logicalKey == LogicalKeyboardKey.altLeft ||
-                event.logicalKey == LogicalKeyboardKey.altRight;
-            if (isAltKey) {
-              final bool nextValue = event is KeyDownEvent || event is KeyRepeatEvent;
-              if (_altSnapOverride != nextValue) {
-                setState(() {
-                  _altSnapOverride = nextValue;
-                });
-              }
-            }
-            if (event is KeyDownEvent &&
-                event.logicalKey == LogicalKeyboardKey.delete) {
-              setState(() {
-                if (logic.selectedConnectionIndex != null) {
-                  logic.deleteSelectedConnection();
-                } else {
-                  logic.deleteSelected();
-                }
-              });
-            }
-          },
-          child: Row(
-            children: <Widget>[
-              logic.sidebar(
-                width: leftRailWidth,
-                export: () => logic.export(context),
-                clear: () => setState(() => logic.clearAll()),
-                update: () => setState(() {}),
-              ),
-              Expanded(
-                child: ClipRect(
-                  child: Scrollbar(
-                    controller: _verticalScrollController,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
-                      controller: _verticalScrollController,
-                      primary: false,
-                      scrollDirection: Axis.vertical,
-                      child: Scrollbar(
-                        controller: _horizontalScrollController,
-                        thumbVisibility: true,
-                        notificationPredicate: (ScrollNotification notification) {
-                          return notification.metrics.axis == Axis.horizontal;
-                        },
-                        child: SingleChildScrollView(
-                          controller: _horizontalScrollController,
-                          primary: false,
-                          scrollDirection: Axis.horizontal,
-                          child: GestureDetector(
-                            onTapDown: (TapDownDetails details) {
-                              _keyboardFocusNode.requestFocus();
-                              setState(() {
-                                if (!logic.selectConnectionAt(
-                                  _globalToRawCanvasOffset(details.globalPosition),
-                                )) {
-                                  logic.selectedConnectionIndex = null;
-                                  logic.clearConnectionDraft();
-                                }
-                              });
-                            },
-                            onSecondaryTapDown: (TapDownDetails details) {
-                              setState(() {
-                                if (!logic.deleteConnectionAt(
-                                  _globalToRawCanvasOffset(details.globalPosition),
-                                )) {
-                                  logic.selectedConnectionIndex = null;
-                                }
-                              });
-                            },
-                            child: SizedBox(
-                              key: _canvasKey,
-                              width: canvasSize.width,
-                              height: canvasSize.height,
-                              child: Stack(
-                                children: <Widget>[
-                                  ...logic.connectionWidgets(),
-                                  ...logic.nodeWidgets(
-                                    context: context,
-                                    update: () => setState(() {}),
-                                    translateDropOffset: _globalToCanvasOffset,
-                                    openVisualizationWindow: _openVisualizationWindow,
+        return ValueListenableBuilder<RunActivity?>(
+          valueListenable: logic.runActivity,
+          builder: (BuildContext context, RunActivity? runActivity, Widget? child) {
+            return Stack(
+              children: <Widget>[
+                KeyboardListener(
+                  focusNode: _keyboardFocusNode,
+                  autofocus: true,
+                  onKeyEvent: (KeyEvent event) {
+                    final bool isAltKey =
+                        event.logicalKey == LogicalKeyboardKey.altLeft ||
+                        event.logicalKey == LogicalKeyboardKey.altRight;
+                    if (isAltKey) {
+                      final bool nextValue = event is KeyDownEvent || event is KeyRepeatEvent;
+                      if (_altSnapOverride != nextValue) {
+                        setState(() {
+                          _altSnapOverride = nextValue;
+                        });
+                      }
+                    }
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.delete) {
+                      setState(() {
+                        if (logic.selectedConnectionIndex != null) {
+                          logic.deleteSelectedConnection();
+                        } else {
+                          logic.deleteSelected();
+                        }
+                      });
+                    }
+                  },
+                  child: Row(
+                    children: <Widget>[
+                      logic.sidebar(
+                        width: leftRailWidth,
+                        export: () => logic.export(context),
+                        clear: () => setState(() => logic.clearAll()),
+                        update: () => setState(() {}),
+                      ),
+                      Expanded(
+                        child: ClipRect(
+                          child: Scrollbar(
+                            controller: _verticalScrollController,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _verticalScrollController,
+                              primary: false,
+                              scrollDirection: Axis.vertical,
+                              child: Scrollbar(
+                                controller: _horizontalScrollController,
+                                thumbVisibility: true,
+                                notificationPredicate: (ScrollNotification notification) {
+                                  return notification.metrics.axis == Axis.horizontal;
+                                },
+                                child: SingleChildScrollView(
+                                  controller: _horizontalScrollController,
+                                  primary: false,
+                                  scrollDirection: Axis.horizontal,
+                                  child: GestureDetector(
+                                    onTapDown: (TapDownDetails details) {
+                                      _keyboardFocusNode.requestFocus();
+                                      setState(() {
+                                        if (!logic.selectConnectionAt(
+                                          _globalToRawCanvasOffset(details.globalPosition),
+                                        )) {
+                                          logic.selectedConnectionIndex = null;
+                                          logic.clearConnectionDraft();
+                                        }
+                                      });
+                                    },
+                                    onSecondaryTapDown: (TapDownDetails details) {
+                                      setState(() {
+                                        if (!logic.deleteConnectionAt(
+                                          _globalToRawCanvasOffset(details.globalPosition),
+                                        )) {
+                                          logic.selectedConnectionIndex = null;
+                                        }
+                                      });
+                                    },
+                                    child: SizedBox(
+                                      key: _canvasKey,
+                                      width: canvasSize.width,
+                                      height: canvasSize.height,
+                                      child: Stack(
+                                        children: <Widget>[
+                                          ...logic.connectionWidgets(),
+                                          ...logic.nodeWidgets(
+                                            context: context,
+                                            update: () => setState(() {}),
+                                            translateDropOffset: _globalToCanvasOffset,
+                                            openVisualizationWindow: _openVisualizationWindow,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: sideRailWidth,
+                        child: Column(
+                          children: <Widget>[
+                            Expanded(
+                              child: DatasetPanel(
+                                logic: logic,
+                                onChanged: () => setState(() {}),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: VisualizationPanel(
+                                logic: logic,
+                                onChanged: () => setState(() {}),
+                                onOpenWindow: _openSelectedVisualizationWindow,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (runActivity != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.14),
+                        alignment: Alignment.topCenter,
+                        padding: const EdgeInsets.only(top: 20),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          child: Card(
+                            elevation: 10,
+                            color: Colors.grey.shade900,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    runActivity.label,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (runActivity.detail.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      runActivity.detail,
+                                      style: const TextStyle(color: Colors.white70),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 12),
+                                  const LinearProgressIndicator(),
                                 ],
                               ),
                             ),
@@ -153,31 +230,9 @@ class _CanvasViewState extends State<CanvasView> {
                       ),
                     ),
                   ),
-                ),
-              ),
-              SizedBox(
-                width: sideRailWidth,
-                child: Column(
-                  children: <Widget>[
-                    Expanded(
-                      child: DatasetPanel(
-                        logic: logic,
-                        onChanged: () => setState(() {}),
-                      ),
-                    ),
-                    Expanded(
-                      flex: 2,
-                      child: VisualizationPanel(
-                        logic: logic,
-                        onChanged: () => setState(() {}),
-                        onOpenWindow: _openSelectedVisualizationWindow,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+              ],
+            );
+          },
         );
       },
     );
@@ -206,11 +261,11 @@ class _CanvasViewState extends State<CanvasView> {
   }
 
   void _openSelectedVisualizationWindow() {
-    final selectedNode = logic.selectedVisualizationNode;
-    if (selectedNode == null) {
+    final NodeModel? selectedTarget = logic.selectedVisualizationTarget;
+    if (selectedTarget == null || !logic.canVisualizeNode(selectedTarget)) {
       return;
     }
-    _openVisualizationWindow(selectedNode);
+    _openVisualizationWindow(selectedTarget);
   }
 
   void _openVisualizationWindow(NodeModel node) {

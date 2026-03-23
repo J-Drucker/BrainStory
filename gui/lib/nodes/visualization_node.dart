@@ -13,7 +13,6 @@ class VisualizationNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => {
     'backend': 'mne',
-    'view': 'raw',
     'window_sec': 5.0,
     'channel': 'all',
     'display_mode': 'panel',
@@ -35,7 +34,6 @@ class VisualizationNodeType extends NodeType {
         required void Function(void Function()) setState,
       }) {
     params.putIfAbsent('backend', () => 'mne');
-    params.putIfAbsent('view', () => 'raw');
     params.putIfAbsent('window_sec', () => 5.0);
     params.putIfAbsent('channel', () => 'all');
     params.putIfAbsent('display_mode', () => 'panel');
@@ -58,19 +56,9 @@ class VisualizationNodeType extends NodeType {
             });
           },
         ),
-        DropdownButtonFormField<String>(
-          initialValue: params['view']?.toString() ?? 'raw',
-          decoration: const InputDecoration(labelText: 'View'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(value: 'raw', child: Text('Raw')),
-            DropdownMenuItem<String>(value: 'psd', child: Text('PSD')),
-          ],
-          onChanged: (String? value) {
-            if (value == null) return;
-            setState(() {
-              params['view'] = value;
-            });
-          },
+        const Text(
+          'View type is inferred automatically from the upstream node output.',
+          style: TextStyle(color: Colors.black54),
         ),
         const SizedBox(height: 12),
         const Text(
