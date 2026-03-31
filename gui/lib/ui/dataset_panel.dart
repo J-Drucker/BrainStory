@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../nodes/import_node.dart';
 import 'canvas_logic.dart';
 
 class DatasetPanel extends StatelessWidget {
@@ -58,10 +59,21 @@ class DatasetPanel extends StatelessWidget {
                 final ds = datasets[index];
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    ds.label,
-                    style: const TextStyle(color: Colors.white),
-                    overflow: TextOverflow.ellipsis,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        ds.label,
+                        style: const TextStyle(color: Colors.white),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (datasetSourceName(ds) != ds.label)
+                        Text(
+                          datasetSourceName(ds),
+                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
                   ),
                 );
               },

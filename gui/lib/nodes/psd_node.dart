@@ -103,7 +103,11 @@ class PSDNodeType extends NodeType {
       // No signal loaded yet
       return;
     }
-    final List<double> samples = timeSeries.samples;
+    final List<double> samples = timeSeries.primaryChannel;
+    if (samples.isEmpty) {
+      dataset.spectrum = null;
+      return;
+    }
     final double fs = timeSeries.sampleRate;
 
     final fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;

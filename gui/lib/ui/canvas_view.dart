@@ -23,7 +23,6 @@ class _CanvasViewState extends State<CanvasView> {
   late final ScrollController _verticalScrollController;
   late final ScrollController _horizontalScrollController;
   final GlobalKey _canvasKey = GlobalKey();
-  bool _altSnapOverride = false;
 
   CanvasLogic get logic => widget.logic;
 
@@ -63,37 +62,41 @@ class _CanvasViewState extends State<CanvasView> {
           builder: (BuildContext context, RunActivity? runActivity, Widget? child) {
             return Stack(
               children: <Widget>[
-                KeyboardListener(
+                Shortcuts(
+                  shortcuts: const <ShortcutActivator, Intent>{
+                    SingleActivator(LogicalKeyboardKey.delete): ActivateIntent(),
+                  },
+                  child: Actions(
+                    actions: <Type, Action<Intent>>{
+                      ActivateIntent: CallbackAction<ActivateIntent>(
+                        onInvoke: (ActivateIntent intent) {
+                          setState(() {
+                            if (logic.selectedConnectionIndex != null) {
+                              logic.deleteSelectedConnection();
+                            } else {
+                              logic.deleteSelected();
+                            }
+                          });
+                          return null;
+                        },
+                      ),
+                    },
+                    child: Focus(
                   focusNode: _keyboardFocusNode,
                   autofocus: true,
-                  onKeyEvent: (KeyEvent event) {
-                    final bool isAltKey =
-                        event.logicalKey == LogicalKeyboardKey.altLeft ||
-                        event.logicalKey == LogicalKeyboardKey.altRight;
-                    if (isAltKey) {
-                      final bool nextValue = event is KeyDownEvent || event is KeyRepeatEvent;
-                      if (_altSnapOverride != nextValue) {
-                        setState(() {
-                          _altSnapOverride = nextValue;
-                        });
-                      }
-                    }
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.delete) {
-                      setState(() {
-                        if (logic.selectedConnectionIndex != null) {
-                          logic.deleteSelectedConnection();
-                        } else {
-                          logic.deleteSelected();
-                        }
-                      });
-                    }
-                  },
-                  child: Row(
+                      child: Row(
                     children: <Widget>[
                       logic.sidebar(
                         width: leftRailWidth,
-                        export: () => logic.export(context),
+                        load: () async {
+                          await logic.loadBrainStory(context);
+                          if (mounted) {
+                            setState(() {});
+                          }
+                        },
+                        export: () async {
+                          await logic.exportBrainStory(context);
+                        },
                         clear: () => setState(() => logic.clearAll()),
                         update: () => setState(() {}),
                       ),
@@ -182,6 +185,8 @@ class _CanvasViewState extends State<CanvasView> {
                         ),
                       ),
                     ],
+                      ),
+                    ),
                   ),
                 ),
                 if (runActivity != null)
@@ -245,7 +250,8 @@ class _CanvasViewState extends State<CanvasView> {
       return globalOffset;
     }
     final Offset localOffset = renderBox.globalToLocal(globalOffset);
-    if (_altSnapOverride) {
+    final bool altSnapOverride = HardwareKeyboard.instance.isAltPressed;
+    if (altSnapOverride) {
       return localOffset;
     }
     return logic.snapToGrid(localOffset);

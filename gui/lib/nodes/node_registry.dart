@@ -3,9 +3,11 @@ import 'node_type.dart';
 import 'import_node.dart';
 import 'bandpass_node.dart';
 import 'psd_node.dart';
+import 'realign_node.dart';
 import 'resample_node.dart';
 import 'matrix_transform_nodes.dart';
 import 'add_remove_markers_node.dart';
+import 'segmentation_node.dart';
 import 'debug_output_node.dart';
 import 'export_edf_node.dart';
 
@@ -75,6 +77,14 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
       create: () => AddRemoveMarkersNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
+      create: () => SegmentationNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
+      create: () => RealignNodeType(),
     ),
 
     // Visualize

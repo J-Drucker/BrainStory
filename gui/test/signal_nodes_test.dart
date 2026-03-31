@@ -1,13 +1,15 @@
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
 import 'package:brainstory_gui/nodes/export_edf_node.dart';
 import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
+import 'package:brainstory_gui/nodes/realign_node.dart';
 import 'package:brainstory_gui/nodes/resample_node.dart';
+import 'package:brainstory_gui/nodes/segmentation_node.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -142,6 +144,31 @@ time,Fz,Cz
     expect(spectrum.freqs[peakIndex], closeTo(targetFrequency, 1.5));
   });
 
+  test('PSD node uses the primary channel when time series is multichannel', () async {
+    final Dataset dataset = Dataset('psd-multichannel', label: 'Multi');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: <List<double>>[
+        List<double>.generate(256, (int i) {
+          final double t = i / 256.0;
+          return math.sin(2 * math.pi * 10 * t);
+        }),
+        List<double>.filled(256, 0.0),
+      ],
+      sampleRate: 256.0,
+      channelLabels: const <String>['Fz', 'Cz'],
+    );
+
+    await PSDNodeType().run(dataset, <String, dynamic>{
+      'fLow': 1.0,
+      'fHigh': 40.0,
+      'outputMode': 'averaged',
+    });
+
+    expect(dataset.spectrum, isNotNull);
+    expect(dataset.spectrum!.frequencies, isNotEmpty);
+    expect(dataset.spectrum!.power, isNotEmpty);
+  });
+
   test('loadDatasetSignal imports the sample EDF fixture', () async {
     final ParsedSignalData parsed = await loadDatasetSignal(
       '..\\tests\\Zhao_Alex_2024-09-24_16-47-37_highpass_Segment_0.edf',
@@ -217,12 +244,127 @@ time,Fz,Cz
       path: 'C:\\temp\\example.csv',
     );
 
-    final File target = resolveEdfExportFile(
+    final String target = resolveEdfExportFile(
       dataset: dataset,
       outputDirectory: '',
       filenameSuffix: '_brainstory',
     );
 
-    expect(target.path, 'C:\\temp\\example_brainstory.edf');
+    expect(target, 'C:\\temp\\example_brainstory.edf');
   });
+
+  test('factor resolves the matching level for a marker key', () {
+    const Factor factor = Factor(
+      name: 'Condition',
+      levels: <FactorLevel>[
+        FactorLevel(
+          name: 'Target',
+          markerKeys: <String>{'stim/target', 'stim/go'},
+        ),
+        FactorLevel(
+          name: 'Non-target',
+          markerKeys: <String>{'stim/nontarget'},
+        ),
+      ],
+    );
+
+    expect(factor.levelForMarker('stim/go')?.name, 'Target');
+    expect(factor.levelForMarker('missing'), isNull);
+    expect(factor.isValid, isTrue);
+  });
+
+  test('factor becomes invalid when a marker belongs to multiple levels', () {
+    const Factor factor = Factor(
+      name: 'Artifact State',
+      levels: <FactorLevel>[
+        FactorLevel(
+          name: 'Clean',
+          markerKeys: <String>{'segment/keep'},
+        ),
+        FactorLevel(
+          name: 'Artifact',
+          markerKeys: <String>{'segment/keep', 'segment/reject'},
+        ),
+      ],
+    );
+
+    expect(factor.markerBelongsToMultipleLevels(), isTrue);
+    expect(factor.isValid, isFalse);
+  });
+
+  test('segmentation node creates event-based segments', () async {
+    final Dataset dataset = Dataset('segments', label: 'Segmented');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: <List<double>>[
+        List<double>.generate(1000, (int index) => index.toDouble()),
+      ],
+      sampleRate: 1000.0,
+      channelLabels: const <String>['Cz'],
+      markers: const <TimeMarker>[
+        TimeMarker(timeSeconds: 0.5, label: 'Pulse', kind: 'event'),
+      ],
+    );
+
+    await SegmentationNodeType().run(dataset, <String, dynamic>{
+      'mode': 'events',
+      'eventWindowStartMs': -100.0,
+      'eventWindowStopMs': 100.0,
+      'includedMarkers': <String, dynamic>{'event|Pulse': true},
+    });
+
+    expect(dataset.segmentedTimeSeries, isNotNull);
+    expect(dataset.segmentedTimeSeries!.segmentCount, 1);
+    expect(dataset.segmentedTimeSeries!.segments.first.sampleCount, 200);
+    expect(
+      dataset.segmentedTimeSeries!.segments.first.anchorTimeSeconds,
+      closeTo(0.5, 0.0001),
+    );
+  });
+
+  test('realign node shifts segmented artifacts back into alignment', () async {
+    final List<double> reference = List<double>.filled(64, 0.0);
+    reference[20] = 5.0;
+    reference[21] = 2.5;
+    final List<double> shifted = List<double>.filled(64, 0.0);
+    shifted[24] = 5.0;
+    shifted[25] = 2.5;
+
+    final Dataset dataset = Dataset('realign', label: 'Realign');
+    dataset.segmentedTimeSeries = SegmentedTimeSeriesData(
+      sampleRate: 1000.0,
+      channelLabels: const <String>['Cz'],
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[reference],
+          startSeconds: 0.0,
+          stopSeconds: 0.064,
+          label: 'A',
+          kind: 'event',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[shifted],
+          startSeconds: 0.1,
+          stopSeconds: 0.164,
+          label: 'B',
+          kind: 'event',
+        ),
+      ],
+    );
+
+    await RealignNodeType().run(dataset, <String, dynamic>{
+      'upsampleRateHz': 100000.0,
+      'method': 'cubic_spline',
+      'maxShiftMs': 10.0,
+    });
+
+    final SegmentedTimeSeriesData? aligned = dataset.segmentedTimeSeries;
+    expect(aligned, isNotNull);
+    final int referencePeak =
+        aligned!.segments.first.primaryChannel.indexOf(aligned.segments.first.primaryChannel.reduce(math.max));
+    final int shiftedPeak =
+        aligned.segments.last.primaryChannel.indexOf(aligned.segments.last.primaryChannel.reduce(math.max));
+    expect((shiftedPeak - referencePeak).abs(), lessThanOrEqualTo(1));
+    expect(aligned.segments.last.appliedShiftMs.abs(), greaterThan(0.5));
+  });
+
 }

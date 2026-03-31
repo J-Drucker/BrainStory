@@ -389,7 +389,11 @@ class _VisualizationChart extends StatelessWidget {
     }
 
     if (view == 'psd') {
-      return _PsdChart(datasets: datasets);
+      return _PsdChart(
+        datasets: datasets,
+        params: params,
+        onChanged: onChanged,
+      );
     }
     if (comparisonNode && datasets.length > 1) {
       return const _ChartMessage(
@@ -419,12 +423,24 @@ class _VisualizationChart extends StatelessWidget {
 class _PsdChart extends StatelessWidget {
   const _PsdChart({
     required this.datasets,
+    required this.params,
+    required this.onChanged,
   });
 
   final List<Dataset> datasets;
+  final Map<String, dynamic> params;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context) {
+    params.putIfAbsent('psd_view_max_hz', () => 40.0);
+    params.putIfAbsent('psd_view_scale_mode', () => 'auto');
+    params.putIfAbsent('psd_view_max_power', () => 10.0);
+    params.putIfAbsent('psd_view_log_y', () => false);
+
+    final double maxHz =
+        (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
+    final bool logY = params['psd_view_log_y'] as bool? ?? false;
     final List<_SeriesData> series = <_SeriesData>[];
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
@@ -436,9 +452,19 @@ class _PsdChart extends StatelessWidget {
       }
 
       final int count = math.min(freqs.length, power.length);
-      final List<FlSpot> points = <FlSpot>[
-        for (int i = 0; i < count; i++) FlSpot(freqs[i], power[i]),
-      ];
+      final List<FlSpot> points = <FlSpot>[];
+      for (int i = 0; i < count; i++) {
+        if (freqs[i] <= maxHz) {
+          final double sourcePower = power[i];
+          final double plotPower = logY
+              ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) / math.ln10
+              : sourcePower;
+          points.add(FlSpot(freqs[i], plotPower));
+        }
+      }
+      if (points.isEmpty) {
+        continue;
+      }
 
       series.add(
         _SeriesData(
@@ -461,31 +487,99 @@ class _PsdChart extends StatelessWidget {
         series.expand((_SeriesData s) => s.points.map((FlSpot p) => p.y)).toList();
     final List<double> allX =
         series.expand((_SeriesData s) => s.points.map((FlSpot p) => p.x)).toList();
-    final double minY = allY.reduce(math.min);
-    final double maxY = allY.reduce(math.max);
-    final double amplitudePad = math.max(0.1, (maxY - minY) * 0.15);
+    final String scaleMode = (params['psd_view_scale_mode'] ?? 'auto').toString();
+    final double configuredMaxPower =
+        (params['psd_view_max_power'] as num?)?.toDouble() ?? 10.0;
+    final double dataMinY = allY.reduce(math.min);
+    final double dataMaxY = allY.reduce(math.max);
+    final double minY = math.min(0.0, dataMinY);
+    final double maxY = scaleMode == 'fixed'
+        ? math.max(configuredMaxPower, minY + 0.001)
+        : math.max(dataMaxY * 1.1, minY + 0.001);
+    final double maxX = allX.reduce(math.max);
 
     return _ChartCard(
       title: 'PSD',
       subtitle: '${series.length} overlay${series.length == 1 ? '' : 's'}',
       legend: series,
+      toolbar: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: <Widget>[
+          _PsdMenuChip<double>(
+            label: 'Range',
+            valueLabel: '${maxHz.toStringAsFixed(0)} Hz',
+            options: const <double>[10, 20, 40, 80, 120],
+            itemLabel: (double value) => '${value.toStringAsFixed(0)} Hz',
+            onSelected: (double value) {
+              params['psd_view_max_hz'] = value;
+              onChanged();
+            },
+          ),
+          _PsdMenuChip<String>(
+            label: 'Scale',
+            valueLabel: scaleMode == 'fixed'
+                ? '${configuredMaxPower.toStringAsFixed(1)} uV^2/Hz'
+                : 'Auto',
+            options: const <String>['auto', 'fixed'],
+            itemLabel: (String value) => value == 'auto' ? 'Auto' : 'Fixed',
+            onSelected: (String value) {
+              params['psd_view_scale_mode'] = value;
+              onChanged();
+            },
+          ),
+          if (scaleMode == 'fixed')
+            _PsdMenuChip<double>(
+              label: 'Max',
+              valueLabel: '${configuredMaxPower.toStringAsFixed(1)} uV^2/Hz',
+              options: const <double>[0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200],
+              itemLabel: (double value) =>
+                  '${value.toStringAsFixed(value < 1 ? 1 : 0)} uV^2/Hz',
+              onSelected: (double value) {
+                params['psd_view_max_power'] = value;
+                onChanged();
+              },
+            ),
+          _PsdMenuChip<bool>(
+            label: 'Y Axis',
+            valueLabel: logY ? 'Log10' : 'Linear',
+            options: const <bool>[false, true],
+            itemLabel: (bool value) => value ? 'Log10' : 'Linear',
+            onSelected: (bool value) {
+              params['psd_view_log_y'] = value;
+              onChanged();
+            },
+          ),
+        ],
+      ),
       child: LineChart(
         LineChartData(
-          minX: allX.reduce(math.min),
-          maxX: allX.reduce(math.max),
-          minY: minY - amplitudePad,
-          maxY: maxY + amplitudePad,
-          gridData: const FlGridData(show: true),
+          minX: 0,
+          maxX: maxX,
+          minY: minY,
+          maxY: maxY,
+          gridData: FlGridData(
+            show: true,
+            horizontalInterval: _niceAxisStep(maxY - minY),
+            verticalInterval: _niceAxisStep(maxX),
+          ),
+          rangeAnnotations: RangeAnnotations(
+            verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
+          ),
           borderData: FlBorderData(show: false),
           titlesData: _chartTitles(
-            bottomLabel: 'Hz',
-            leftLabel: 'uV^2/Hz',
+            minX: 0,
+            maxX: maxX,
+            minY: minY,
+            maxY: maxY,
+            logY: logY,
           ),
+          clipData: const FlClipData.all(),
           lineBarsData: series
               .map(
                 (_SeriesData seriesData) => LineChartBarData(
                   spots: seriesData.points,
-                  isCurved: true,
+                  isCurved: false,
                   barWidth: 2,
                   color: seriesData.color,
                   dotData: const FlDotData(show: false),
@@ -503,12 +597,14 @@ class _ChartCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.toolbar,
     this.legend = const <_SeriesData>[],
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final Widget? toolbar;
   final List<_SeriesData> legend;
 
   @override
@@ -535,6 +631,10 @@ class _ChartCard extends StatelessWidget {
               subtitle,
               style: const TextStyle(color: Colors.white70),
             ),
+            if (toolbar != null) ...<Widget>[
+              const SizedBox(height: 10),
+              toolbar!,
+            ],
             if (legend.isNotEmpty) ...<Widget>[
               const SizedBox(height: 10),
               Wrap(
@@ -609,6 +709,79 @@ class _SeriesData {
   final String subtitle;
 }
 
+class _PsdMenuChip<T> extends StatelessWidget {
+  const _PsdMenuChip({
+    required this.label,
+    required this.valueLabel,
+    required this.options,
+    required this.itemLabel,
+    required this.onSelected,
+  });
+
+  final String label;
+  final String valueLabel;
+  final List<T> options;
+  final String Function(T value) itemLabel;
+  final ValueChanged<T> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<T>(
+      onSelected: onSelected,
+      itemBuilder: (BuildContext context) {
+        return options
+            .map(
+              (T option) => PopupMenuItem<T>(
+                value: option,
+                child: Text(itemLabel(option)),
+              ),
+            )
+            .toList(growable: false);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          '$label: $valueLabel',
+          style: const TextStyle(color: Colors.white70),
+        ),
+      ),
+    );
+  }
+}
+
+class _BandRange {
+  const _BandRange(this.startHz, this.endHz, this.color);
+
+  final double startHz;
+  final double endHz;
+  final Color color;
+}
+
+List<VerticalRangeAnnotation> _canonicalBandAnnotations(double maxHz) {
+  final List<_BandRange> bands = <_BandRange>[
+    const _BandRange(0, 4, Color(0x223A86FF)),
+    const _BandRange(4, 8, Color(0x2237C871)),
+    const _BandRange(8, 12, Color(0x22FFD54F)),
+    const _BandRange(12, 40, Color(0x22FF8A65)),
+    _BandRange(40, maxHz, const Color(0x22CE93D8)),
+  ];
+
+  return bands
+      .where((_BandRange band) => band.startHz < maxHz && band.endHz > band.startHz)
+      .map(
+        (_BandRange band) => VerticalRangeAnnotation(
+          x1: band.startHz,
+          x2: math.min(band.endHz, maxHz),
+          color: band.color,
+        ),
+      )
+      .toList(growable: false);
+}
+
 Color _seriesColor(int index) {
   const List<Color> palette = <Color>[
     Colors.cyanAccent,
@@ -661,31 +834,101 @@ class _ChartMessage extends StatelessWidget {
 }
 
 FlTitlesData _chartTitles({
-  required String bottomLabel,
-  required String leftLabel,
+  required double minX,
+  required double maxX,
+  required double minY,
+  required double maxY,
+  required bool logY,
 }) {
+  final double xInterval = _niceAxisStep(maxX - minX);
+  final double yInterval = _niceAxisStep(maxY - minY);
   return FlTitlesData(
     topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
     rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
     bottomTitles: AxisTitles(
       axisNameWidget: Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: Text(
-          bottomLabel,
-          style: const TextStyle(color: Colors.white70),
+        child: const Text(
+          'Hz',
+          style: TextStyle(color: Colors.white70),
         ),
       ),
-      sideTitles: const SideTitles(showTitles: true, reservedSize: 28),
+      sideTitles: SideTitles(
+        showTitles: true,
+        reservedSize: 28,
+        interval: xInterval,
+        getTitlesWidget: (double value, TitleMeta meta) {
+          if (value < minX - 0.001 || value > maxX + 0.001) {
+            return const SizedBox.shrink();
+          }
+          return SideTitleWidget(
+            axisSide: meta.axisSide,
+            child: Text(
+              value.toStringAsFixed(0),
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          );
+        },
+      ),
     ),
     leftTitles: AxisTitles(
       axisNameWidget: RotatedBox(
         quarterTurns: 3,
         child: Text(
-          leftLabel,
+          logY ? 'log10(uV^2/Hz)' : 'uV^2/Hz',
           style: const TextStyle(color: Colors.white70),
         ),
       ),
-      sideTitles: const SideTitles(showTitles: true, reservedSize: 42),
+      sideTitles: SideTitles(
+        showTitles: true,
+        reservedSize: 56,
+        interval: yInterval,
+        getTitlesWidget: (double value, TitleMeta meta) {
+          if (value < minY - 0.001 || value > maxY + 0.001) {
+            return const SizedBox.shrink();
+          }
+          return SideTitleWidget(
+            axisSide: meta.axisSide,
+            child: Text(
+              _formatAxisValue(value, logY: logY),
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+            ),
+          );
+        },
+      ),
     ),
   );
+}
+
+double _niceAxisStep(double range) {
+  final double safeRange = range <= 0 ? 1.0 : range;
+  final double roughStep = safeRange / 4.0;
+  final double exponent =
+      math.pow(10, (math.log(roughStep) / math.ln10).floor()).toDouble();
+  final double fraction = roughStep / exponent;
+  final double niceFraction = fraction <= 1
+      ? 1
+      : fraction <= 2
+          ? 2
+          : fraction <= 5
+              ? 5
+              : 10;
+  return niceFraction * exponent;
+}
+
+String _formatAxisValue(double value, {required bool logY}) {
+  if (logY) {
+    return '1e${value.toStringAsFixed(value.truncateToDouble() == value ? 0 : 1)}';
+  }
+  final double absolute = value.abs();
+  if (absolute >= 100) {
+    return value.toStringAsFixed(0);
+  }
+  if (absolute >= 10) {
+    return value.toStringAsFixed(1);
+  }
+  if (absolute >= 1) {
+    return value.toStringAsFixed(2);
+  }
+  return value.toStringAsFixed(3);
 }

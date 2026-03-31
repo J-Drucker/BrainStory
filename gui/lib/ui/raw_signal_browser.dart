@@ -91,6 +91,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final int channelCount = channels.length;
     final double durationSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
     final int visibleChannels = _visibleChannelCount(channelCount);
+    final bool markersOnly = _rawViewMode() == 'markers_only';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -103,7 +104,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         Expanded(
           child: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
-              final double labelWidth = constraints.maxWidth < 900 ? 112 : 160;
+              final double labelWidth =
+                  markersOnly ? 0 : (constraints.maxWidth < 900 ? 112 : 160);
               final double traceWidth =
                   math.max(200, constraints.maxWidth - labelWidth);
               final double secondsPerView =
@@ -114,10 +116,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               final double timelineHeight = 28;
               final double traceAreaHeight =
                   math.max(120, constraints.maxHeight - timelineHeight - 12);
-              final double totalHeight = math.max(
-                traceAreaHeight,
-                _channelHeight(traceAreaHeight, visibleChannels) * channelCount,
-              );
+              final double totalHeight = markersOnly
+                  ? traceAreaHeight
+                  : math.max(
+                      traceAreaHeight,
+                      _channelHeight(traceAreaHeight, visibleChannels) * channelCount,
+                    );
               final List<TimeMarker> markers = _currentMarkersForDataset();
 
               return Column(
@@ -142,23 +146,24 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: <Widget>[
-                                  SizedBox(
-                                    width: labelWidth,
-                                    child: _ChannelLabelColumn(
-                                      labels: labels,
-                                      colors: List<Color>.generate(
-                                        channelCount,
-                                        (int index) => _colorForChannel(index),
-                                        growable: false,
+                                  if (!markersOnly)
+                                    SizedBox(
+                                      width: labelWidth,
+                                      child: _ChannelLabelColumn(
+                                        labels: labels,
+                                        colors: List<Color>.generate(
+                                          channelCount,
+                                          (int index) => _colorForChannel(index),
+                                          growable: false,
+                                        ),
+                                        channelHeight: _channelHeight(
+                                          traceAreaHeight,
+                                          visibleChannels,
+                                        ),
+                                        onCycleColor: _cycleChannelColor,
                                       ),
-                                      channelHeight: _channelHeight(
-                                        traceAreaHeight,
-                                        visibleChannels,
-                                      ),
-                                      onCycleColor: _cycleChannelColor,
                                     ),
-                                  ),
-                                  const SizedBox(width: 8),
+                                  if (!markersOnly) const SizedBox(width: 8),
                                   Expanded(
                                     child: Scrollbar(
                                       controller: _horizontalController,
@@ -201,6 +206,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                       ),
                                                       pixelsPerSecond: pixelsPerSecond,
                                                       yScaleUv: _yScaleUv(),
+                                                      showSignals: !markersOnly,
                                                       colors: List<Color>.generate(
                                                         channelCount,
                                                         (int index) => _colorForChannel(index),
@@ -247,29 +253,41 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             },
           ),
         ),
-        const SizedBox(height: 8),
-        if (_hasMarkerDraft) ...<Widget>[
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: <Widget>[
-              TextButton(
-                onPressed: _discardMarkerDraft,
-                child: const Text('Discard Changes'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _saveMarkerDraft,
-                child: const Text('Save Markers'),
-              ),
-            ],
+        Flexible(
+          fit: FlexFit.loose,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (_hasMarkerDraft) ...<Widget>[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: <Widget>[
+                      TextButton(
+                        onPressed: _discardMarkerDraft,
+                        child: const Text('Discard Changes'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _saveMarkerDraft,
+                        child: const Text('Save Markers'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                _MarkerSection(
+                  expanded: (widget.params['marker_list_expanded'] as bool?) ?? false,
+                  markers: _currentMarkersForDataset(),
+                  onToggle: (bool expanded) =>
+                      _updateParam('marker_list_expanded', expanded),
+                  onDelete: _deleteMarker,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
-        ],
-        _MarkerSection(
-          expanded: (widget.params['marker_list_expanded'] as bool?) ?? false,
-          markers: _currentMarkersForDataset(),
-          onToggle: (bool expanded) => _updateParam('marker_list_expanded', expanded),
-          onDelete: _deleteMarker,
         ),
       ],
     );
@@ -289,6 +307,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         (widget.params['preview_high'] as num?)?.toDouble() ?? 40.0;
     final String markerMode =
         (widget.params['marker_mode'] ?? 'off').toString();
+    final String rawViewMode = _rawViewMode();
     final bool controlsExpanded =
         (widget.params['controls_expanded'] as bool?) ?? false;
 
@@ -305,6 +324,19 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                rawViewMode == 'markers_only'
+                    ? 'View: Markers only'
+                    : 'View: Signals + markers',
+                style: const TextStyle(color: Colors.white70),
               ),
             ),
             Container(
@@ -341,6 +373,23 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           ],
         ),
         if (controlsExpanded) ...<Widget>[
+          const SizedBox(height: 8),
+          _LabeledValue(
+            label: 'View',
+            child: SegmentedButton<String>(
+              segments: const <ButtonSegment<String>>[
+                ButtonSegment<String>(value: 'signals', label: Text('Signals')),
+                ButtonSegment<String>(
+                  value: 'markers_only',
+                  label: Text('Markers Only'),
+                ),
+              ],
+              selected: <String>{rawViewMode},
+              onSelectionChanged: (Set<String> selection) {
+                _updateParam('raw_view_mode', selection.first);
+              },
+            ),
+          ),
           const SizedBox(height: 8),
           _LabeledValue(
             label: 'Marker Mode',
@@ -542,6 +591,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     widget.params.putIfAbsent('controls_expanded', () => false);
     widget.params.putIfAbsent('marker_list_expanded', () => false);
     widget.params.putIfAbsent('y_scale_uv', () => 100.0);
+    widget.params.putIfAbsent('raw_view_mode', () => 'signals');
   }
 
   List<List<double>> _effectiveChannels(TimeSeriesData timeSeries) {
@@ -617,6 +667,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       }
     }
     return closest;
+  }
+
+  String _rawViewMode() {
+    final String mode = (widget.params['raw_view_mode'] ?? 'signals').toString();
+    return mode == 'markers_only' ? 'markers_only' : 'signals';
   }
 
   Color _colorForChannel(int channelIndex) {
@@ -1105,6 +1160,7 @@ class _RawSignalPainter extends CustomPainter {
     required this.channelHeight,
     required this.pixelsPerSecond,
     required this.yScaleUv,
+    required this.showSignals,
     required this.colors,
     required this.markers,
     required this.horizontalOffset,
@@ -1119,6 +1175,7 @@ class _RawSignalPainter extends CustomPainter {
   final double channelHeight;
   final double pixelsPerSecond;
   final double yScaleUv;
+  final bool showSignals;
   final List<Color> colors;
   final List<TimeMarker> markers;
   final double horizontalOffset;
@@ -1130,17 +1187,21 @@ class _RawSignalPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double startTime = horizontalOffset / pixelsPerSecond;
     final double endTime = (horizontalOffset + viewportWidth) / pixelsPerSecond;
-    final int startSample =
-        math.max(0, (startTime * sampleRate).floor() - 1);
-    final int endSample =
-        math.min(channels.first.length, (endTime * sampleRate).ceil() + 1);
-    final int firstChannel =
-        math.max(0, (verticalOffset / channelHeight).floor() - 1);
-    final int lastChannel =
-        math.min(
-          channels.length - 1,
-          ((verticalOffset + viewportHeight) / channelHeight).ceil() + 1,
-        );
+    final int startSample = channels.isEmpty
+        ? 0
+        : math.max(0, (startTime * sampleRate).floor() - 1);
+    final int endSample = channels.isEmpty
+        ? 0
+        : math.min(channels.first.length, (endTime * sampleRate).ceil() + 1);
+    final int firstChannel = showSignals
+        ? math.max(0, (verticalOffset / channelHeight).floor() - 1)
+        : 0;
+    final int lastChannel = showSignals
+        ? math.min(
+            channels.length - 1,
+            ((verticalOffset + viewportHeight) / channelHeight).ceil() + 1,
+          )
+        : -1;
 
     final Paint gridPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.06)
@@ -1192,42 +1253,54 @@ class _RawSignalPainter extends CustomPainter {
       textPainter.paint(canvas, Offset(x + 4, verticalOffset + 4));
     }
 
+    if (showSignals) {
+      final double verticalScale = channelHeight * 0.35;
+      final double pixelsPerUv = verticalScale / math.max(1.0, yScaleUv);
+      final double scaleBarHeight = yScaleUv * pixelsPerUv;
+      final double scaleBarX = horizontalOffset + 10;
+      final double scaleBarTop = verticalOffset + 12;
+      canvas.drawLine(
+        Offset(scaleBarX, scaleBarTop),
+        Offset(scaleBarX, scaleBarTop + scaleBarHeight),
+        scalePaint,
+      );
+      canvas.drawLine(
+        Offset(scaleBarX - 5, scaleBarTop),
+        Offset(scaleBarX + 5, scaleBarTop),
+        scalePaint,
+      );
+      canvas.drawLine(
+        Offset(scaleBarX - 5, scaleBarTop + scaleBarHeight),
+        Offset(scaleBarX + 5, scaleBarTop + scaleBarHeight),
+        scalePaint,
+      );
+      final TextPainter scaleLabelPainter = TextPainter(
+        text: TextSpan(
+          text: '${yScaleUv.toStringAsFixed(0)} uV',
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      scaleLabelPainter.paint(
+        canvas,
+        Offset(scaleBarX + 8, scaleBarTop + (scaleBarHeight / 2) - (scaleLabelPainter.height / 2)),
+      );
+    } else {
+      final double centerY = verticalOffset + (viewportHeight / 2);
+      canvas.drawLine(
+        Offset(horizontalOffset, centerY),
+        Offset(horizontalOffset + viewportWidth, centerY),
+        baselinePaint,
+      );
+      return;
+    }
+
     final double verticalScale = channelHeight * 0.35;
     final double pixelsPerUv = verticalScale / math.max(1.0, yScaleUv);
-    final double scaleBarHeight = yScaleUv * pixelsPerUv;
-    final double scaleBarX = horizontalOffset + 10;
-    final double scaleBarTop = verticalOffset + 12;
-    canvas.drawLine(
-      Offset(scaleBarX, scaleBarTop),
-      Offset(scaleBarX, scaleBarTop + scaleBarHeight),
-      scalePaint,
-    );
-    canvas.drawLine(
-      Offset(scaleBarX - 5, scaleBarTop),
-      Offset(scaleBarX + 5, scaleBarTop),
-      scalePaint,
-    );
-    canvas.drawLine(
-      Offset(scaleBarX - 5, scaleBarTop + scaleBarHeight),
-      Offset(scaleBarX + 5, scaleBarTop + scaleBarHeight),
-      scalePaint,
-    );
-    final TextPainter scaleLabelPainter = TextPainter(
-      text: TextSpan(
-        text: '${yScaleUv.toStringAsFixed(0)} uV',
-        style: const TextStyle(
-          color: Colors.white70,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    scaleLabelPainter.paint(
-      canvas,
-      Offset(scaleBarX + 8, scaleBarTop + (scaleBarHeight / 2) - (scaleLabelPainter.height / 2)),
-    );
-
     for (int channelIndex = firstChannel; channelIndex <= lastChannel; channelIndex++) {
       final double centerY = (channelIndex * channelHeight) + (channelHeight / 2);
       canvas.drawLine(
@@ -1267,6 +1340,7 @@ class _RawSignalPainter extends CustomPainter {
         oldDelegate.channelHeight != channelHeight ||
         oldDelegate.pixelsPerSecond != pixelsPerSecond ||
         oldDelegate.yScaleUv != yScaleUv ||
+        oldDelegate.showSignals != showSignals ||
         oldDelegate.markers != markers ||
         oldDelegate.colors != colors ||
         oldDelegate.horizontalOffset != horizontalOffset ||

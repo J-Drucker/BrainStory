@@ -1,10 +1,12 @@
-import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/file_save.dart';
+import '../platform/file_save_resolve.dart';
 import 'node_type.dart';
 
 class ExportEdfNodeType extends NodeType {
@@ -41,9 +43,11 @@ class ExportEdfNodeType extends NodeType {
       children: <Widget>[
         TextFormField(
           initialValue: params['outputDirectory']?.toString() ?? '',
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Output directory (optional)',
-            helperText: 'Leave blank to export next to the source file.',
+            helperText: kIsWeb
+                ? 'Ignored on web. The EDF will download in the browser.'
+                : 'Leave blank to export next to the source file.',
           ),
           onChanged: (String value) {
             setState(() {
@@ -82,13 +86,6 @@ class ExportEdfNodeType extends NodeType {
         ? '_brainstory'
         : params['filenameSuffix'].toString().trim();
     final String outputDirectory = params['outputDirectory']?.toString().trim() ?? '';
-    final File outputFile = resolveEdfExportFile(
-      dataset: dataset,
-      outputDirectory: outputDirectory,
-      filenameSuffix: suffix,
-    );
-
-    await outputFile.parent.create(recursive: true);
     final List<int> bytes = buildEdfBytes(
       channelSamples: timeSeries.channels,
       sampleRate: timeSeries.sampleRate,
@@ -100,42 +97,28 @@ class ExportEdfNodeType extends NodeType {
             )
           : timeSeries.channelLabels,
     );
-    await outputFile.writeAsBytes(bytes, flush: true);
-    dataset.ram['export.lastEdfPath'] = outputFile.path;
+    final SavedFileResult result = await saveEdfBytes(
+      bytes: Uint8List.fromList(bytes),
+      suggestedBaseName: dataset.label,
+      filenameSuffix: suffix,
+      datasetPath: dataset.path,
+      outputDirectory: outputDirectory,
+    );
+    dataset.ram['export.lastEdfPath'] = result.locationLabel;
+    dataset.ram['export.persistedToDisk'] = result.persistedToDisk;
   }
 }
 
-File resolveEdfExportFile({
+String resolveEdfExportFile({
   required Dataset dataset,
   required String outputDirectory,
   required String filenameSuffix,
 }) {
-  final String baseName = _sanitizeFilename(
-    dataset.label.isEmpty ? 'brainstory_signal' : dataset.label,
-  );
-
-  if (outputDirectory.isNotEmpty) {
-    return File(
-      '${Directory(outputDirectory).path}${Platform.pathSeparator}$baseName$filenameSuffix.edf',
-    );
-  }
-
-  if (dataset.path.isNotEmpty) {
-    final File sourceFile = File(dataset.path);
-    final String sourceDir = sourceFile.parent.path;
-    final String sourceName = _sanitizeFilename(
-      sourceFile.uri.pathSegments.isEmpty
-          ? baseName
-          : sourceFile.uri.pathSegments.last.split('.').first,
-    );
-    return File(
-      '$sourceDir${Platform.pathSeparator}$sourceName$filenameSuffix.edf',
-    );
-  }
-
-  final Directory fallbackDir = Directory('${Directory.current.path}${Platform.pathSeparator}exports');
-  return File(
-    '${fallbackDir.path}${Platform.pathSeparator}$baseName$filenameSuffix.edf',
+  return resolveEdfExportFilePath(
+    datasetPath: dataset.path,
+    outputDirectory: outputDirectory,
+    filenameSuffix: filenameSuffix,
+    suggestedBaseName: dataset.label.isEmpty ? 'brainstory_signal' : dataset.label,
   );
 }
 
@@ -289,10 +272,4 @@ String _formatEdfTime(DateTime dateTime) {
   final String minute = dateTime.minute.toString().padLeft(2, '0');
   final String second = dateTime.second.toString().padLeft(2, '0');
   return '$hour.$minute.$second';
-}
-
-String _sanitizeFilename(String input) {
-  return input
-      .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
-      .replaceAll(RegExp(r'\s+'), '_');
 }

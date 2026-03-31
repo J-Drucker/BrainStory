@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
+import '../model/dataset_artifact_snapshot.dart';
 import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 import '../model/node.dart';
@@ -16,8 +18,12 @@ import '../nodes/import_node.dart';
 import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
+import '../nodes/realign_node.dart';
 import '../nodes/resample_node.dart';
+import '../nodes/segmentation_node.dart';
 import '../nodes/visualization_node.dart';
+import '../platform/node_snapshot_store.dart';
+import '../platform/project_file_save.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
 
@@ -29,6 +35,16 @@ class RunActivity {
 
   final String label;
   final String detail;
+
+  RunActivity copyWith({
+    String? label,
+    String? detail,
+  }) {
+    return RunActivity(
+      label: label ?? this.label,
+      detail: detail ?? this.detail,
+    );
+  }
 }
 
 class CanvasLogic {
@@ -45,6 +61,8 @@ class CanvasLogic {
     ICANodeType(),
     EigenvalueDecompositionNodeType(),
     AddRemoveMarkersNodeType(),
+    SegmentationNodeType(),
+    RealignNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
     ExportEdfNodeType(),
@@ -62,6 +80,8 @@ class CanvasLogic {
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
   final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
+  final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
+      <String, Map<String, DatasetArtifactSnapshot>>{};
 
   String? selectedNodeId;
   int? selectedConnectionIndex;
@@ -73,10 +93,11 @@ class CanvasLogic {
   static const double _cardHeight = 72;
   static const double _spawnGap = 48;
   static const double _canvasPadding = 120;
-  static const double _gridSize = 24;
+  static const double _gridWidth = _cardWidth * 0.625;
+  static const double _gridHeight = _cardHeight * 0.625;
 
   void addNode(NodeType type) {
-    final Offset spawnPosition = _nextSpawnPosition();
+    final Offset spawnPosition = _nearestAvailablePosition(_nextSpawnPosition());
     nodes.add(_buildNode(type: type, position: spawnPosition));
   }
 
@@ -105,8 +126,8 @@ class CanvasLogic {
 
   Offset snapToGrid(Offset offset) {
     return Offset(
-      _snapCoordinate(offset.dx),
-      _snapCoordinate(offset.dy),
+      _snapCoordinate(offset.dx, _gridWidth),
+      _snapCoordinate(offset.dy, _gridHeight),
     );
   }
 
@@ -138,16 +159,20 @@ class CanvasLogic {
     final List<XFile> files = await openFiles();
 
     for (final XFile file in files) {
+      final Uint8List bytes = await file.readAsBytes();
       final Dataset dataset = datasets.putIfAbsent(
-        file.path,
+        file.path.isEmpty ? file.name : file.path,
         () => Dataset(
           DateTime.now().microsecondsSinceEpoch.toString(),
           label: file.name,
           path: file.path,
+          sourceBytes: bytes,
         ),
       );
       dataset.label = file.name;
       dataset.path = file.path;
+      dataset.sourceBytes = bytes;
+      dataset.ram['source.filename'] = file.name;
       _markAllNodes(dataset.id, DatasetState.notReady);
     }
   }
@@ -205,60 +230,186 @@ class CanvasLogic {
     _pendingFromNodeId = null;
   }
 
-  void export(BuildContext context) {
-    final Map<String, dynamic> jsonMap = <String, dynamic>{
+  Future<void> exportBrainStory(BuildContext context) async {
+    final FileSaveLocation? location = await getSaveLocation(
+      suggestedName: 'brainstory_project.bst',
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'BrainStory Project',
+          extensions: <String>['bst'],
+        ),
+      ],
+    );
+    if (location == null) {
+      return;
+    }
+
+    final String jsonPayload = const JsonEncoder.withIndent('  ').convert(
+      exportProjectJson(),
+    );
+    final String? savedPath = await saveBrainStoryProject(
+      suggestedName: 'brainstory_project',
+      targetPath: location.path,
+      jsonPayload: jsonPayload,
+    );
+    if (context.mounted) {
+      _showStatusSnackBar(
+        context,
+        savedPath == null
+            ? 'BrainStory export was canceled.'
+            : 'Saved BrainStory project to $savedPath.',
+      );
+    }
+  }
+
+  Future<void> loadBrainStory(BuildContext context) async {
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'BrainStory Project',
+          extensions: <String>['bst'],
+        ),
+      ],
+    );
+    if (file == null) {
+      return;
+    }
+
+    try {
+      final String jsonPayload = await file.readAsString();
+      final Map<String, dynamic> jsonMap =
+          Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+      importProjectJson(jsonMap);
+      if (context.mounted) {
+        _showStatusSnackBar(
+          context,
+          'Loaded BrainStory project from ${file.name}.',
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        _showStatusSnackBar(
+          context,
+          'Could not load BrainStory project: $error',
+        );
+      }
+    }
+  }
+
+  Map<String, dynamic> exportProjectJson() {
+    return <String, dynamic>{
+      'format': 'brainstory_project',
+      'version': 1,
+      'datasets': datasets.values
+          .map(
+            (Dataset dataset) => <String, dynamic>{
+              'id': dataset.id,
+              'label': dataset.label,
+              'path': dataset.path,
+              'loaded': dataset.loaded,
+              'sourceFilename': dataset.ram['source.filename'],
+              'sourceBytesBase64': dataset.sourceBytes == null
+                  ? null
+                  : base64Encode(dataset.sourceBytes!),
+            },
+          )
+          .toList(growable: false),
       'nodes': nodes
           .map(
-            (node) => <String, dynamic>{
-          'id': node.id,
-          'type': node.type.title,
-          'x': node.position.dx,
-          'y': node.position.dy,
-          'params': node.params,
-          'inputs': node.inputPorts
-              .map(
-                (port) => <String, dynamic>{
-              'name': port.name,
-              'type': port.type.name,
+            (NodeModel node) => <String, dynamic>{
+              'id': node.id,
+              'type': node.type.title,
+              'x': node.position.dx,
+              'y': node.position.dy,
+              'params': node.params,
+              'datasetStates': node.datasetStates.map(
+                (dynamic key, DatasetState value) =>
+                    MapEntry<String, dynamic>(key.toString(), value.name),
+              ),
             },
           )
-              .toList(),
-          'outputs': node.outputPorts
-              .map(
-                (port) => <String, dynamic>{
-              'name': port.name,
-              'type': port.type.name,
-            },
-          )
-              .toList(),
-        },
-      )
-          .toList(),
-      'connections': connections,
+          .toList(growable: false),
+      'connections': connections
+          .map((Map<String, dynamic> connection) => Map<String, dynamic>.from(connection))
+          .toList(growable: false),
     };
+  }
 
-    final String output = const JsonEncoder.withIndent('  ').convert(jsonMap);
+  void importProjectJson(Map<String, dynamic> jsonMap) {
+    clearAll();
+    datasets.clear();
+    _nodeRamSnapshots.clear();
 
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Exported JSON'),
-        content: SingleChildScrollView(
-          child: SelectableText(output),
+    final List<dynamic> datasetEntries =
+        jsonMap['datasets'] as List<dynamic>? ?? <dynamic>[];
+    for (final dynamic entry in datasetEntries) {
+      final Map<String, dynamic> data =
+          Map<String, dynamic>.from(entry as Map);
+      final String path = data['path']?.toString() ?? '';
+      final String label = data['label']?.toString() ?? 'Dataset';
+      final String id = data['id']?.toString() ??
+          DateTime.now().microsecondsSinceEpoch.toString();
+      final String? sourceBytesBase64 = data['sourceBytesBase64']?.toString();
+      final Uint8List? sourceBytes = sourceBytesBase64 == null ||
+              sourceBytesBase64.isEmpty
+          ? null
+          : Uint8List.fromList(base64Decode(sourceBytesBase64));
+      final Dataset dataset = Dataset(
+        id,
+        label: label,
+        path: path,
+        sourceBytes: sourceBytes,
+      );
+      dataset.loaded = data['loaded'] as bool? ?? false;
+      final String sourceFilename = data['sourceFilename']?.toString() ?? '';
+      if (sourceFilename.isNotEmpty) {
+        dataset.ram['source.filename'] = sourceFilename;
+      }
+      datasets[path.isEmpty ? id : path] = dataset;
+    }
+
+    final List<dynamic> nodeEntries =
+        jsonMap['nodes'] as List<dynamic>? ?? <dynamic>[];
+    for (final dynamic entry in nodeEntries) {
+      final Map<String, dynamic> data =
+          Map<String, dynamic>.from(entry as Map);
+      final NodeType? type = _nodeTypeByTitle(data['type']?.toString() ?? '');
+      if (type == null) {
+        continue;
+      }
+      final NodeModel node = NodeModel(
+        id: data['id']?.toString() ??
+            DateTime.now().microsecondsSinceEpoch.toString(),
+        type: type,
+        position: Offset(
+          (data['x'] as num?)?.toDouble() ?? 0,
+          (data['y'] as num?)?.toDouble() ?? 0,
         ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
+        params: Map<String, dynamic>.from(
+          data['params'] as Map? ?? <String, dynamic>{},
+        ),
+      );
+      final Map<String, dynamic> rawStates = Map<String, dynamic>.from(
+        data['datasetStates'] as Map? ?? <String, dynamic>{},
+      );
+      for (final MapEntry<String, dynamic> stateEntry in rawStates.entries) {
+        node.datasetStates[stateEntry.key] =
+            _datasetStateFromName(stateEntry.value?.toString());
+      }
+      nodes.add(node);
+    }
+
+    final List<dynamic> connectionEntries =
+        jsonMap['connections'] as List<dynamic>? ?? <dynamic>[];
+    for (final dynamic entry in connectionEntries) {
+      connections.add(Map<String, dynamic>.from(entry as Map));
+    }
   }
 
   Widget sidebar({
     required double width,
     required VoidCallback export,
+    required VoidCallback load,
     required VoidCallback clear,
     required VoidCallback update,
   }) {
@@ -294,12 +445,31 @@ class CanvasLogic {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Divider(
+              height: 20,
+              thickness: 1,
+              color: Colors.white.withValues(alpha: 0.18),
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
+                onPressed: load,
+                child: const Text('Load BrainStory'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
                 onPressed: export,
-                child: const Text('Export JSON'),
+                child: const Text('Export BrainStory'),
               ),
             ),
           ),
@@ -440,7 +610,10 @@ class CanvasLogic {
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
         onDragEnd: (Offset globalOffset) {
-          node.position = translateDropOffset(globalOffset);
+          node.position = _nearestAvailablePosition(
+            translateDropOffset(globalOffset),
+            movingNodeId: node.id,
+          );
           update();
         },
         onTap: () {
@@ -630,19 +803,65 @@ class CanvasLogic {
     showDialog<void>(
       context: context,
       builder: (_) => node.type.buildConfigWidget(node.params, (params) {
-        node.params = params;
-        for (final Dataset dataset in datasets.values) {
-          node.datasetStates[dataset.id] = DatasetState.stale;
-          _markDescendantsStale(node.id, dataset.id);
-        }
-        update();
+        _applyNodeParams(
+          node: node,
+          params: params,
+          update: update,
+        );
       },
+        onSaveAndRun: (Map<String, dynamic> params) async {
+          _applyNodeParams(
+            node: node,
+            params: params,
+            update: update,
+          );
+          try {
+            await prepareRunUi('Running ${node.title}');
+            await runThisStep(node.id);
+            update();
+            if (context.mounted) {
+              _showStatusSnackBar(
+                context,
+                _lastRunDatasetCount == 0
+                    ? 'No datasets matched ${node.title}.'
+                    : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
+              );
+            }
+          } catch (error) {
+            if (context.mounted) {
+              _showStatusSnackBar(context, 'Run failed: $error');
+            }
+          } finally {
+            finishRunUi();
+          }
+        },
+        datasetActions: _datasetActionsForNode(
+          node: node,
+          update: update,
+        ),
         datasets: _datasetsById(),
         availableDatasetIds: _availableDatasetIdsForNode(node),
+        datasetSourceLabels: _datasetSourceLabelsForNode(node),
         processedDatasetStates: _processedDatasetStatesForNode(node),
         processingSteps: processingStepsForNode(node.id),
       ),
     );
+  }
+
+  void _applyNodeParams({
+    required NodeModel node,
+    required Map<String, dynamic> params,
+    required VoidCallback update,
+  }) {
+    node.params = params;
+    if (node.type is ImportNodeType) {
+      ImportNodeType.applyDatasetAliases(params, datasets.values);
+    }
+    for (final Dataset dataset in datasets.values) {
+      node.datasetStates[dataset.id] = DatasetState.stale;
+      _markDescendantsStale(node.id, dataset.id);
+    }
+    update();
   }
 
   NodeModel? get selectedNode =>
@@ -676,8 +895,26 @@ class CanvasLogic {
     final Set<String> datasetIds = _datasetsForNode(node);
     return datasets.values
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
+        .map((Dataset dataset) => materializedDatasetViewForNode(node.id, dataset))
         .toList()
       ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+  }
+
+  Dataset materializedDatasetViewForNode(String nodeId, Dataset source) {
+    final Dataset view = Dataset(
+      source.id,
+      label: source.label,
+      path: source.path,
+      sourceBytes: source.sourceBytes,
+    );
+    view.loaded = source.loaded;
+    view.ram.addAll(source.ram);
+    final DatasetArtifactSnapshot? snapshot =
+        _nodeRamSnapshots[nodeId]?[source.id];
+    if (snapshot != null && !snapshot.isEmpty) {
+      snapshot.applyToDataset(view);
+    }
+    return view;
   }
 
   bool isVisualizationNode(NodeModel? node) => node?.type is VisualizationNodeType;
@@ -717,7 +954,7 @@ class CanvasLogic {
     final Set<String> ancestorIds = _collectAncestorsInclusive(nodeId);
     final List<NodeModel> orderedNodes = _orderedNodes(ancestorIds);
     return orderedNodes
-        .map((NodeModel node) => '${node.type.category.label}: ${node.title}')
+        .map((NodeModel node) => _nodeDescriptor(node))
         .toList(growable: false);
   }
 
@@ -733,42 +970,78 @@ class CanvasLogic {
   Future<void> prepareRunUi(String label) async {
     runActivity.value = RunActivity(
       label: label,
-      detail: 'Initializing...',
+      detail: 'Preparing run state...',
     );
-    // Let the popup menu dismiss and the progress UI paint before heavy work starts.
-    await Future<void>.delayed(const Duration(milliseconds: 16));
+    await _yieldToUi();
+    await setRunDetail('Settling the interface...');
+    await _yieldToUi();
+    await setRunDetail('Preparing data flow...');
+    await _yieldToUi(extraDelayMs: 24);
   }
 
   void finishRunUi() {
     runActivity.value = null;
   }
 
-  Future<void> runThisStep(String nodeId) async {
-    await _runNodeSet(<String>{nodeId});
+  Future<void> setRunDetail(String detail) async {
+    final RunActivity? current = runActivity.value;
+    if (current == null) {
+      return;
+    }
+    runActivity.value = current.copyWith(detail: detail);
+    await _yieldToUi();
   }
 
-  Future<void> runFromStart(String nodeId) async {
-    await _runNodeSet(_collectAncestorsInclusive(nodeId));
+  Future<void> runThisStep(
+    String nodeId, {
+    Set<String>? datasetIds,
+  }) async {
+    await _runNodeSet(<String>{nodeId}, datasetIds: datasetIds);
   }
 
-  Future<void> runToEnd(String nodeId) async {
-    await _runNodeSet(_collectDescendantsInclusive(nodeId));
+  Future<void> runFromStart(
+    String nodeId, {
+    Set<String>? datasetIds,
+  }) async {
+    await _runNodeSet(
+      _collectAncestorsInclusive(nodeId),
+      datasetIds: datasetIds,
+    );
   }
 
-  Future<void> _runNodeSet(Set<String> nodeIds) async {
+  Future<void> runToEnd(
+    String nodeId, {
+    Set<String>? datasetIds,
+  }) async {
+    await _runNodeSet(
+      _collectDescendantsInclusive(nodeId),
+      datasetIds: datasetIds,
+    );
+  }
+
+  Future<void> _runNodeSet(
+    Set<String> nodeIds, {
+    Set<String>? datasetIds,
+  }) async {
     final List<NodeModel> orderedNodes = _orderedNodes(nodeIds);
     if (orderedNodes.isEmpty) {
       _lastRunDatasetCount = 0;
       return;
     }
 
-    final Set<String> datasetIds = <String>{};
+    await setRunDetail('Resolving datasets...');
+
+    final Set<String> candidateDatasetIds = <String>{};
     for (final NodeModel node in orderedNodes) {
-      datasetIds.addAll(_datasetsForNode(node));
+      candidateDatasetIds.addAll(_datasetsForNode(node));
+    }
+
+    if (datasetIds != null) {
+      candidateDatasetIds.retainAll(datasetIds);
     }
 
     final List<Dataset> targetDatasets = datasets.values
-        .where((Dataset dataset) => datasetIds.contains(dataset.id))
+        .where((Dataset dataset) => candidateDatasetIds.contains(dataset.id))
         .toList();
 
     _lastRunDatasetCount = targetDatasets.length;
@@ -777,15 +1050,25 @@ class CanvasLogic {
     }
 
     for (final Dataset dataset in targetDatasets) {
+      await setRunDetail('Preparing ${dataset.label}...');
       for (final NodeModel node in orderedNodes) {
         if (!_datasetsForNode(node).contains(dataset.id)) {
           continue;
         }
 
+        if (node.datasetStates[dataset.id] == DatasetState.done) {
+          await setRunDetail('Skipping ${node.title} for ${dataset.label} (already done)...');
+          await _restoreMaterializedOutputIfNeeded(node, dataset);
+          continue;
+        }
+
         node.datasetStates[dataset.id] = DatasetState.ready;
         try {
+          await _restoreUpstreamInputForRun(node, dataset);
+          await setRunDetail('Running ${node.title} on ${dataset.label}...');
           await node.type.run(dataset, node.params);
           node.datasetStates[dataset.id] = DatasetState.done;
+          await _materializeNodeOutput(node, dataset);
         } catch (_) {
           node.datasetStates[dataset.id] = DatasetState.stale;
           rethrow;
@@ -858,6 +1141,32 @@ class CanvasLogic {
       for (final Dataset dataset in datasets.values)
         dataset.id: node.datasetStates[dataset.id] ?? DatasetState.notReady,
     };
+  }
+
+  Map<String, List<String>> _datasetSourceLabelsForNode(NodeModel node) {
+    if (node.type is ImportNodeType) {
+      return <String, List<String>>{
+        for (final Dataset dataset in datasets.values) dataset.id: <String>['Source file'],
+      };
+    }
+
+    final Map<String, List<String>> labelsByDataset = <String, List<String>>{};
+    final List<NodeModel> parents = _immediateParents(node.id);
+    for (final NodeModel parent in parents) {
+      final String descriptor = _nodeDescriptor(parent);
+      for (final Dataset dataset in datasets.values) {
+        if (parent.datasetStates[dataset.id] == DatasetState.done) {
+          labelsByDataset
+              .putIfAbsent(dataset.id, () => <String>[])
+              .add(descriptor);
+        }
+      }
+    }
+
+    for (final List<String> labels in labelsByDataset.values) {
+      labels.sort();
+    }
+    return labelsByDataset;
   }
 
   Set<String> _selectedDatasetIdsForNode(
@@ -1043,6 +1352,467 @@ class CanvasLogic {
     );
   }
 
+  NodeDatasetActions _datasetActionsForNode({
+    required NodeModel node,
+    required VoidCallback update,
+  }) {
+    return NodeDatasetActions(
+      supportsDisk: supportsNodeSnapshotDiskStore,
+      refresh: (Map<String, dynamic> params) =>
+          _datasetStatusSnapshotForNode(node: node, params: params),
+      runAllPrevious: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _runNodeDatasetAction(
+        runLabel: 'Running pipeline to ${node.title}',
+        action: () => runFromStart(node.id, datasetIds: datasetIds),
+        node: node,
+        update: update,
+      ),
+      runThisNode: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _runNodeDatasetAction(
+        runLabel: 'Running ${node.title}',
+        action: () => runThisStep(node.id, datasetIds: datasetIds),
+        node: node,
+        update: update,
+      ),
+      clearResults: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _clearNodeResults(
+        node: node,
+        params: params,
+        datasetIds: datasetIds,
+        update: update,
+      ),
+      loadFromDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _loadNodeSnapshotsToRam(
+        node: node,
+        datasetIds: datasetIds,
+        update: update,
+      ),
+      purgeActiveMemory:
+          (Map<String, dynamic> params, Set<String> datasetIds) =>
+              _releaseNodeSnapshotsFromRam(
+        node: node,
+        datasetIds: datasetIds,
+        update: update,
+      ),
+      saveToDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _saveNodeSnapshotsToDisk(
+        node: node,
+        datasetIds: datasetIds,
+        update: update,
+      ),
+      purgeFromDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
+          _deleteNodeSnapshotsFromDisk(
+        node: node,
+        datasetIds: datasetIds,
+        update: update,
+      ),
+    );
+  }
+
+  Future<void> _materializeNodeOutput(NodeModel node, Dataset dataset) async {
+    await setRunDetail('Materializing ${node.title} for ${dataset.label}...');
+    final DatasetArtifactSnapshot snapshot =
+        DatasetArtifactSnapshot.fromDataset(dataset);
+    if (snapshot.isEmpty) {
+      _nodeRamSnapshots[node.id]?.remove(dataset.id);
+      return;
+    }
+
+    final NodeStoragePolicy policy = _storagePolicyForNode(node);
+    if (policy != NodeStoragePolicy.onDemand) {
+      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
+          snapshot;
+    } else {
+      _nodeRamSnapshots[node.id]?.remove(dataset.id);
+    }
+
+    if (supportsNodeSnapshotDiskStore &&
+        (policy == NodeStoragePolicy.preferDisk ||
+            policy == NodeStoragePolicy.ramAndDisk)) {
+      await saveNodeSnapshotJson(
+        nodeId: node.id,
+        datasetId: dataset.id,
+        jsonPayload: jsonEncode(snapshot.toJson()),
+      );
+      if (policy == NodeStoragePolicy.preferDisk) {
+        _nodeRamSnapshots[node.id]?.remove(dataset.id);
+      }
+    }
+  }
+
+  Future<NodeDatasetStatusSnapshot> _datasetStatusSnapshotForNode({
+    required NodeModel node,
+    required Map<String, dynamic> params,
+  }) async {
+    final NodeModel configuredNode = _nodeWithParams(node, params);
+    final Set<String> diskSavedDatasetIds = <String>{};
+    if (supportsNodeSnapshotDiskStore) {
+      final List<String> datasetIds =
+          datasets.values.map((Dataset dataset) => dataset.id).toList(growable: false);
+      final List<bool> diskFlags = await Future.wait(
+        datasetIds.map((String datasetId) {
+          return hasNodeSnapshotOnDisk(
+            nodeId: node.id,
+            datasetId: datasetId,
+          );
+        }),
+      );
+      for (int index = 0; index < datasetIds.length; index++) {
+        if (diskFlags[index]) {
+          diskSavedDatasetIds.add(datasetIds[index]);
+        }
+      }
+    }
+
+    return NodeDatasetStatusSnapshot(
+      availableDatasetIds: _availableDatasetIdsForNode(configuredNode),
+      processedDatasetStates: _processedDatasetStatesForNode(node),
+      ramLoadedDatasetIds:
+          _nodeRamSnapshots[node.id]?.keys.toSet() ?? const <String>{},
+      diskSavedDatasetIds: diskSavedDatasetIds,
+    );
+  }
+
+  Future<String> _runNodeDatasetAction({
+    required String runLabel,
+    required Future<void> Function() action,
+    required NodeModel node,
+    required VoidCallback update,
+  }) async {
+    try {
+      await prepareRunUi(runLabel);
+      await action();
+      update();
+      return _lastRunDatasetCount == 0
+          ? 'No datasets matched ${node.title}.'
+          : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
+    } finally {
+      finishRunUi();
+    }
+  }
+
+  Future<String> _saveNodeSnapshotsToDisk({
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    if (!supportsNodeSnapshotDiskStore) {
+      return 'Disk cache is not available on this platform.';
+    }
+
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to save for ${node.title}.';
+    }
+
+    int savedCount = 0;
+    String? lastPath;
+    for (final Dataset dataset in selectedDatasets) {
+      DatasetArtifactSnapshot? snapshot =
+          _nodeRamSnapshots[node.id]?[dataset.id];
+      if (snapshot == null || snapshot.isEmpty) {
+        continue;
+      }
+      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
+          snapshot;
+      lastPath = await saveNodeSnapshotJson(
+        nodeId: node.id,
+        datasetId: dataset.id,
+        jsonPayload: jsonEncode(snapshot.toJson()),
+      );
+      savedCount++;
+    }
+
+    if (savedCount == 0) {
+      return 'Nothing is currently loaded in RAM for ${node.title}.';
+    }
+
+    update();
+    return lastPath == null
+        ? 'Saved $savedCount cached output(s) for ${node.title}.'
+        : 'Saved $savedCount cached output(s) for ${node.title} to $lastPath.';
+  }
+
+  Future<String> _loadNodeSnapshotsToRam({
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to load for ${node.title}.';
+    }
+
+    int loadedCount = 0;
+    for (final Dataset dataset in selectedDatasets) {
+      final String? jsonPayload = await loadNodeSnapshotJson(
+        nodeId: node.id,
+        datasetId: dataset.id,
+      );
+      if (jsonPayload == null || jsonPayload.trim().isEmpty) {
+        continue;
+      }
+      final Map<String, dynamic> decoded =
+          Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+      final DatasetArtifactSnapshot snapshot =
+          DatasetArtifactSnapshot.fromJson(decoded);
+      if (snapshot.isEmpty) {
+        continue;
+      }
+      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
+          snapshot;
+      snapshot.applyToDataset(dataset);
+      node.datasetStates[dataset.id] = DatasetState.done;
+      _markDescendantsStale(node.id, dataset.id);
+      loadedCount++;
+    }
+
+    if (loadedCount == 0) {
+      return 'No disk cache found yet for ${node.title}.';
+    }
+
+    update();
+    return 'Loaded $loadedCount cached output(s) into RAM for ${node.title}.';
+  }
+
+  Future<String> _releaseNodeSnapshotsFromRam({
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to release for ${node.title}.';
+    }
+
+    int releasedCount = 0;
+    final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+    if (snapshots != null) {
+      for (final Dataset dataset in selectedDatasets) {
+        if (snapshots.remove(dataset.id) != null) {
+          releasedCount++;
+        }
+      }
+      if (snapshots.isEmpty) {
+        _nodeRamSnapshots.remove(node.id);
+      }
+    }
+
+    update();
+    return releasedCount == 0
+        ? 'No RAM cache was being held for ${node.title}.'
+        : 'Released $releasedCount in-memory cached output(s) for ${node.title}.';
+  }
+
+  Future<String> _deleteNodeSnapshotsFromDisk({
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    if (!supportsNodeSnapshotDiskStore) {
+      return 'Disk cache is not available on this platform.';
+    }
+
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to purge for ${node.title}.';
+    }
+
+    int deletedCount = 0;
+    for (final Dataset dataset in selectedDatasets) {
+      final bool exists = await hasNodeSnapshotOnDisk(
+        nodeId: node.id,
+        datasetId: dataset.id,
+      );
+      if (!exists) {
+        continue;
+      }
+      await deleteNodeSnapshotFromDisk(
+        nodeId: node.id,
+        datasetId: dataset.id,
+      );
+      deletedCount++;
+    }
+
+    update();
+    return deletedCount == 0
+        ? 'Nothing was saved to disk yet for ${node.title}.'
+        : 'Purged $deletedCount disk cache file(s) for ${node.title}.';
+  }
+
+  Future<String> _clearNodeResults({
+    required NodeModel node,
+    required Map<String, dynamic> params,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to clear for ${node.title}.';
+    }
+
+    final NodeModel configuredNode = _nodeWithParams(node, params);
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(configuredNode);
+    int clearedCount = 0;
+
+    for (final Dataset dataset in selectedDatasets) {
+      bool changed = false;
+      final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+      if (snapshots?.remove(dataset.id) != null) {
+        changed = true;
+      }
+      if (snapshots != null && snapshots.isEmpty) {
+        _nodeRamSnapshots.remove(node.id);
+      }
+      if (supportsNodeSnapshotDiskStore) {
+        final bool exists = await hasNodeSnapshotOnDisk(
+          nodeId: node.id,
+          datasetId: dataset.id,
+        );
+        if (exists) {
+          await deleteNodeSnapshotFromDisk(
+            nodeId: node.id,
+            datasetId: dataset.id,
+          );
+          changed = true;
+        }
+      }
+
+      final DatasetState nextState = availableDatasetIds.contains(dataset.id)
+          ? DatasetState.ready
+          : DatasetState.notReady;
+      if (node.datasetStates[dataset.id] != nextState) {
+        node.datasetStates[dataset.id] = nextState;
+        changed = true;
+      }
+      _markDescendantsStale(node.id, dataset.id);
+      if (changed) {
+        clearedCount++;
+      }
+    }
+
+    update();
+    return clearedCount == 0
+        ? 'There were no results to clear for ${node.title}.'
+        : 'Cleared $clearedCount result set(s) for ${node.title}.';
+  }
+
+  Future<void> _restoreMaterializedOutputIfNeeded(
+    NodeModel node,
+    Dataset dataset,
+  ) async {
+    final DatasetArtifactSnapshot? snapshot =
+        await _loadSnapshotForNodeDataset(node.id, dataset.id);
+    if (snapshot == null || snapshot.isEmpty) {
+      return;
+    }
+    snapshot.applyToDataset(dataset);
+  }
+
+  Future<void> _restoreUpstreamInputForRun(
+    NodeModel node,
+    Dataset dataset,
+  ) async {
+    if (node.type is ImportNodeType || node.type is VisualizationNodeType) {
+      return;
+    }
+
+    final List<NodeModel> parents = _immediateParents(node.id);
+    if (parents.isEmpty) {
+      return;
+    }
+
+    for (final NodeModel parent in parents) {
+      if (parent.datasetStates[dataset.id] != DatasetState.done) {
+        continue;
+      }
+      final DatasetArtifactSnapshot? snapshot =
+          await _loadSnapshotForNodeDataset(parent.id, dataset.id);
+      if (snapshot == null || snapshot.isEmpty) {
+        continue;
+      }
+      snapshot.applyToDataset(dataset);
+      return;
+    }
+  }
+
+  Future<DatasetArtifactSnapshot?> _loadSnapshotForNodeDataset(
+    String nodeId,
+    String datasetId,
+  ) async {
+    final DatasetArtifactSnapshot? ramSnapshot =
+        _nodeRamSnapshots[nodeId]?[datasetId];
+    if (ramSnapshot != null && !ramSnapshot.isEmpty) {
+      return ramSnapshot;
+    }
+
+    final String? jsonPayload = await loadNodeSnapshotJson(
+      nodeId: nodeId,
+      datasetId: datasetId,
+    );
+    if (jsonPayload == null || jsonPayload.trim().isEmpty) {
+      return null;
+    }
+
+    final Map<String, dynamic> decoded =
+        Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+    final DatasetArtifactSnapshot snapshot =
+        DatasetArtifactSnapshot.fromJson(decoded);
+    if (snapshot.isEmpty) {
+      return null;
+    }
+    _nodeRamSnapshots
+        .putIfAbsent(nodeId, () => <String, DatasetArtifactSnapshot>{})[datasetId] = snapshot;
+    return snapshot;
+  }
+
+  NodeModel _nodeWithParams(
+    NodeModel node,
+    Map<String, dynamic> params,
+  ) {
+    return NodeModel(
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      params: params,
+    )..datasetStates.addAll(node.datasetStates);
+  }
+
+  List<Dataset> _datasetsForAction(Set<String> datasetIds) {
+    return datasets.values
+        .where((Dataset dataset) => datasetIds.contains(dataset.id))
+        .toList(growable: false);
+  }
+
+  NodeStoragePolicy _storagePolicyForNode(NodeModel node) {
+    return NodeStoragePolicyPresentation.fromWireValue(
+      node.params['storagePolicy']?.toString(),
+    );
+  }
+
+  NodeType? _nodeTypeByTitle(String title) {
+    for (final NodeType type in availableNodes) {
+      if (type.title == title) {
+        return type;
+      }
+    }
+    return null;
+  }
+
+  DatasetState _datasetStateFromName(String? stateName) {
+    for (final DatasetState state in DatasetState.values) {
+      if (state.name == stateName) {
+        return state;
+      }
+    }
+    return DatasetState.notReady;
+  }
+
+  Future<void> _yieldToUi({int extraDelayMs = 12}) async {
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(Duration(milliseconds: extraDelayMs));
+  }
+
   Color _nodeColor(NodeModel node) {
     switch (node.type.category) {
       case NodeCategory.import:
@@ -1171,11 +1941,75 @@ class CanvasLogic {
     return markerNode;
   }
 
-  double _snapCoordinate(double value) {
+  double _snapCoordinate(double value, double gridSize) {
     return math.max(
       0,
-      (value / _gridSize).roundToDouble() * _gridSize,
+      (value / gridSize).roundToDouble() * gridSize,
     ).toDouble();
+  }
+
+  Offset _nearestAvailablePosition(
+    Offset desired, {
+    String? movingNodeId,
+  }) {
+    Offset candidate = snapToGrid(desired);
+    if (!_positionOverlapsAnyNode(candidate, movingNodeId: movingNodeId)) {
+      return candidate;
+    }
+
+    final int baseColumn = (candidate.dx / _gridWidth).round();
+    final int baseRow = (candidate.dy / _gridHeight).round();
+
+    for (int radius = 1; radius <= 24; radius++) {
+      for (int rowOffset = -radius; rowOffset <= radius; rowOffset++) {
+        for (int columnOffset = -radius; columnOffset <= radius; columnOffset++) {
+          if (rowOffset.abs() != radius && columnOffset.abs() != radius) {
+            continue;
+          }
+          final Offset probe = Offset(
+            math.max(0, (baseColumn + columnOffset) * _gridWidth).toDouble(),
+            math.max(0, (baseRow + rowOffset) * _gridHeight).toDouble(),
+          );
+          if (!_positionOverlapsAnyNode(probe, movingNodeId: movingNodeId)) {
+            return probe;
+          }
+        }
+      }
+    }
+
+    return candidate;
+  }
+
+  bool _positionOverlapsAnyNode(
+    Offset position, {
+    String? movingNodeId,
+  }) {
+    final Rect probe = Rect.fromLTWH(
+      position.dx,
+      position.dy,
+      _cardWidth,
+      _cardHeight,
+    );
+
+    for (final NodeModel node in nodes) {
+      if (node.id == movingNodeId) {
+        continue;
+      }
+      final Rect occupied = Rect.fromLTWH(
+        node.position.dx,
+        node.position.dy,
+        _cardWidth,
+        _cardHeight,
+      );
+      if (probe.overlaps(occupied)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _nodeDescriptor(NodeModel node) {
+    return '#${nodes.indexOf(node) + 1} ${node.title}';
   }
 
   Map<String, int>? _matchingPortPair(NodeModel fromNode, NodeModel toNode) {

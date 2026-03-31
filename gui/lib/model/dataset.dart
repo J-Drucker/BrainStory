@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'data_artifacts.dart';
 
 class Dataset {
   final String id;
   String label;
   String path;
+  Uint8List? sourceBytes;
 
   bool loaded = false;
 
@@ -15,6 +18,7 @@ class Dataset {
       this.id, {
         this.label = '',
         this.path = '',
+        this.sourceBytes,
       });
 
   TimeSeriesData? get timeSeries =>
@@ -27,6 +31,7 @@ class Dataset {
       ram.remove('signal.fs');
       ram.remove('signal.channelLabels');
       ram.remove('signal.markers');
+      ram.remove('signal.factors');
       ram.remove('signal.source');
       return;
     }
@@ -36,6 +41,8 @@ class Dataset {
     ram['signal.fs'] = value.sampleRate;
     ram['signal.channelLabels'] = value.channelLabels;
     ram['signal.markers'] = value.markers.map((TimeMarker marker) => marker.toJson()).toList();
+    ram['signal.factors'] =
+        value.factors.map((Factor factor) => factor.toJson()).toList();
     ram['signal.source'] = value.source;
   }
 
@@ -53,6 +60,24 @@ class Dataset {
     ram['psd.freqs'] = value.frequencies;
     ram['psd.power'] = value.power;
     ram['psd.segmentCount'] = value.segmentCount;
+  }
+
+  SegmentedTimeSeriesData? get segmentedTimeSeries =>
+      ram['artifact.segmentedTimeSeries'] as SegmentedTimeSeriesData?;
+  set segmentedTimeSeries(SegmentedTimeSeriesData? value) {
+    if (value == null) {
+      ram.remove('artifact.segmentedTimeSeries');
+      ram.remove('segments.count');
+      ram.remove('segments.sampleRate');
+      ram.remove('segments.channelLabels');
+      ram.remove('segments.source');
+      return;
+    }
+    ram['artifact.segmentedTimeSeries'] = value;
+    ram['segments.count'] = value.segmentCount;
+    ram['segments.sampleRate'] = value.sampleRate;
+    ram['segments.channelLabels'] = value.channelLabels;
+    ram['segments.source'] = value.source;
   }
 
   TimeFrequencyData? get timeFrequency =>

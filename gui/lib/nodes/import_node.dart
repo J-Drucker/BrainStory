@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -7,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/file_readers.dart';
 import 'node_type.dart';
 
 class ParsedSignalData {
@@ -37,6 +37,7 @@ class ImportNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => {
     'selectedDatasetIds': <String>[],
     'sampleRateHz': 256.0,
+    'datasetAliases': <String, dynamic>{},
   };
 
   @override
@@ -55,9 +56,12 @@ class ImportNodeType extends NodeType {
       }) {
     final List<MapEntry<String, Dataset>> entries = datasets.entries.toList()
       ..sort((a, b) => a.value.label.compareTo(b.value.label));
+    params.putIfAbsent('datasetAliases', () => <String, dynamic>{});
+    final Map<String, dynamic> aliases =
+        Map<String, dynamic>.from(params['datasetAliases'] as Map? ?? <String, dynamic>{});
 
     return SizedBox(
-      height: 170,
+      height: 320,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -67,23 +71,45 @@ class ImportNodeType extends NodeType {
                 : 'Choose which datasets this import node should expose using the table below.',
           ),
           const SizedBox(height: 12),
-          TextFormField(
-            initialValue: params['sampleRateHz']?.toString() ?? '256.0',
-            decoration: const InputDecoration(
-              labelText: 'Fallback sample rate (Hz)',
-              helperText: 'Used when the file does not contain a clear time column.',
-            ),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            onChanged: (String value) {
-              setState(() {
-                params['sampleRateHz'] =
-                    double.tryParse(value) ?? params['sampleRateHz'];
-              });
-            },
+          const Text(
+            'CSV, TSV, whitespace-delimited text, and EDF are supported. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Dataset names in BrainStory',
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'CSV, TSV, whitespace-delimited text, and EDF are supported. Multi-channel text tables and EDF channel sets are preserved.',
+          Expanded(
+            child: entries.isEmpty
+                ? const Text(
+                    'Add files first, then map each filename to the name BrainStory should use.',
+                  )
+                : ListView.separated(
+                    itemCount: entries.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (BuildContext context, int index) {
+                      final Dataset dataset = entries[index].value;
+                      final String sourceName = datasetSourceName(dataset);
+                      final String currentValue =
+                          aliases[dataset.id]?.toString() ?? dataset.label;
+                      return _DatasetAliasField(
+                        key: ValueKey<String>('${dataset.id}:$currentValue'),
+                        sourceName: sourceName,
+                        currentValue: currentValue,
+                        onChanged: (String value) {
+                          setState(() {
+                            final Map<String, dynamic> nextAliases =
+                                Map<String, dynamic>.from(
+                              params['datasetAliases'] as Map? ?? <String, dynamic>{},
+                            );
+                            nextAliases[dataset.id] = value;
+                            params['datasetAliases'] = nextAliases;
+                          });
+                        },
+                      );
+                    },
+                  ),
           ),
         ],
       ),
@@ -98,6 +124,9 @@ class ImportNodeType extends NodeType {
     final ParsedSignalData parsed = await loadDatasetSignal(
       dataset.path,
       fallbackSampleRate: fallbackSampleRate,
+      fileBytes: dataset.sourceBytes,
+      sourceDescription:
+          dataset.path.isNotEmpty ? dataset.path : dataset.label,
     );
 
     dataset.loaded = true;
@@ -108,32 +137,63 @@ class ImportNodeType extends NodeType {
       source: parsed.sourceDescription,
     );
   }
+
+  static void applyDatasetAliases(
+    Map<String, dynamic> params,
+    Iterable<Dataset> datasets,
+  ) {
+    final Map<String, dynamic> aliases =
+        Map<String, dynamic>.from(params['datasetAliases'] as Map? ?? <String, dynamic>{});
+    for (final Dataset dataset in datasets) {
+      final String sourceName = datasetSourceName(dataset);
+      final String alias = aliases[dataset.id]?.toString().trim() ?? '';
+      dataset.label = alias.isEmpty ? sourceName : alias;
+    }
+  }
+}
+
+String datasetSourceName(Dataset dataset) {
+  final String stored = dataset.ram['source.filename']?.toString().trim() ?? '';
+  if (stored.isNotEmpty) {
+    return stored;
+  }
+
+  final String path = dataset.path.trim();
+  if (path.isNotEmpty) {
+    final String normalized = path.replaceAll('\\', '/');
+    final int slashIndex = normalized.lastIndexOf('/');
+    return slashIndex >= 0 ? normalized.substring(slashIndex + 1) : normalized;
+  }
+
+  return dataset.label.trim().isEmpty ? 'Dataset' : dataset.label.trim();
 }
 
 Future<ParsedSignalData> loadDatasetSignal(
   String path, {
   required double fallbackSampleRate,
+  Uint8List? fileBytes,
+  String? sourceDescription,
 }) async {
-  if (path.isEmpty) {
+  final String resolvedSourceDescription =
+      sourceDescription ?? (path.isEmpty ? 'synthetic' : path);
+
+  if ((path.isEmpty && fileBytes == null) || resolvedSourceDescription == 'synthetic') {
     return _syntheticSignal(fallbackSampleRate);
   }
 
-  final File file = File(path);
-  if (!await file.exists()) {
-    throw FileSystemException('Dataset file was not found.', path);
-  }
-
-  final String lowerPath = path.toLowerCase();
+  final String lowerPath = resolvedSourceDescription.toLowerCase();
   if (lowerPath.endsWith('.edf')) {
-    final Uint8List bytes = await file.readAsBytes();
-    return parseEdfBytes(bytes, sourceDescription: path);
+    final Uint8List bytes = fileBytes ?? await readBytesFromPath(path);
+    return parseEdfBytes(bytes, sourceDescription: resolvedSourceDescription);
   }
 
-  final String contents = await file.readAsString();
+  final String contents = fileBytes != null
+      ? utf8.decode(fileBytes, allowMalformed: true)
+      : await readTextFromPath(path);
   return parseSignalText(
     contents,
     fallbackSampleRate: fallbackSampleRate,
-    sourceDescription: path,
+    sourceDescription: resolvedSourceDescription,
   );
 }
 
@@ -492,5 +552,82 @@ class _EdfSignalHeader {
     final double scale =
         (physicalMax - physicalMin) / (digitalMax - digitalMin);
     return physicalMin + ((digitalValue - digitalMin) * scale);
+  }
+}
+
+class _DatasetAliasField extends StatefulWidget {
+  const _DatasetAliasField({
+    super.key,
+    required this.sourceName,
+    required this.currentValue,
+    required this.onChanged,
+  });
+
+  final String sourceName;
+  final String currentValue;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_DatasetAliasField> createState() => _DatasetAliasFieldState();
+}
+
+class _DatasetAliasFieldState extends State<_DatasetAliasField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _DatasetAliasField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentValue != widget.currentValue &&
+        _controller.text != widget.currentValue) {
+      _controller.value = TextEditingValue(
+        text: widget.currentValue,
+        selection: TextSelection.collapsed(offset: widget.currentValue.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.black12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            widget.sourceName,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _controller,
+            decoration: const InputDecoration(
+              labelText: 'BrainStory name',
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+            onChanged: widget.onChanged,
+          ),
+        ],
+      ),
+    );
   }
 }

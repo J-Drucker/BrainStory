@@ -1,0 +1,160 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Courier New;}}
+\fs22
+\b BrainStory Handoff\b0\par
+\par
+\b Purpose\b0\par
+This file is a fast handoff for a new Codex instance so it can get productive quickly in this repo.\par
+\par
+\b Repo / branch\b0\par
+Path: C:\\dev\\BrainStory\par
+Branch: main\par
+Latest pushed app commit: cd32c08 ("Refine workflow and visualizer UX")\par
+\par
+\b Current local worktree state\b0\par
+Not committed on purpose:\par
+- tests\\test_data.csv is modified locally\par
+- .idea\\ is untracked\par
+- engine\\target\\... build artifacts are untracked\par
+If making future commits, avoid bundling those unless explicitly intended.\par
+\par
+\b High-level project shape\b0\par
+1. engine\\ = Rust side / early engine work. Mostly not the active surface right now.\par
+2. gui\\ = active Flutter desktop app.\par
+3. The current product is a desktop node-graph EEG workflow prototype / MVP.\par
+\par
+\b Main Flutter areas\b0\par
+1. gui\\lib\\ui\\canvas_logic.dart\par
+Core graph state, node creation, connections, execution, selection, node colors, statuses, marker-node auto-creation, and run-progress state.\par
+\par
+2. gui\\lib\\ui\\canvas_view.dart\par
+Main canvas layout, sidebar, right-side dataset + visualization rail, keyboard handling, and run-progress overlay.\par
+\par
+3. gui\\lib\\ui\\node_card.dart\par
+Canvas node card rendering. Nodes are fixed-size now so wire anchors hit the correct boundary. Includes node number badge, selection border, and green done glow.\par
+\par
+4. gui\\lib\\ui\\raw_signal_browser.dart\par
+Main native time-domain EEG viewer. This file is large and important.\par
+Current features include:\par
+- 10 s default window\par
+- horizontal + vertical scrolling\par
+- y-scale in uV\par
+- bottom overview / timeline bar\par
+- visible channel count\par
+- preview bandpass toggle\par
+- marker draft flow with Save / Discard\par
+- marker list section\par
+\par
+5. gui\\lib\\ui\\visualization_panel.dart\par
+Shared visualization panel / fullscreen view. It can inspect ordinary selected nodes without requiring a visualization node. Dedicated visualization nodes still exist for explicit compare workflows.\par
+\par
+6. gui\\lib\\nodes\\...\par
+Current node types live here.\par
+\par
+\b Current node inventory\b0\par
+Import:\par
+- Import\par
+\par
+Transform:\par
+- Resample\par
+- Bandpass\par
+- PSD\par
+- Microstates (placeholder)\par
+- PCA (placeholder)\par
+- ICA (placeholder)\par
+- Eigenvalue Decomposition (placeholder)\par
+\par
+Markers and Metadata:\par
+- Add/Remove Markers\par
+\par
+Visualize:\par
+- EEG Visualization\par
+- Debug Output\par
+\par
+Export:\par
+- Export EDF\par
+\par
+\b Important data model pieces\b0\par
+1. gui\\lib\\model\\dataset.dart\par
+Dataset artifact container.\par
+\par
+2. gui\\lib\\model\\data_artifacts.dart\par
+Typed artifacts currently defined:\par
+- TimeSeriesData\par
+- FrequencySpectrumData\par
+- TimeFrequencyData\par
+- MatrixTransformationData\par
+\par
+These typed artifacts are the right long-term direction. Prefer using them over ad hoc RAM keys when extending the app.\par
+\par
+\b Visualization behavior right now\b0\par
+1. The panel can inspect any selected node with visualizable output.\par
+2. Dedicated EEG Visualization nodes are still used for explicit compare workflows.\par
+3. Raw vs PSD is inferred automatically from the upstream path; the user no longer manually picks that mode.\par
+4. Time-frequency is not implemented yet; the UI has a placeholder state for it.\par
+\par
+\b Marker behavior right now\b0\par
+1. Marker edits in the raw browser are draft-only at first.\par
+2. Save Markers commits the change.\par
+3. On save, BrainStory auto-creates or reuses an "Add/Remove Markers" node downstream and stores the marker payload there.\par
+4. Discard Changes throws the marker draft away.\par
+\par
+\b Execution / UX behavior right now\b0\par
+1. Running nodes from the context menu now shows a top overlay with an indeterminate progress bar.\par
+2. This is mainly to make initialization-heavy steps (especially import) feel responsive instead of frozen.\par
+3. True background execution is not really implemented yet; this is more of a clear "busy" phase.\par
+\par
+\b Wire / canvas behavior right now\b0\par
+1. Nodes connect by clicking bodies, not tiny circles.\par
+2. Downstream must be below or to the right.\par
+3. Wires use top/bottom or left/right anchors depending on layout.\par
+4. Node cards are fixed-size so wire anchors match their visible boundaries.\par
+5. Wires can be selected and deleted.\par
+\par
+\b Color / visual language right now\b0\par
+Category colors currently:\par
+- Import = green\par
+- Transform = indigo\par
+- Markers and Metadata = yellow\par
+- Visualize = teal\par
+- Export = pink\par
+\par
+Node states:\par
+- yellow-ish border = selected / connection-ready\par
+- green outer glow = done\par
+\par
+\b Flutter toolchain / local run commands\b0\par
+Known Flutter path on this machine:\par
+C:\\Users\\neuro\\OneDrive - A.N.T. Europe\\dev\\flutter\\bin\\flutter.bat\par
+\par
+Useful commands:\par
+1. Analyze\par
+   \f0 & 'C:\\Users\\neuro\\OneDrive - A.N.T. Europe\\dev\\flutter\\bin\\flutter.bat' analyze\f0\par
+2. Test\par
+   \f0 & 'C:\\Users\\neuro\\OneDrive - A.N.T. Europe\\dev\\flutter\\bin\\flutter.bat' test\f0\par
+3. Run Windows app\par
+   \f0 & 'C:\\Users\\neuro\\OneDrive - A.N.T. Europe\\dev\\flutter\\bin\\flutter.bat' run -d windows\f0\par
+\par
+The user often uses Android Studio for live testing. From this environment, relaunching the app works; true hot-reload keystroke control from here is not reliable.\par
+\par
+\b Testing status at handoff\b0\par
+At the time this handoff was written, flutter analyze and flutter test were passing after the latest app changes.\par
+\par
+\b Known rough edges / likely next work\b0\par
+1. Time-frequency visualizer is still placeholder only.\par
+2. Raw multi-dataset comparison in the visualizer is still limited.\par
+3. Background execution is still mostly simulated as a blocking initialization phase with progress overlay.\par
+4. Matrix-transform nodes and Microstates are placeholders only; they currently preserve the right graph/data shape, not the real algorithms.\par
+5. Marker editing tied to dedicated visualization nodes with multiple parents may eventually need smarter source selection than "first parent".\par
+\par
+\b Good first orientation steps for a fresh Codex instance\b0\par
+1. Read gui\\lib\\ui\\canvas_logic.dart\par
+2. Read gui\\lib\\ui\\raw_signal_browser.dart\par
+3. Read gui\\lib\\ui\\visualization_panel.dart\par
+4. Run flutter analyze\par
+5. Run flutter test\par
+6. Ask the user what they want to improve next in the viewer / graph UX / analysis nodes.\par
+\par
+\b Commit hygiene note\b0\par
+If preparing a future commit from this state, review tests\\test_data.csv before staging, because it is currently modified locally and may not belong in the next commit.\par
+}
