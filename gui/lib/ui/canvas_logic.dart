@@ -20,6 +20,7 @@ import '../nodes/eye_blinks_node.dart';
 import '../nodes/export_edf_node.dart';
 import '../nodes/fooof_node.dart';
 import '../nodes/import_node.dart';
+import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/machine_learning_nodes.dart';
 import '../nodes/node_type.dart';
@@ -77,6 +78,7 @@ class CanvasLogic {
     KMeansNodeType(),
     CNNNodeType(),
     AddRemoveMarkersNodeType(),
+    InteractiveArtifactDetectionNodeType(),
     SegmentationNodeType(),
     EyeBlinksNodeType(),
     SleepStagingNodeType(),
@@ -348,6 +350,8 @@ class CanvasLogic {
         return 'Sleep-stage markers were generated in ${epochSeconds.toStringAsFixed(epochSeconds.truncateToDouble() == epochSeconds ? 0 : 1)}-second epochs while the underlying time-series data were passed through unchanged.';
       case 'Eye Blinks':
         return 'Ocular-event marker detection was configured to emit blink, vertical saccade, and horizontal saccade markers.';
+      case 'Interactive Artifact Detection':
+        return 'Artifact exemplars were labeled interactively in the time-domain viewer, evolving templates were built by aligned averaging, and candidate artifact matches were reviewed and accepted or rejected within the workflow.';
       case 'Add/Remove Markers':
         return 'Manual marker edits were incorporated into the analysis graph.';
       case 'PCA':
@@ -692,6 +696,7 @@ class CanvasLogic {
               'x': node.position.dx,
               'y': node.position.dy,
               'params': node.params,
+              'markerChange': node.markerChange.toJson(),
               'datasetStates': node.datasetStates.map(
                 (dynamic key, DatasetState value) =>
                     MapEntry<String, dynamic>(key.toString(), value.name),
@@ -757,6 +762,13 @@ class CanvasLogic {
         params: Map<String, dynamic>.from(
           data['params'] as Map? ?? <String, dynamic>{},
         ),
+        markerChange: data['markerChange'] is Map<String, dynamic>
+            ? MarkerChange.fromJson(data['markerChange'] as Map<String, dynamic>)
+            : data['markerChange'] is Map
+                ? MarkerChange.fromJson(
+                    Map<String, dynamic>.from(data['markerChange'] as Map),
+                  )
+                : const MarkerChange(),
       );
       final Map<String, dynamic> rawStates = Map<String, dynamic>.from(
         data['datasetStates'] as Map? ?? <String, dynamic>{},
@@ -1971,6 +1983,33 @@ class CanvasLogic {
     _clearPendingConnection();
   }
 
+  void applyInteractiveArtifactDetectionFromVisualization({
+    required String nodeId,
+    required Dataset dataset,
+  }) {
+    final NodeModel? sourceNode = _interactiveArtifactSourceNode(nodeId);
+    if (sourceNode == null) {
+      return;
+    }
+
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries != null) {
+      dataset.timeSeries = timeSeries.copyWith(
+        markers: InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
+          dataset.id,
+          sourceNode.params,
+          baseMarkers: timeSeries.markers,
+        ),
+      );
+    }
+
+    sourceNode.datasetStates[dataset.id] = DatasetState.done;
+    _markImmediateChildrenStale(sourceNode.id, dataset.id);
+    selectedNodeId = sourceNode.id;
+    selectedConnectionIndex = null;
+    _clearPendingConnection();
+  }
+
   void _showStatusSnackBar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -2553,6 +2592,7 @@ class CanvasLogic {
       type: node.type,
       position: node.position,
       params: params,
+      markerChange: node.markerChange,
     )..datasetStates.addAll(node.datasetStates);
   }
 
@@ -2657,6 +2697,24 @@ class CanvasLogic {
       return null;
     }
     return node;
+  }
+
+  NodeModel? _interactiveArtifactSourceNode(String nodeId) {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null) {
+      return null;
+    }
+    if (node.type is InteractiveArtifactDetectionNodeType) {
+      return node;
+    }
+    if (node.type is VisualizationNodeType) {
+      for (final NodeModel parent in _immediateParents(node.id)) {
+        if (parent.type is InteractiveArtifactDetectionNodeType) {
+          return parent;
+        }
+      }
+    }
+    return null;
   }
 
   NodeModel _ensureMarkerNode(NodeModel sourceNode) {

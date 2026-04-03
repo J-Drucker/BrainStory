@@ -5,6 +5,128 @@ class MarkerType {
   static const String segment = 'segment';
 }
 
+enum MarkerChangeType {
+  add,
+  remove,
+  change,
+}
+
+class MarkerChangeEntry {
+  const MarkerChangeEntry({
+    required this.dataset,
+    required this.changeType,
+    this.oldLabel,
+    this.oldOnsetMicros,
+    this.oldDurationMicros,
+    this.newLabel,
+    this.newOnsetMicros,
+    this.newDurationMicros,
+  });
+
+  final String dataset;
+  final MarkerChangeType changeType;
+  final String? oldLabel;
+  final int? oldOnsetMicros;
+  final int? oldDurationMicros;
+  final String? newLabel;
+  final int? newOnsetMicros;
+  final int? newDurationMicros;
+
+  MarkerChangeEntry copyWith({
+    String? dataset,
+    MarkerChangeType? changeType,
+    String? oldLabel,
+    int? oldOnsetMicros,
+    int? oldDurationMicros,
+    String? newLabel,
+    int? newOnsetMicros,
+    int? newDurationMicros,
+  }) {
+    return MarkerChangeEntry(
+      dataset: dataset ?? this.dataset,
+      changeType: changeType ?? this.changeType,
+      oldLabel: oldLabel ?? this.oldLabel,
+      oldOnsetMicros: oldOnsetMicros ?? this.oldOnsetMicros,
+      oldDurationMicros: oldDurationMicros ?? this.oldDurationMicros,
+      newLabel: newLabel ?? this.newLabel,
+      newOnsetMicros: newOnsetMicros ?? this.newOnsetMicros,
+      newDurationMicros: newDurationMicros ?? this.newDurationMicros,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'dataset': dataset,
+      'changeType': changeType.name,
+      'oldLabel': oldLabel,
+      'oldOnsetMicros': oldOnsetMicros,
+      'oldDurationMicros': oldDurationMicros,
+      'newLabel': newLabel,
+      'newOnsetMicros': newOnsetMicros,
+      'newDurationMicros': newDurationMicros,
+    };
+  }
+
+  static MarkerChangeEntry fromJson(Map<String, dynamic> json) {
+    final String wireValue = json['changeType']?.toString() ?? MarkerChangeType.change.name;
+    final MarkerChangeType changeType = MarkerChangeType.values.firstWhere(
+      (MarkerChangeType candidate) => candidate.name == wireValue,
+      orElse: () => MarkerChangeType.change,
+    );
+    return MarkerChangeEntry(
+      dataset: json['dataset']?.toString() ?? '',
+      changeType: changeType,
+      oldLabel: json['oldLabel']?.toString(),
+      oldOnsetMicros: (json['oldOnsetMicros'] as num?)?.round(),
+      oldDurationMicros: (json['oldDurationMicros'] as num?)?.round(),
+      newLabel: json['newLabel']?.toString(),
+      newOnsetMicros: (json['newOnsetMicros'] as num?)?.round(),
+      newDurationMicros: (json['newDurationMicros'] as num?)?.round(),
+    );
+  }
+}
+
+class MarkerChange {
+  const MarkerChange({
+    this.rows = const <MarkerChangeEntry>[],
+  });
+
+  final List<MarkerChangeEntry> rows;
+
+  bool get isEmpty => rows.isEmpty;
+
+  MarkerChange copyWith({
+    List<MarkerChangeEntry>? rows,
+  }) {
+    return MarkerChange(
+      rows: rows ?? this.rows,
+    );
+  }
+
+  MarkerChange append(MarkerChangeEntry row) {
+    return MarkerChange(
+      rows: <MarkerChangeEntry>[...rows, row],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'rows': rows
+          .map((MarkerChangeEntry row) => row.toJson())
+          .toList(growable: false),
+    };
+  }
+
+  static MarkerChange fromJson(Map<String, dynamic> json) {
+    return MarkerChange(
+      rows: (json['rows'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(MarkerChangeEntry.fromJson)
+          .toList(growable: false),
+    );
+  }
+}
+
 class TimeMarker {
   const TimeMarker({
     required this.onsetMicros,

@@ -6,6 +6,7 @@ import 'channel_exclusion_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
 import 'machine_learning_nodes.dart';
+import 'interactive_artifact_detection_node.dart';
 import 'psd_node.dart';
 import 'realign_node.dart';
 import 'resample_node.dart';
@@ -108,6 +109,10 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
       create: () => AddRemoveMarkersNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
+      create: () => InteractiveArtifactDetectionNodeType(),
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,

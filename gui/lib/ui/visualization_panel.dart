@@ -497,6 +497,20 @@ class _VisualizationChart extends StatelessWidget {
           rawMarkers: rawMarkers,
         );
       },
+      onInteractiveArtifactDetectionSaved: () {
+        logic.applyInteractiveArtifactDetectionFromVisualization(
+          nodeId: nodeId,
+          dataset: activeDataset,
+        );
+      },
+      onSaveAndQuit: () {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+          return;
+        }
+        logic.selectedNodeId = null;
+        onChanged();
+      },
       onChanged: onChanged,
     );
   }

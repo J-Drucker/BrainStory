@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'data_artifacts.dart';
 import '../nodes/node_type.dart';
 import 'dataset_state.dart';
 
@@ -7,6 +8,7 @@ class NodeModel {
   final NodeType type;
   Offset position;
   Map<String, dynamic> params;
+  MarkerChange markerChange;
 
   final List<PortSpec> inputPorts;
   final List<PortSpec> outputPorts;
@@ -23,8 +25,10 @@ class NodeModel {
     required this.type,
     required this.position,
     required this.params,
+    MarkerChange? markerChange,
   })  : inputPorts = List<PortSpec>.from(type.inputs),
-        outputPorts = List<PortSpec>.from(type.outputs);
+        outputPorts = List<PortSpec>.from(type.outputs),
+        markerChange = markerChange ?? const MarkerChange();
 
   // >>> This is the correct placement <<<
   DatasetState get visualState {

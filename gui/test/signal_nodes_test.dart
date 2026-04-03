@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
+import 'package:brainstory_gui/model/node.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
 import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_exclusion_node.dart';
@@ -11,6 +12,7 @@ import 'package:brainstory_gui/nodes/export_edf_node.dart';
 import 'package:brainstory_gui/nodes/eye_blinks_node.dart';
 import 'package:brainstory_gui/nodes/fooof_node.dart';
 import 'package:brainstory_gui/nodes/import_node.dart';
+import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
@@ -520,6 +522,110 @@ time,Fz,Cz
     expect(dataset.ram['eye_blinks.params'], isA<Map<String, dynamic>>());
   });
 
+  test('interactive artifact detection builds candidates from exemplars', () {
+    final List<double> samples = List<double>.filled(512, 0.0);
+    const List<double> blinkShape = <double>[0.0, 1.0, 4.0, 7.0, 4.0, 1.0, 0.0];
+    for (int index = 0; index < blinkShape.length; index++) {
+      samples[100 + index] = blinkShape[index];
+      samples[300 + index] = blinkShape[index];
+    }
+
+    final ArtifactDetectionComputation computation =
+        InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
+      datasetId: 'interactive',
+      timeSeries: TimeSeriesData(
+        samples: samples,
+        sampleRate: 100.0,
+      ),
+      exemplars: const <ArtifactExemplarData>[
+        ArtifactExemplarData(
+          id: 'e1',
+          datasetId: 'interactive',
+          label: 'blink',
+          onsetMicros: 1000000,
+          durationMicros: 70000,
+        ),
+      ],
+      existingCandidates: const <ArtifactCandidateData>[],
+      threshold: 0.75,
+    );
+
+    expect(computation.templates, hasLength(1));
+    expect(computation.templates.first.previewSamples, isNotEmpty);
+    expect(computation.templates.first.durationMicros, greaterThan(0));
+    expect(computation.templates.first.previewSamples.length, lessThanOrEqualTo(160));
+    expect(computation.candidates, isNotEmpty);
+    expect(
+      computation.candidates.any(
+        (ArtifactCandidateData candidate) =>
+            candidate.label == 'blink' &&
+            (candidate.onsetMicros - 3000000).abs() <= 30000,
+      ),
+      isTrue,
+    );
+  });
+
+  test('interactive artifact detection node merges accepted markers into output', () async {
+    final Dataset dataset = Dataset('interactive-run', label: 'Interactive');
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.filled(64, 0.0),
+      sampleRate: 100.0,
+      markers: const <TimeMarker>[
+        TimeMarker(
+          onsetMicros: 500000,
+          label: 'Existing',
+          markerType: MarkerType.event,
+        ),
+      ],
+    );
+
+    await InteractiveArtifactDetectionNodeType().run(dataset, <String, dynamic>{
+      'artifactExemplars': <Map<String, dynamic>>[
+        const ArtifactExemplarData(
+          id: 'e1',
+          datasetId: 'interactive-run',
+          label: 'blink',
+          onsetMicros: 1000000,
+          durationMicros: 50000,
+        ).toJson(),
+      ],
+      'artifactCandidates': <Map<String, dynamic>>[
+        const ArtifactCandidateData(
+          id: 'c1',
+          datasetId: 'interactive-run',
+          label: 'motion',
+          onsetMicros: 2000000,
+          durationMicros: 80000,
+          score: 0.9,
+          status: InteractiveArtifactDetectionNodeType.acceptedStatus,
+        ).toJson(),
+        const ArtifactCandidateData(
+          id: 'c2',
+          datasetId: 'interactive-run',
+          label: 'blink',
+          onsetMicros: 3000000,
+          durationMicros: 80000,
+          score: 0.8,
+          status: InteractiveArtifactDetectionNodeType.pendingStatus,
+        ).toJson(),
+      ],
+      'artifactTemplates': <Map<String, dynamic>>[],
+    });
+
+    final List<TimeMarker> markers = dataset.timeSeries!.markers;
+    expect(markers.map((TimeMarker marker) => marker.label), contains('Existing'));
+    expect(markers.map((TimeMarker marker) => marker.label), contains('blink'));
+    expect(markers.map((TimeMarker marker) => marker.label), contains('motion'));
+    expect(
+      markers.where((TimeMarker marker) => marker.label == 'blink').length,
+      1,
+    );
+    expect(
+      markers.where((TimeMarker marker) => marker.attributes['brainstory.artifactStatus'] == 'pending'),
+      isEmpty,
+    );
+  });
+
   test('spectral features node creates a CSV-ready feature table from PSD input', () async {
     final Dataset dataset = Dataset('features', label: 'Features');
     dataset.spectrum = FrequencySpectrumData(
@@ -696,6 +802,57 @@ time,Fz,Cz
     expect(badChannel.markerType, MarkerType.artifact);
     expect(badChannel.durationMicros, 1000000);
     expect(badChannel.channelMask, <int>[0, 1, 0]);
+  });
+
+  test('marker change serializes add/remove/change rows', () {
+    final MarkerChange change = MarkerChange(
+      rows: <MarkerChangeEntry>[
+        const MarkerChangeEntry(
+          dataset: 'example.edf[#2]',
+          changeType: MarkerChangeType.add,
+          newLabel: 'blink',
+          newOnsetMicros: 1250000,
+          newDurationMicros: 180000,
+        ),
+        const MarkerChangeEntry(
+          dataset: 'example.edf[#3]',
+          changeType: MarkerChangeType.remove,
+          oldLabel: 'artifact',
+          oldOnsetMicros: 500000,
+          oldDurationMicros: 40000,
+        ),
+        const MarkerChangeEntry(
+          dataset: 'example.edf[#4]',
+          changeType: MarkerChangeType.change,
+          oldLabel: 'blink',
+          oldOnsetMicros: 1000,
+          oldDurationMicros: 2000,
+          newLabel: 'saccade_vertical',
+          newOnsetMicros: 1500,
+          newDurationMicros: 2200,
+        ),
+      ],
+    );
+
+    final MarkerChange decoded = MarkerChange.fromJson(change.toJson());
+
+    expect(decoded.rows, hasLength(3));
+    expect(decoded.rows[0].changeType, MarkerChangeType.add);
+    expect(decoded.rows[0].oldLabel, isNull);
+    expect(decoded.rows[1].newLabel, isNull);
+    expect(decoded.rows[2].newLabel, 'saccade_vertical');
+  });
+
+  test('node model starts with an empty marker change table', () {
+    final NodeModel node = NodeModel(
+      id: 'node-1',
+      type: ImportNodeType(),
+      position: Offset.zero,
+      params: <String, dynamic>{},
+    );
+
+    expect(node.markerChange.isEmpty, isTrue);
+    expect(node.markerChange.rows, isEmpty);
   });
 
 }
