@@ -12,6 +12,9 @@ abstract class _MatrixTransformNodeType extends NodeType {
   NodeCategory get category => NodeCategory.transform;
 
   @override
+  String get subcategory => 'Matrix Transformation';
+
+  @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
         'componentCount': 8,
         'whiten': true,
@@ -46,16 +49,13 @@ abstract class _MatrixTransformNodeType extends NodeType {
           style: const TextStyle(color: Colors.black87),
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          initialValue: params['componentCount']?.toString() ?? '8',
-          decoration: const InputDecoration(labelText: 'Components'),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'componentCount',
+          labelText: 'Components',
           keyboardType: TextInputType.number,
-          onChanged: (String value) {
-            setState(() {
-              params['componentCount'] =
-                  int.tryParse(value) ?? params['componentCount'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              int.tryParse(value) ?? previous,
         ),
         const SizedBox(height: 8),
         SwitchListTile(
@@ -163,6 +163,9 @@ class MicrostatesNodeType extends NodeType {
   NodeCategory get category => NodeCategory.transform;
 
   @override
+  String get subcategory => 'Matrix Transformation';
+
+  @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
         'stateCount': 4,
         'clusteringAlgorithm': 'Modified K-Means',
@@ -196,48 +199,28 @@ class MicrostatesNodeType extends NodeType {
           'Microstate segmentation placeholder. This will eventually emit labeled microstate dynamics plus the fitted template/topography model.',
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          initialValue: params['stateCount']?.toString() ?? '4',
-          decoration: const InputDecoration(labelText: '# States'),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'stateCount',
+          labelText: '# States',
           keyboardType: TextInputType.number,
-          onChanged: (String value) {
-            setState(() {
-              params['stateCount'] =
-                  int.tryParse(value) ?? params['stateCount'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              int.tryParse(value) ?? previous,
         ),
         const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: params['clusteringAlgorithm']?.toString() ??
-              'Modified K-Means',
-          decoration: const InputDecoration(labelText: 'Clustering Algorithm'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'clusteringAlgorithm',
+          labelText: 'Clustering Algorithm',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(
               value: 'Modified K-Means',
-              child: Text('Modified K-Means'),
+              label: 'Modified K-Means',
             ),
-            DropdownMenuItem<String>(
-              value: 'K-Means',
-              child: Text('K-Means'),
-            ),
-            DropdownMenuItem<String>(
-              value: 'AAHC',
-              child: Text('AAHC'),
-            ),
-            DropdownMenuItem<String>(
-              value: 'TAAHC',
-              child: Text('TAAHC'),
-            ),
+            NodeDropdownOption<String>(value: 'K-Means', label: 'K-Means'),
+            NodeDropdownOption<String>(value: 'AAHC', label: 'AAHC'),
+            NodeDropdownOption<String>(value: 'TAAHC', label: 'TAAHC'),
           ],
-          onChanged: (String? value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              params['clusteringAlgorithm'] = value;
-            });
-          },
         ),
         const SizedBox(height: 8),
         const Text(
@@ -282,4 +265,16 @@ class MicrostatesNodeType extends NodeType {
       source: 'Microstates placeholder transform; algorithm=$algorithm',
     );
   }
+}
+
+class SourceReconstructionNodeType extends _MatrixTransformNodeType {
+  @override
+  String get title => 'Source Reconstruction';
+
+  @override
+  String get methodName => 'SRC';
+
+  @override
+  String get description =>
+      'Source reconstruction placeholder. This will eventually emit reconstructed source-space data plus the forward/inverse transformation objects.';
 }

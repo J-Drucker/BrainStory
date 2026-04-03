@@ -83,11 +83,14 @@ class _CanvasViewState extends State<CanvasView> {
                     },
                     child: Focus(
                   focusNode: _keyboardFocusNode,
-                  autofocus: true,
+                  autofocus: false,
                       child: Row(
                     children: <Widget>[
                       logic.sidebar(
                         width: leftRailWidth,
+                        publish: () async {
+                          await logic.showPublishDialog(context);
+                        },
                         load: () async {
                           await logic.loadBrainStory(context);
                           if (mounted) {

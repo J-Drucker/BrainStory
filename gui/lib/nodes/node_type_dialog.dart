@@ -196,11 +196,13 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
                   });
                 },
                 onRunAllPrevious: (Set<String> datasetIds) => _runDatasetAction(
+                  promptToLoadFromDisk: true,
                   widget.datasetActions?.runAllPrevious,
                   datasetIds,
                   label: 'Running all previous...',
                 ),
                 onRunThisNode: (Set<String> datasetIds) => _runDatasetAction(
+                  promptToLoadFromDisk: true,
                   widget.datasetActions?.runThisNode,
                   datasetIds,
                   label: 'Running this node...',
@@ -306,9 +308,45 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
     )? action,
     Set<String> datasetIds, {
     required String label,
+    bool promptToLoadFromDisk = false,
   }) async {
     if (action == null || datasetIds.isEmpty) {
       return;
+    }
+    if (promptToLoadFromDisk &&
+        widget.datasetActions != null &&
+        await widget.datasetActions!.hasLoadableDiskCache(
+          Map<String, dynamic>.from(localParams),
+          datasetIds,
+        )) {
+      if (!mounted) {
+        return;
+      }
+      final bool? loadInstead = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          return AlertDialog(
+            title: const Text('Load from disk instead?'),
+            content: const Text(
+              'BrainStory found cached output for this node on disk. Loading it is likely faster than recomputing it.',
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Run anyway'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Load from disk'),
+              ),
+            ],
+          );
+        },
+      );
+      if (loadInstead == true) {
+        action = widget.datasetActions!.loadFromDisk;
+        label = 'Loading from disk...';
+      }
     }
     setState(() {
       _runningDatasetAction = true;
@@ -457,6 +495,30 @@ class _MetadataDialog extends StatelessWidget {
       ));
     }
 
+    final FooofResultData? fooofResult = dataset.fooofResult;
+    if (fooofResult != null) {
+      rows.add(_metadataRow(
+        'FOOOF',
+        '1/f exponent ${fooofResult.exponent.toStringAsFixed(3)}, intercept ${fooofResult.intercept.toStringAsFixed(3)}, ${fooofResult.peaks.length} peak(s)',
+      ));
+    }
+
+    final FeatureTableData? featureTable = dataset.featureTable;
+    if (featureTable != null) {
+      rows.add(_metadataRow(
+        'Feature table',
+        '${featureTable.rows.length} row(s), ${featureTable.columns.length} column(s)',
+      ));
+    }
+
+    final BridgeDetectionData? bridgeDetection = dataset.bridgeDetection;
+    if (bridgeDetection != null) {
+      rows.add(_metadataRow(
+        'Bridge detector',
+        '${bridgeDetection.frameCount} minute frame(s), ${bridgeDetection.channelCount} channel(s), ${bridgeDetection.valueCount} correlation value(s)',
+      ));
+    }
+
     final SegmentedTimeSeriesData? segmentedTimeSeries = dataset.segmentedTimeSeries;
     if (segmentedTimeSeries != null) {
       final int firstSegmentSamples = segmentedTimeSeries.segments.isEmpty
@@ -538,7 +600,7 @@ class _DatasetControlHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: const <Widget>[
         Expanded(
-          flex: 30,
+          flex: 22,
           child: Padding(
             padding: EdgeInsets.only(left: 8),
             child: Text(
@@ -549,7 +611,15 @@ class _DatasetControlHeader extends StatelessWidget {
         ),
         SizedBox(width: 16),
         Expanded(
-          flex: 24,
+          flex: 18,
+          child: Text(
+            'Source node',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        SizedBox(width: 16),
+        Expanded(
+          flex: 20,
           child: Text(
             'Processing status',
             style: TextStyle(fontWeight: FontWeight.bold),
@@ -557,7 +627,7 @@ class _DatasetControlHeader extends StatelessWidget {
         ),
         SizedBox(width: 16),
         Expanded(
-          flex: 22,
+          flex: 20,
           child: Text(
             'RAM status',
             style: TextStyle(fontWeight: FontWeight.bold),
@@ -565,7 +635,7 @@ class _DatasetControlHeader extends StatelessWidget {
         ),
         SizedBox(width: 16),
         Expanded(
-          flex: 22,
+          flex: 20,
           child: Text(
             'Hard disk',
             style: TextStyle(fontWeight: FontWeight.bold),
@@ -585,16 +655,8 @@ class _DatasetControlRow extends StatelessWidget {
     required this.ramLoaded,
     required this.diskSaved,
     required this.busy,
-    required this.supportsDisk,
     required this.onDatasetNamePressed,
     required this.onCheckedChanged,
-    required this.onRunAllPrevious,
-    required this.onRunThisNode,
-    required this.onClearResults,
-    required this.onLoadFromDisk,
-    required this.onPurgeActiveMemory,
-    required this.onSaveToDisk,
-    required this.onPurgeFromDisk,
   });
 
   final Dataset dataset;
@@ -604,30 +666,16 @@ class _DatasetControlRow extends StatelessWidget {
   final bool ramLoaded;
   final bool diskSaved;
   final bool busy;
-  final bool supportsDisk;
   final VoidCallback onDatasetNamePressed;
   final ValueChanged<bool> onCheckedChanged;
-  final VoidCallback onRunAllPrevious;
-  final VoidCallback onRunThisNode;
-  final VoidCallback onClearResults;
-  final VoidCallback onLoadFromDisk;
-  final VoidCallback onPurgeActiveMemory;
-  final VoidCallback onSaveToDisk;
-  final VoidCallback onPurgeFromDisk;
 
   @override
   Widget build(BuildContext context) {
-    final bool canRun = processingState != DatasetState.notReady;
-    final bool canClear = processingState == DatasetState.done ||
-        processingState == DatasetState.stale ||
-        ramLoaded ||
-        diskSaved;
-
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Expanded(
-          flex: 30,
+          flex: 22,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -640,34 +688,18 @@ class _DatasetControlRow extends StatelessWidget {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(top: 2),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          minimumSize: Size.zero,
-                          padding: EdgeInsets.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          alignment: Alignment.centerLeft,
-                        ),
-                        onPressed: onDatasetNamePressed,
-                        child: Text(
-                          dataset.label,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      if (sourceLabels.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            sourceLabels.join(', '),
-                            style: const TextStyle(
-                              color: Colors.black54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                    ],
+                  child: TextButton(
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      alignment: Alignment.centerLeft,
+                    ),
+                    onPressed: onDatasetNamePressed,
+                    child: Text(
+                      dataset.label,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
                   ),
                 ),
               ),
@@ -676,44 +708,35 @@ class _DatasetControlRow extends StatelessWidget {
         ),
         const SizedBox(width: 16),
         Expanded(
-          flex: 24,
-          child: _StatusColumn(
-            indicator: _processingIndicator(processingState),
-            primaryLabel: 'Run all previous',
-            onPrimary: !busy ? onRunAllPrevious : null,
-            secondaryLabel: 'Run this node',
-            onSecondary: !busy && canRun ? onRunThisNode : null,
-            tertiaryLabel: 'Clear results',
-            onTertiary: !busy && canClear ? onClearResults : null,
+          flex: 18,
+          child: Text(
+            sourceLabels.isEmpty ? 'Source file' : sourceLabels.join(', '),
+            style: const TextStyle(
+              color: Colors.black54,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
-          flex: 22,
-          child: _StatusColumn(
-            indicator: _StatusIndicator(
-              label: ramLoaded ? 'Loaded in active memory' : 'Not loaded',
-              color: ramLoaded ? Colors.blue : Colors.grey,
-            ),
-            primaryLabel: 'Load from disk',
-            onPrimary:
-                !busy && supportsDisk && diskSaved && !ramLoaded ? onLoadFromDisk : null,
-            secondaryLabel: 'Purge active memory',
-            onSecondary: !busy && ramLoaded ? onPurgeActiveMemory : null,
+          flex: 20,
+          child: _processingIndicator(processingState),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          flex: 20,
+          child: _StatusIndicator(
+            label: ramLoaded ? 'Loaded in active memory' : 'Not loaded',
+            color: ramLoaded ? Colors.blue : Colors.grey,
           ),
         ),
         const SizedBox(width: 16),
         Expanded(
-          flex: 22,
-          child: _StatusColumn(
-            indicator: _StatusIndicator(
-              label: diskSaved ? 'Saved to disk' : 'Not saved to disk',
-              color: diskSaved ? Colors.purple : Colors.grey,
-            ),
-            primaryLabel: 'Save to disk',
-            onPrimary: !busy && supportsDisk && ramLoaded ? onSaveToDisk : null,
-            secondaryLabel: 'Purge from disk',
-            onSecondary: !busy && supportsDisk && diskSaved ? onPurgeFromDisk : null,
+          flex: 20,
+          child: _StatusIndicator(
+            label: diskSaved ? 'Saved to disk' : 'Not saved to disk',
+            color: diskSaved ? Colors.purple : Colors.grey,
           ),
         ),
       ],
@@ -731,59 +754,6 @@ class _DatasetControlRow extends StatelessWidget {
       case DatasetState.stale:
         return const _StatusIndicator(label: 'Stale', color: Colors.orange);
     }
-  }
-}
-
-class _StatusColumn extends StatelessWidget {
-  const _StatusColumn({
-    required this.indicator,
-    required this.primaryLabel,
-    required this.onPrimary,
-    this.secondaryLabel,
-    this.onSecondary,
-    this.tertiaryLabel,
-    this.onTertiary,
-  });
-
-  final _StatusIndicator indicator;
-  final String primaryLabel;
-  final VoidCallback? onPrimary;
-  final String? secondaryLabel;
-  final VoidCallback? onSecondary;
-  final String? tertiaryLabel;
-  final VoidCallback? onTertiary;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        indicator,
-        const SizedBox(height: 8),
-        _textAction(primaryLabel, onPrimary),
-        if (secondaryLabel != null) ...<Widget>[
-          const SizedBox(height: 4),
-          _textAction(secondaryLabel!, onSecondary),
-        ],
-        if (tertiaryLabel != null) ...<Widget>[
-          const SizedBox(height: 4),
-          _textAction(tertiaryLabel!, onTertiary),
-        ],
-      ],
-    );
-  }
-
-  Widget _textAction(String label, VoidCallback? onPressed) {
-    return OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        minimumSize: const Size(0, 28),
-        alignment: Alignment.centerLeft,
-      ),
-      onPressed: onPressed,
-      child: Text(label),
-    );
   }
 }
 
@@ -1030,7 +1000,6 @@ class _DatasetControlSection extends StatelessWidget {
                 diskSaved: statusSnapshot.diskSavedDatasetIds
                     .contains(datasets[index].value.id),
                 busy: busy,
-                supportsDisk: supportsDisk,
                 onDatasetNamePressed: () =>
                     onDatasetNamePressed(datasets[index].value.id),
                 onCheckedChanged: (bool checked) {
@@ -1042,20 +1011,6 @@ class _DatasetControlSection extends StatelessWidget {
                   }
                   onChanged(nextSelection);
                 },
-                onRunAllPrevious: () =>
-                    onRunAllPrevious(<String>{datasets[index].value.id}),
-                onRunThisNode: () =>
-                    onRunThisNode(<String>{datasets[index].value.id}),
-                onClearResults: () =>
-                    onClearResults(<String>{datasets[index].value.id}),
-                onLoadFromDisk: () =>
-                    onLoadFromDisk(<String>{datasets[index].value.id}),
-                onPurgeActiveMemory: () =>
-                    onPurgeActiveMemory(<String>{datasets[index].value.id}),
-                onSaveToDisk: () =>
-                    onSaveToDisk(<String>{datasets[index].value.id}),
-                onPurgeFromDisk: () =>
-                    onPurgeFromDisk(<String>{datasets[index].value.id}),
               ),
             ],
           ],

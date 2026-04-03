@@ -58,11 +58,15 @@ class AddRemoveMarkersNodeType extends NodeType {
       return;
     }
 
+    final List<TimeMarker> editedMarkers = markersForDataset(
+      dataset.id,
+      params['markers'] as List<dynamic>? ?? const <dynamic>[],
+    );
+    final List<TimeMarker> mergedMarkers = editedMarkers.isEmpty
+        ? timeSeries.markers
+        : editedMarkers;
     dataset.timeSeries = timeSeries.copyWith(
-      markers: markersForDataset(
-        dataset.id,
-        params['markers'] as List<dynamic>? ?? const <dynamic>[],
-      ),
+      markers: mergedMarkers,
     );
   }
 

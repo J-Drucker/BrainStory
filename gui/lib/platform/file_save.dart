@@ -28,3 +28,21 @@ Future<SavedFileResult> saveEdfBytes({
     outputDirectory: outputDirectory,
   );
 }
+
+Future<SavedFileResult> saveTextFile({
+  required String text,
+  required String suggestedBaseName,
+  required String filenameSuffix,
+  required String fileExtension,
+  required String datasetPath,
+  required String outputDirectory,
+}) {
+  return impl.saveTextFile(
+    text: text,
+    suggestedBaseName: suggestedBaseName,
+    filenameSuffix: filenameSuffix,
+    fileExtension: fileExtension,
+    datasetPath: datasetPath,
+    outputDirectory: outputDirectory,
+  );
+}

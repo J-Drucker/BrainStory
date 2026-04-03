@@ -9,9 +9,9 @@ import '../platform/file_save.dart';
 import '../platform/file_save_resolve.dart';
 import 'node_type.dart';
 
-class ExportEdfNodeType extends NodeType {
+class ExportNodeType extends NodeType {
   @override
-  String get title => 'Export EDF';
+  String get title => 'Export';
 
   @override
   NodeCategory get category => NodeCategory.export;
@@ -19,6 +19,7 @@ class ExportEdfNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => {
     'selectedDatasetIds': <String>[],
+    'fileType': 'edf',
     'outputDirectory': '',
     'filenameSuffix': '_brainstory',
   };
@@ -26,6 +27,7 @@ class ExportEdfNodeType extends NodeType {
   @override
   List<PortSpec> get inputs => const [
     PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'table', type: PortType.metadata),
   ];
 
   @override
@@ -37,39 +39,87 @@ class ExportEdfNodeType extends NodeType {
         required Map<String, Dataset> datasets,
         required void Function(void Function()) setState,
       }) {
+    params.putIfAbsent('fileType', () => 'edf');
+    final _ExportCapabilities capabilities = _visibleExportCapabilities(
+      datasets: datasets,
+      selectedDatasetIds:
+          params['selectedDatasetIds'] as List<dynamic>? ?? const <dynamic>[],
+    );
+    final List<NodeDropdownOption<String>> fileTypeOptions =
+        <NodeDropdownOption<String>>[
+      NodeDropdownOption<String>(
+        value: 'edf',
+        label: capabilities.hasSignal ? 'EDF' : 'EDF (needs signal input)',
+        enabled: capabilities.hasSignal,
+      ),
+      NodeDropdownOption<String>(
+        value: 'csv',
+        label: capabilities.hasFeatureTable
+            ? 'CSV'
+            : 'CSV (needs table output)',
+        enabled: capabilities.hasFeatureTable,
+      ),
+      const NodeDropdownOption<String>(
+        value: 'json',
+        label: 'JSON (coming soon)',
+        enabled: false,
+      ),
+    ];
+    final String currentFileType = params['fileType']?.toString() ?? 'edf';
+    final bool currentEnabled = fileTypeOptions.any(
+      (NodeDropdownOption<String> option) =>
+          option.value == currentFileType && option.enabled,
+    );
+    if (!currentEnabled) {
+      final NodeDropdownOption<String>? fallback = fileTypeOptions
+          .cast<NodeDropdownOption<String>?>()
+          .firstWhere(
+            (NodeDropdownOption<String>? option) => option?.enabled == true,
+            orElse: () => null,
+          );
+      if (fallback != null) {
+        params['fileType'] = fallback.value;
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        TextFormField(
-          initialValue: params['outputDirectory']?.toString() ?? '',
-          decoration: InputDecoration(
-            labelText: 'Output directory (optional)',
-            helperText: kIsWeb
-                ? 'Ignored on web. The EDF will download in the browser.'
-                : 'Leave blank to export next to the source file.',
-          ),
-          onChanged: (String value) {
-            setState(() {
-              params['outputDirectory'] = value.trim();
-            });
-          },
-        ),
-        TextFormField(
-          initialValue: params['filenameSuffix']?.toString() ?? '_brainstory',
-          decoration: const InputDecoration(
-            labelText: 'Filename suffix',
-            helperText: 'Appended before .edf',
-          ),
-          onChanged: (String value) {
-            setState(() {
-              params['filenameSuffix'] = value.trim();
-            });
-          },
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'fileType',
+          labelText: 'File type',
+          helperText:
+              'Formats are enabled when the currently available upstream artifact type supports them.',
+          options: fileTypeOptions,
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Exports the incoming signal for each selected dataset as an EDF. Multi-channel signals are preserved.',
+        NodeParamTextField(
+          params: params,
+          paramKey: 'outputDirectory',
+          labelText: 'Output directory (optional)',
+          helperText: kIsWeb
+              ? 'Ignored on web. The EDF will download in the browser.'
+              : 'Leave blank to export next to the source file.',
+          parser: (String value, dynamic _) => value.trim(),
+        ),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'filenameSuffix',
+          labelText: 'Filename suffix',
+          helperText: 'Appended before .edf',
+          parser: (String value, dynamic _) => value.trim(),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          switch ((params['fileType']?.toString() ?? 'edf')) {
+            'edf' =>
+              'Exports the incoming signal for each selected dataset as an EDF. Multi-channel signals are preserved.',
+            'csv' =>
+              'Exports the incoming table artifact for each selected dataset as a CSV file.',
+            _ => 'This export type is not implemented yet.',
+          },
         ),
       ],
     );
@@ -77,34 +127,60 @@ class ExportEdfNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    final String fileType = params['fileType']?.toString() ?? 'edf';
     final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
-      return;
-    }
-
     final String suffix = (params['filenameSuffix']?.toString().trim().isEmpty ?? true)
         ? '_brainstory'
         : params['filenameSuffix'].toString().trim();
     final String outputDirectory = params['outputDirectory']?.toString().trim() ?? '';
-    final List<int> bytes = buildEdfBytes(
-      channelSamples: timeSeries.channels,
-      sampleRate: timeSeries.sampleRate,
-      labels: timeSeries.channelLabels.isEmpty
-          ? List<String>.generate(
-              timeSeries.channels.length,
-              (int index) => '${dataset.label.isEmpty ? 'Signal' : dataset.label} ${index + 1}',
-              growable: false,
-            )
-          : timeSeries.channelLabels,
-    );
-    final SavedFileResult result = await saveEdfBytes(
-      bytes: Uint8List.fromList(bytes),
-      suggestedBaseName: dataset.label,
-      filenameSuffix: suffix,
-      datasetPath: dataset.path,
-      outputDirectory: outputDirectory,
-    );
-    dataset.ram['export.lastEdfPath'] = result.locationLabel;
+    late final SavedFileResult result;
+
+    switch (fileType) {
+      case 'edf':
+        if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
+          return;
+        }
+        final List<int> bytes = buildEdfBytes(
+          channelSamples: timeSeries.channels,
+          sampleRate: timeSeries.sampleRate,
+          labels: timeSeries.channelLabels.isEmpty
+              ? List<String>.generate(
+                  timeSeries.channels.length,
+                  (int index) => '${dataset.label.isEmpty ? 'Signal' : dataset.label} ${index + 1}',
+                  growable: false,
+                )
+              : timeSeries.channelLabels,
+        );
+        result = await saveEdfBytes(
+          bytes: Uint8List.fromList(bytes),
+          suggestedBaseName: dataset.label,
+          filenameSuffix: suffix,
+          datasetPath: dataset.path,
+          outputDirectory: outputDirectory,
+        );
+        dataset.ram['export.lastEdfPath'] = result.locationLabel;
+        break;
+      case 'csv':
+        final FeatureTableData? featureTable = dataset.featureTable;
+        if (featureTable == null) {
+          return;
+        }
+        result = await saveTextFile(
+          text: featureTable.toCsv(),
+          suggestedBaseName: dataset.label.isEmpty ? 'brainstory_table' : dataset.label,
+          filenameSuffix: suffix,
+          fileExtension: 'csv',
+          datasetPath: dataset.path,
+          outputDirectory: outputDirectory,
+        );
+        dataset.ram['export.lastCsvPath'] = result.locationLabel;
+        break;
+      default:
+        throw UnsupportedError(
+          'Export type "$fileType" is not implemented yet.',
+        );
+    }
+
     dataset.ram['export.persistedToDisk'] = result.persistedToDisk;
   }
 }
@@ -119,6 +195,51 @@ String resolveEdfExportFile({
     outputDirectory: outputDirectory,
     filenameSuffix: filenameSuffix,
     suggestedBaseName: dataset.label.isEmpty ? 'brainstory_signal' : dataset.label,
+  );
+}
+
+String resolveTextExportFile({
+  required Dataset dataset,
+  required String outputDirectory,
+  required String filenameSuffix,
+  required String fileExtension,
+}) {
+  return resolveGenericExportFilePath(
+    datasetPath: dataset.path,
+    outputDirectory: outputDirectory,
+    filenameSuffix: filenameSuffix,
+    suggestedBaseName: dataset.label.isEmpty ? 'brainstory_export' : dataset.label,
+    fileExtension: fileExtension,
+  );
+}
+
+class _ExportCapabilities {
+  const _ExportCapabilities({
+    required this.hasSignal,
+    required this.hasFeatureTable,
+  });
+
+  final bool hasSignal;
+  final bool hasFeatureTable;
+}
+
+_ExportCapabilities _visibleExportCapabilities({
+  required Map<String, Dataset> datasets,
+  required List<dynamic> selectedDatasetIds,
+}) {
+  final Iterable<Dataset> visibleDatasets = datasets.values.where((Dataset dataset) {
+    return selectedDatasetIds.isEmpty || selectedDatasetIds.contains(dataset.id);
+  });
+  bool hasSignal = false;
+  bool hasFeatureTable = false;
+  for (final Dataset dataset in visibleDatasets) {
+    hasSignal = hasSignal ||
+        (dataset.timeSeries != null && dataset.timeSeries!.primaryChannel.isNotEmpty);
+    hasFeatureTable = hasFeatureTable || dataset.featureTable != null;
+  }
+  return _ExportCapabilities(
+    hasSignal: hasSignal,
+    hasFeatureTable: hasFeatureTable,
   );
 }
 

@@ -42,19 +42,17 @@ class VisualizationNodeType extends NodeType {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        DropdownButtonFormField<String>(
-          initialValue: params['backend']?.toString() ?? 'mne',
-          decoration: const InputDecoration(labelText: 'Backend'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(value: 'mne', child: Text('MNE')),
-            DropdownMenuItem<String>(value: 'matplotlib', child: Text('Matplotlib')),
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'backend',
+          labelText: 'Backend',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(value: 'mne', label: 'MNE'),
+            NodeDropdownOption<String>(
+              value: 'matplotlib',
+              label: 'Matplotlib',
+            ),
           ],
-          onChanged: (String? value) {
-            if (value == null) return;
-            setState(() {
-              params['backend'] = value;
-            });
-          },
         ),
         const Text(
           'View type is inferred automatically from the upstream node output.',
@@ -90,25 +88,20 @@ class VisualizationNodeType extends NodeType {
             ],
           ),
         ),
-        TextFormField(
-          initialValue: params['window_sec']?.toString() ?? '5.0',
-          decoration: const InputDecoration(labelText: 'Window (seconds)'),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'window_sec',
+          labelText: 'Window (seconds)',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (String value) {
-            setState(() {
-              params['window_sec'] =
-                  double.tryParse(value) ?? params['window_sec'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              double.tryParse(value) ?? previous,
         ),
-        TextFormField(
-          initialValue: params['channel']?.toString() ?? 'all',
-          decoration: const InputDecoration(labelText: 'Channel'),
-          onChanged: (String value) {
-            setState(() {
-              params['channel'] = value.trim().isEmpty ? 'all' : value.trim();
-            });
-          },
+        NodeParamTextField(
+          params: params,
+          paramKey: 'channel',
+          labelText: 'Channel',
+          parser: (String value, dynamic _) =>
+              value.trim().isEmpty ? 'all' : value.trim(),
         ),
         const SizedBox(height: 12),
         const Text(

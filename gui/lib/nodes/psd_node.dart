@@ -14,6 +14,9 @@ class PSDNodeType extends NodeType {
   NodeCategory get category => NodeCategory.transform;
 
   @override
+  String get subcategory => 'Frequency Domain';
+
+  @override
   Map<String, dynamic> get defaultParams => {
     'fLow': 1.0,
     'fHigh': 40.0,
@@ -49,48 +52,44 @@ class PSDNodeType extends NodeType {
         Row(
           children: [
             Expanded(
-              child: TextFormField(
-                initialValue: params['fLow'].toString(),
-                decoration: const InputDecoration(labelText: 'Lowest'),
+              child: NodeParamTextField(
+                params: params,
+                paramKey: 'fLow',
+                labelText: 'Lowest',
                 keyboardType: TextInputType.number,
-                onChanged: (v) {
-                  setState(() {
-                    params['fLow'] = double.tryParse(v) ?? params['fLow'];
-                  });
-                },
+                parser: (String value, dynamic previous) =>
+                    double.tryParse(value) ?? previous,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: TextFormField(
-                initialValue: params['fHigh'].toString(),
-                decoration: const InputDecoration(labelText: 'Highest'),
+              child: NodeParamTextField(
+                params: params,
+                paramKey: 'fHigh',
+                labelText: 'Highest',
                 keyboardType: TextInputType.number,
-                onChanged: (v) {
-                  setState(() {
-                    params['fHigh'] = double.tryParse(v) ?? params['fHigh'];
-                  });
-                },
+                parser: (String value, dynamic previous) =>
+                    double.tryParse(value) ?? previous,
               ),
             ),
           ],
         ),
         const SizedBox(height: 20),
         const Text('Output', style: TextStyle(fontWeight: FontWeight.bold)),
-        DropdownButtonFormField<String>(
-          initialValue: params['outputMode']?.toString() ?? 'averaged',
-          decoration: const InputDecoration(labelText: 'Mode'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'outputMode',
+          labelText: 'Mode',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(
               value: 'segments',
-              child: Text('As segments'),
+              label: 'As segments',
             ),
-            DropdownMenuItem<String>(
+            NodeDropdownOption<String>(
               value: 'averaged',
-              child: Text('Averaged'),
+              label: 'Averaged',
             ),
           ],
-          onChanged: (v) => setState(() => params['outputMode'] = v),
         ),
       ],
     );

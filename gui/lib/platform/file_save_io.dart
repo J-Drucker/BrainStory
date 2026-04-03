@@ -24,3 +24,26 @@ Future<SavedFileResult> saveEdfBytes({
     persistedToDisk: true,
   );
 }
+
+Future<SavedFileResult> saveTextFile({
+  required String text,
+  required String suggestedBaseName,
+  required String filenameSuffix,
+  required String fileExtension,
+  required String datasetPath,
+  required String outputDirectory,
+}) async {
+  final File outputFile = File(resolveGenericExportFilePath(
+    datasetPath: datasetPath,
+    outputDirectory: outputDirectory,
+    filenameSuffix: filenameSuffix,
+    suggestedBaseName: suggestedBaseName,
+    fileExtension: fileExtension,
+  ));
+  await outputFile.parent.create(recursive: true);
+  await outputFile.writeAsString(text, flush: true);
+  return SavedFileResult(
+    locationLabel: outputFile.path,
+    persistedToDisk: true,
+  );
+}

@@ -10,7 +10,15 @@ part 'node_type_dialog.dart';
 
 enum PortType { signal, metadata, markers, matrixTransformation }
 
-enum NodeCategory { import, transform, markerFunctions, visualize, export, other }
+enum NodeCategory {
+  import,
+  transform,
+  machineLearning,
+  markerFunctions,
+  visualize,
+  export,
+  other,
+}
 
 enum NodeStoragePolicy { automatic, preferRam, preferDisk, ramAndDisk, onDemand }
 
@@ -18,9 +26,11 @@ extension NodeCategoryPresentation on NodeCategory {
   String get label {
     switch (this) {
       case NodeCategory.import:
-        return 'Import';
+        return 'Data Wrangling';
       case NodeCategory.transform:
-        return 'Transform';
+        return 'Signal Processing';
+      case NodeCategory.machineLearning:
+        return 'Machine Learning';
       case NodeCategory.markerFunctions:
         return 'Markers and Metadata';
       case NodeCategory.visualize:
@@ -38,6 +48,8 @@ extension NodeCategoryPresentation on NodeCategory {
         return Colors.green;
       case NodeCategory.transform:
         return Colors.indigo;
+      case NodeCategory.machineLearning:
+        return Colors.redAccent;
       case NodeCategory.markerFunctions:
         return Colors.yellow.shade700;
       case NodeCategory.visualize:
@@ -116,6 +128,28 @@ class PortSpec {
   });
 }
 
+class NodePlacement {
+  const NodePlacement({
+    required this.category,
+    required this.subcategory,
+  });
+
+  final NodeCategory category;
+  final String subcategory;
+}
+
+class NodeDropdownOption<T> {
+  const NodeDropdownOption({
+    required this.value,
+    required this.label,
+    this.enabled = true,
+  });
+
+  final T value;
+  final String label;
+  final bool enabled;
+}
+
 class NodeDatasetStatusSnapshot {
   const NodeDatasetStatusSnapshot({
     required this.availableDatasetIds,
@@ -134,6 +168,7 @@ class NodeDatasetActions {
   const NodeDatasetActions({
     required this.supportsDisk,
     required this.refresh,
+    required this.hasLoadableDiskCache,
     required this.runAllPrevious,
     required this.runThisNode,
     required this.clearResults,
@@ -146,6 +181,10 @@ class NodeDatasetActions {
   final bool supportsDisk;
   final Future<NodeDatasetStatusSnapshot> Function(Map<String, dynamic> params)
       refresh;
+  final Future<bool> Function(
+    Map<String, dynamic> params,
+    Set<String> datasetIds,
+  ) hasLoadableDiskCache;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
@@ -179,7 +218,29 @@ class NodeDatasetActions {
 abstract class NodeType {
   String get title;
   NodeCategory get category => NodeCategory.other;
+  String get subcategory => 'Subcategory 1';
+  List<NodePlacement> get additionalPlacements => const <NodePlacement>[];
   Map<String, dynamic> get defaultParams;
+
+  NodePlacement get primaryPlacement => NodePlacement(
+        category: category,
+        subcategory: subcategory,
+      );
+
+  List<NodePlacement> get allPlacements {
+    final List<NodePlacement> placements = <NodePlacement>[primaryPlacement];
+    for (final NodePlacement placement in additionalPlacements) {
+      final bool alreadyPresent = placements.any(
+        (NodePlacement existing) =>
+            existing.category == placement.category &&
+            existing.subcategory == placement.subcategory,
+      );
+      if (!alreadyPresent) {
+        placements.add(placement);
+      }
+    }
+    return placements;
+  }
 
   NodeStoragePolicy get defaultStoragePolicy {
     switch (category) {
@@ -187,6 +248,7 @@ abstract class NodeType {
       case NodeCategory.visualize:
         return NodeStoragePolicy.preferRam;
       case NodeCategory.transform:
+      case NodeCategory.machineLearning:
       case NodeCategory.markerFunctions:
         return NodeStoragePolicy.automatic;
       case NodeCategory.export:
@@ -233,4 +295,158 @@ abstract class NodeType {
   }
 
   Future<void> run(Dataset dataset, Map<String, dynamic> params);
+}
+
+class NodeParamTextField extends StatefulWidget {
+  const NodeParamTextField({
+    super.key,
+    required this.params,
+    required this.paramKey,
+    required this.labelText,
+    this.helperText,
+    this.keyboardType,
+    this.parser,
+    this.valueFormatter,
+    this.decoration,
+  });
+
+  final Map<String, dynamic> params;
+  final String paramKey;
+  final String labelText;
+  final String? helperText;
+  final TextInputType? keyboardType;
+  final dynamic Function(String text, dynamic previousValue)? parser;
+  final String Function(dynamic value)? valueFormatter;
+  final InputDecoration? decoration;
+
+  @override
+  State<NodeParamTextField> createState() => _NodeParamTextFieldState();
+}
+
+class _NodeParamTextFieldState extends State<NodeParamTextField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _currentText);
+  }
+
+  String get _currentText {
+    final dynamic value = widget.params[widget.paramKey];
+    return widget.valueFormatter?.call(value) ?? value?.toString() ?? '';
+  }
+
+  @override
+  void didUpdateWidget(covariant NodeParamTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final String nextText = _currentText;
+    if (_controller.text != nextText) {
+      _controller.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextText.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final InputDecoration decoration = widget.decoration ??
+        InputDecoration(
+          labelText: widget.labelText,
+          helperText: widget.helperText,
+        );
+    return TextField(
+      controller: _controller,
+      keyboardType: widget.keyboardType,
+      decoration: decoration,
+      onChanged: (String text) {
+        final dynamic previousValue = widget.params[widget.paramKey];
+        final dynamic nextValue = widget.parser?.call(text, previousValue) ?? text;
+        widget.params[widget.paramKey] = nextValue;
+      },
+    );
+  }
+}
+
+class NodeParamDropdownField<T> extends StatefulWidget {
+  const NodeParamDropdownField({
+    super.key,
+    required this.params,
+    required this.paramKey,
+    required this.labelText,
+    required this.options,
+    this.helperText,
+    this.onChanged,
+  });
+
+  final Map<String, dynamic> params;
+  final String paramKey;
+  final String labelText;
+  final String? helperText;
+  final List<NodeDropdownOption<T>> options;
+  final ValueChanged<T>? onChanged;
+
+  @override
+  State<NodeParamDropdownField<T>> createState() => _NodeParamDropdownFieldState<T>();
+}
+
+class _NodeParamDropdownFieldState<T> extends State<NodeParamDropdownField<T>> {
+  T? _selectedValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedValue = _resolveSelection();
+  }
+
+  @override
+  void didUpdateWidget(covariant NodeParamDropdownField<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _selectedValue = _resolveSelection();
+  }
+
+  T? _resolveSelection() {
+    final dynamic rawValue = widget.params[widget.paramKey];
+    for (final NodeDropdownOption<T> option in widget.options) {
+      if (option.value == rawValue) {
+        return option.value;
+      }
+    }
+    return widget.options.isEmpty ? null : widget.options.first.value;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<T>(
+      initialValue: _selectedValue,
+      decoration: InputDecoration(
+        labelText: widget.labelText,
+        helperText: widget.helperText,
+      ),
+      items: widget.options.map((NodeDropdownOption<T> option) {
+        return DropdownMenuItem<T>(
+          value: option.value,
+          enabled: option.enabled,
+          child: Text(option.label),
+        );
+      }).toList(growable: false),
+      onChanged: (T? value) {
+        if (value == null) {
+          return;
+        }
+        setState(() {
+          _selectedValue = value;
+        });
+        widget.params[widget.paramKey] = value;
+        widget.onChanged?.call(value);
+      },
+    );
+  }
 }

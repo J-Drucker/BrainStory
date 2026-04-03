@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset_artifact_snapshot.dart';
@@ -11,16 +11,24 @@ import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/add_remove_markers_node.dart';
+import '../nodes/amplitude_features_node.dart';
 import '../nodes/bandpass_node.dart';
+import '../nodes/bridge_detector_node.dart';
+import '../nodes/channel_exclusion_node.dart';
 import '../nodes/debug_output_node.dart';
+import '../nodes/eye_blinks_node.dart';
 import '../nodes/export_edf_node.dart';
+import '../nodes/fooof_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/matrix_transform_nodes.dart';
+import '../nodes/machine_learning_nodes.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/realign_node.dart';
 import '../nodes/resample_node.dart';
 import '../nodes/segmentation_node.dart';
+import '../nodes/sleep_staging_node.dart';
+import '../nodes/spectral_features_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/project_file_save.dart';
@@ -53,19 +61,29 @@ class CanvasLogic {
   /// Registry of available node types in the sidebar.
   final List<NodeType> availableNodes = <NodeType>[
     ImportNodeType(),
+    ChannelExclusionNodeType(),
+    BridgeDetectorNodeType(),
     ResampleNodeType(),
     BandpassNodeType(),
+    AmplitudeFeaturesNodeType(),
     PSDNodeType(),
+    FooofNodeType(),
+    SpectralFeaturesNodeType(),
     MicrostatesNodeType(),
     PCANodeType(),
     ICANodeType(),
     EigenvalueDecompositionNodeType(),
+    SourceReconstructionNodeType(),
+    KMeansNodeType(),
+    CNNNodeType(),
     AddRemoveMarkersNodeType(),
     SegmentationNodeType(),
+    EyeBlinksNodeType(),
+    SleepStagingNodeType(),
     RealignNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
-    ExportEdfNodeType(),
+    ExportNodeType(),
   ];
 
   final List<NodeModel> nodes = <NodeModel>[];
@@ -82,12 +100,14 @@ class CanvasLogic {
   final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
   final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
       <String, Map<String, DatasetArtifactSnapshot>>{};
+  final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
 
   String? selectedNodeId;
   int? selectedConnectionIndex;
 
   String? _pendingFromNodeId;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
+  final Map<String, bool> _collapsedSubcategories = <String, bool>{};
 
   static const double _cardWidth = 160;
   static const double _cardHeight = 72;
@@ -150,30 +170,45 @@ class CanvasLogic {
   void clearAll() {
     nodes.clear();
     connections.clear();
+    _nodeRamSnapshots.clear();
+    _nodeDiskSnapshotIds.clear();
     selectedNodeId = null;
     selectedConnectionIndex = null;
     _clearPendingConnection();
   }
 
   Future<void> pickFiles() async {
-    final List<XFile> files = await openFiles();
+    final List<XFile> files = await openFiles(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'BrainStory Signals',
+          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'set', 'fdt'],
+        ),
+      ],
+    );
 
     for (final XFile file in files) {
-      final Uint8List bytes = await file.readAsBytes();
+      final String normalizedPath = eeglabMetadataPathForSelection(file.path);
+      final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
+      final Uint8List? bytes = selectedFdt ? null : await file.readAsBytes();
+      final String sourceName = selectedFdt
+          ? '${file.name.substring(0, file.name.length - 4)}.set'
+          : file.name;
       final Dataset dataset = datasets.putIfAbsent(
-        file.path.isEmpty ? file.name : file.path,
+        normalizedPath.isEmpty ? sourceName : normalizedPath,
         () => Dataset(
           DateTime.now().microsecondsSinceEpoch.toString(),
-          label: file.name,
-          path: file.path,
+          label: sourceName,
+          path: normalizedPath,
           sourceBytes: bytes,
         ),
       );
-      dataset.label = file.name;
-      dataset.path = file.path;
+      dataset.label = sourceName;
+      dataset.path = normalizedPath;
       dataset.sourceBytes = bytes;
-      dataset.ram['source.filename'] = file.name;
+      dataset.ram['source.filename'] = sourceName;
       _markAllNodes(dataset.id, DatasetState.notReady);
+      _refreshDatasetAvailability(dataset.id);
     }
   }
 
@@ -230,6 +265,204 @@ class CanvasLogic {
     _pendingFromNodeId = null;
   }
 
+  void _collectNodeBranches(
+    NodeModel node,
+    List<NodeModel> currentBranch,
+    List<List<NodeModel>> branches,
+  ) {
+    final List<NodeModel> nextBranch = <NodeModel>[...currentBranch, node];
+    final List<NodeModel> children = _immediateChildren(node.id);
+    if (children.isEmpty) {
+      branches.add(nextBranch);
+      return;
+    }
+    for (final NodeModel child in children) {
+      _collectNodeBranches(child, nextBranch, branches);
+    }
+  }
+
+  String _datasetTypeLabel(Dataset dataset) {
+    final String path = dataset.path.toLowerCase();
+    if (path.endsWith('.edf')) {
+      return 'EDF';
+    }
+    if (path.endsWith('.set') || path.endsWith('.fdt')) {
+      return 'EEGLAB';
+    }
+    if (path.endsWith('.csv')) {
+      return 'CSV';
+    }
+    if (path.endsWith('.tsv')) {
+      return 'TSV';
+    }
+    if (path.endsWith('.txt')) {
+      return 'text';
+    }
+    return '';
+  }
+
+  String _methodsClauseForNode(NodeModel node) {
+    final Map<String, dynamic> params = node.params;
+    switch (node.title) {
+      case 'Import':
+        return 'Data were imported into the workflow.';
+      case 'Bridge Detector':
+        final int windowSamples = (params['windowSamples'] as num?)?.toInt() ?? 1000;
+        return 'Bridge detection was performed by computing channel-wise correlation matrices over the last $windowSamples samples of each full minute of recording.';
+      case 'Resample':
+        final double sampleRate = (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;
+        final String method = (params['method'] ?? 'cubic_spline').toString().replaceAll('_', ' ');
+        final bool omitSpikes = (params['omitSpikes'] as bool?) ?? false;
+        return 'Signals were resampled to ${sampleRate.toStringAsFixed(sampleRate.truncateToDouble() == sampleRate ? 0 : 2)} Hz using $method interpolation${omitSpikes ? ' with spike omission enabled' : ''}.';
+      case 'Bandpass Filter':
+        final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
+        final double high = (params['high'] as num?)?.toDouble() ?? 40.0;
+        final double steepness = (params['steepness'] as num?)?.toDouble() ?? 0.8;
+        final double? notch = (params['notch'] as num?)?.toDouble();
+        return 'A bandpass filter ($low-$high Hz, steepness $steepness${notch == null ? '' : ', notch at $notch Hz'}) was applied.';
+      case 'PSD':
+        final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
+        final double fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
+        final String outputMode = (params['outputMode'] ?? 'averaged').toString();
+        return 'Power spectral density was estimated from $fLow to $fHigh Hz using ${outputMode == 'segments' ? 'segment-wise output' : 'averaged output'}.';
+      case 'FOOOF':
+        final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
+        final double fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
+        final int maxPeaks = (params['maxPeaks'] as num?)?.toInt() ?? 4;
+        return 'Spectral parameterization was performed from $fLow to $fHigh Hz to estimate the aperiodic intercept and exponent and to identify up to $maxPeaks oscillatory peaks.';
+      case 'Spectral Features':
+        final List<String> groups = _selectedSpectralFeatureGroups(params);
+        return 'Spectral features were extracted from the PSD${groups.isEmpty ? '' : ' (${_joinWithCommas(groups)})'} and assembled into a tabular output.';
+      case 'Amplitude Features':
+        final List<String> groups = _selectedAmplitudeFeatureGroups(params);
+        return 'Time-domain amplitude features were extracted from the signal${groups.isEmpty ? '' : ' (${_joinWithCommas(groups)})'} and assembled into a tabular output.';
+      case 'Segmentation':
+        return _segmentationMethodsClause(params);
+      case 'Realign':
+        final double upsampleRate = (params['upsampleRateHz'] as num?)?.toDouble() ?? 100000.0;
+        final String method = (params['method'] ?? 'cubic_spline').toString().replaceAll('_', ' ');
+        final double maxShiftMs = (params['maxShiftMs'] as num?)?.toDouble() ?? 5.0;
+        return 'Segmented data were temporarily upsampled to ${upsampleRate.toStringAsFixed(0)} Hz, realigned by cross-correlation using $method interpolation with a maximum shift of $maxShiftMs ms, and then returned to the original sampling rate.';
+      case 'Sleep Staging':
+        final double epochSeconds = (params['epochSeconds'] as num?)?.toDouble() ?? 30.0;
+        return 'Sleep-stage markers were generated in ${epochSeconds.toStringAsFixed(epochSeconds.truncateToDouble() == epochSeconds ? 0 : 1)}-second epochs while the underlying time-series data were passed through unchanged.';
+      case 'Eye Blinks':
+        return 'Ocular-event marker detection was configured to emit blink, vertical saccade, and horizontal saccade markers.';
+      case 'Add/Remove Markers':
+        return 'Manual marker edits were incorporated into the analysis graph.';
+      case 'PCA':
+      case 'ICA':
+      case 'Eigenvalue Decomposition':
+      case 'Microstates':
+      case 'K-Means':
+      case 'CNN':
+        return '${node.title} was included as a configured processing stage in the workflow.';
+      case 'EEG Visualization':
+        return 'A dedicated visualization node was used for explicit comparison of outputs across branches of the pipeline.';
+      case 'Debug Output':
+        return 'Intermediate outputs were inspected using a debug-output node.';
+      case 'Export':
+        final String fileType =
+            (params['fileType'] ?? 'edf').toString().toUpperCase();
+        return 'Processed outputs were exported as $fileType files.';
+      default:
+        return '${node.title} was included as a processing stage.';
+    }
+  }
+
+  List<String> _selectedSpectralFeatureGroups(Map<String, dynamic> params) {
+    final Map<String, String> labels = <String, String>{
+      'power': 'power features',
+      'ratios': 'power ratios',
+    };
+    final List<String> selected = <String>[];
+    for (final MapEntry<String, String> entry in labels.entries) {
+      if ((params[entry.key] as bool?) ?? false) {
+        selected.add(entry.value);
+      }
+    }
+    return selected;
+  }
+
+  List<String> _selectedAmplitudeFeatureGroups(Map<String, dynamic> params) {
+    final Map<String, String> labels = <String, String>{
+      'peak_amplitude': 'peak amplitude',
+      'peak_latency': 'peak latency',
+      'auc': 'area under the curve',
+      'variance': 'variance',
+    };
+    final Map<String, dynamic> selectedMap = Map<String, dynamic>.from(
+      params['amplitudeFeatures'] as Map? ?? <String, dynamic>{},
+    );
+    final List<String> selected = <String>[];
+    for (final MapEntry<String, String> entry in labels.entries) {
+      if (selectedMap[entry.key] == true) {
+        selected.add(entry.value);
+      }
+    }
+    return selected;
+  }
+
+  String _segmentationMethodsClause(Map<String, dynamic> params) {
+    final String mode = (params['segmentationMode'] ?? 'events').toString();
+    if (mode == 'blocks') {
+      final bool concatenate = (params['blocksConcatenate'] as bool?) ?? false;
+      final bool invert = (params['blocksInvert'] as bool?) ?? false;
+      return 'Data were segmented into marker-defined blocks${concatenate ? ', and multiple blocks were concatenated' : ''}${invert ? ', using the complement of the selected blocks' : ''}.';
+    }
+    if (mode == 'equal_windows') {
+      final double widthMs = (params['equalWidthMs'] as num?)?.toDouble() ?? 1000.0;
+      final double overlapPct = (params['equalOverlapPct'] as num?)?.toDouble() ?? 0.0;
+      return 'Data were segmented into equal windows of ${widthMs.toStringAsFixed(widthMs.truncateToDouble() == widthMs ? 0 : 1)} ms with ${overlapPct.toStringAsFixed(overlapPct.truncateToDouble() == overlapPct ? 0 : 1)}% overlap.';
+    }
+    final double windowStart = (params['eventsWindowStartMs'] as num?)?.toDouble() ?? 0.0;
+    final double windowStop = (params['eventsWindowStopMs'] as num?)?.toDouble() ?? 0.0;
+    final double baselineStart = (params['eventsBaselineStartMs'] as num?)?.toDouble() ?? 0.0;
+    final double baselineStop = (params['eventsBaselineStopMs'] as num?)?.toDouble() ?? 0.0;
+    return 'Event-locked segmentation was performed with a window from ${windowStart.toStringAsFixed(windowStart.truncateToDouble() == windowStart ? 0 : 1)} to ${windowStop.toStringAsFixed(windowStop.truncateToDouble() == windowStop ? 0 : 1)} ms and a baseline interval from ${baselineStart.toStringAsFixed(baselineStart.truncateToDouble() == baselineStart ? 0 : 1)} to ${baselineStop.toStringAsFixed(baselineStop.truncateToDouble() == baselineStop ? 0 : 1)} ms.';
+  }
+
+  String _joinWithCommas(List<String> values) {
+    if (values.isEmpty) {
+      return '';
+    }
+    if (values.length == 1) {
+      return values.first;
+    }
+    if (values.length == 2) {
+      return '${values.first} and ${values.last}';
+    }
+    return '${values.sublist(0, values.length - 1).join(', ')}, and ${values.last}';
+  }
+
+  List<String> _methodsClausesForBranch(List<NodeModel> branch) {
+    return branch
+        .map(_methodsClauseForNode)
+        .where((String clause) => clause.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  List<String> _longestCommonClausePrefix(List<List<String>> branches) {
+    if (branches.isEmpty) {
+      return const <String>[];
+    }
+    final int maxPrefixLength = branches
+        .map((List<String> branch) => branch.length)
+        .reduce(math.min);
+    final List<String> prefix = <String>[];
+    for (int index = 0; index < maxPrefixLength; index++) {
+      final String candidate = branches.first[index];
+      final bool allMatch = branches.every(
+        (List<String> branch) => branch[index] == candidate,
+      );
+      if (!allMatch) {
+        break;
+      }
+      prefix.add(candidate);
+    }
+    return prefix;
+  }
+
   Future<void> exportBrainStory(BuildContext context) async {
     final FileSaveLocation? location = await getSaveLocation(
       suggestedName: 'brainstory_project.bst',
@@ -280,6 +513,8 @@ class CanvasLogic {
       final Map<String, dynamic> jsonMap =
           Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
       importProjectJson(jsonMap);
+      await _refreshDiskSnapshotFlagsForLoadedProject();
+      _normalizeNodeStatesAfterProjectLoad();
       if (context.mounted) {
         _showStatusSnackBar(
           context,
@@ -294,6 +529,141 @@ class CanvasLogic {
         );
       }
     }
+  }
+
+  Future<void> showPublishDialog(BuildContext context) async {
+    final String methodsText = generateMethodsDescription();
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Publish'),
+          content: SizedBox(
+            width: 720,
+            child: SingleChildScrollView(
+              child: SelectableText(methodsText),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: methodsText));
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
+                if (context.mounted) {
+                  _showStatusSnackBar(
+                    context,
+                    'Copied publish-ready methods text to the clipboard.',
+                  );
+                }
+              },
+              child: const Text('Copy'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String generateMethodsDescription() {
+    if (nodes.isEmpty) {
+      return 'No BrainStory pipeline is currently defined.';
+    }
+
+    final List<String> datasetLabels = datasets.values
+        .map((Dataset dataset) => dataset.label.trim().isEmpty ? 'Dataset' : dataset.label.trim())
+        .toList(growable: false)
+      ..sort();
+    final Set<String> datasetTypes = datasets.values
+        .map(_datasetTypeLabel)
+        .where((String type) => type.isNotEmpty)
+        .toSet();
+    final List<NodeModel> roots = nodes
+        .where((NodeModel node) => _immediateParents(node.id).isEmpty)
+        .toList(growable: false);
+    final List<List<NodeModel>> branches = <List<NodeModel>>[];
+    for (final NodeModel root in roots) {
+      _collectNodeBranches(root, <NodeModel>[], branches);
+    }
+    final List<List<String>> branchClauses = branches
+        .map(_methodsClausesForBranch)
+        .where((List<String> clauses) => clauses.isNotEmpty)
+        .toList(growable: false);
+    final List<List<String>> uniqueBranchClauses = <List<String>>[];
+    final Set<String> seenBranchTexts = <String>{};
+    for (final List<String> clauses in branchClauses) {
+      final String branchKey = clauses.join(' ');
+      if (seenBranchTexts.add(branchKey)) {
+        uniqueBranchClauses.add(clauses);
+      }
+    }
+    final List<String> sharedPrefix = _longestCommonClausePrefix(uniqueBranchClauses);
+    final List<List<String>> branchSuffixes = uniqueBranchClauses
+        .map(
+          (List<String> clauses) => clauses.length <= sharedPrefix.length
+              ? const <String>[]
+              : clauses.sublist(sharedPrefix.length),
+        )
+        .toList(growable: false);
+
+    final StringBuffer buffer = StringBuffer();
+    buffer.writeln('Data were processed in BrainStory using a node-based analysis pipeline.');
+    if (datasetLabels.isNotEmpty) {
+      final String datasetSummary = datasetLabels.length == 1
+          ? datasetLabels.first
+          : '${datasetLabels.length} datasets (${_joinWithCommas(datasetLabels)})';
+      if (datasetTypes.isNotEmpty) {
+        final List<String> sortedTypes = datasetTypes.toList(growable: false)..sort();
+        buffer.writeln(
+          'The workflow operated on $datasetSummary imported from ${_joinWithCommas(sortedTypes)} source files.',
+        );
+      } else {
+        buffer.writeln('The workflow operated on $datasetSummary.');
+      }
+    }
+    buffer.writeln();
+    buffer.writeln('Pipeline summary:');
+
+    if (uniqueBranchClauses.isEmpty) {
+      final String fallback = nodes
+          .map(_methodsClauseForNode)
+          .where((String clause) => clause.isNotEmpty)
+          .join(' ');
+      buffer.writeln('1. $fallback');
+    } else if (uniqueBranchClauses.length == 1) {
+      buffer.writeln('1. ${uniqueBranchClauses.first.join(' ')}');
+    } else {
+      if (sharedPrefix.isNotEmpty) {
+        buffer.writeln('Shared preprocessing: ${sharedPrefix.join(' ')}');
+        buffer.writeln();
+        buffer.writeln(
+          'After the shared preprocessing steps, the workflow diverged into ${uniqueBranchClauses.length} analysis branches:',
+        );
+      }
+
+      int branchNumber = 1;
+      for (final List<String> suffix in branchSuffixes) {
+        final String branchText = suffix.isEmpty
+            ? 'No additional branch-specific processing steps were applied.'
+            : suffix.join(' ');
+        buffer.writeln('$branchNumber. $branchText');
+        branchNumber++;
+      }
+    }
+
+    if (nodes.any(canVisualizeNode)) {
+      buffer.writeln();
+      buffer.writeln(
+        'Outputs were reviewed visually within BrainStory using node-linked inspection views appropriate to each data type, including raw time-domain traces, power spectra, hypnograms, and bridge-detection heatmaps when available.',
+      );
+    }
+
+    return buffer.toString().trimRight();
   }
 
   Map<String, dynamic> exportProjectJson() {
@@ -338,7 +708,6 @@ class CanvasLogic {
   void importProjectJson(Map<String, dynamic> jsonMap) {
     clearAll();
     datasets.clear();
-    _nodeRamSnapshots.clear();
 
     final List<dynamic> datasetEntries =
         jsonMap['datasets'] as List<dynamic>? ?? <dynamic>[];
@@ -408,6 +777,7 @@ class CanvasLogic {
 
   Widget sidebar({
     required double width,
+    required VoidCallback publish,
     required VoidCallback export,
     required VoidCallback load,
     required VoidCallback clear,
@@ -416,6 +786,7 @@ class CanvasLogic {
     final List<NodeCategory> categoryOrder = <NodeCategory>[
       NodeCategory.import,
       NodeCategory.transform,
+      NodeCategory.machineLearning,
       NodeCategory.markerFunctions,
       NodeCategory.visualize,
       NodeCategory.export,
@@ -457,6 +828,17 @@ class CanvasLogic {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
+                onPressed: publish,
+                child: const Text('Publish'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
                 onPressed: load,
                 child: const Text('Load BrainStory'),
               ),
@@ -495,8 +877,27 @@ class CanvasLogic {
     required VoidCallback update,
   }) {
     final List<NodeType> categoryNodes = availableNodes
-        .where((NodeType node) => node.category == category)
+        .where((NodeType node) {
+          return node.allPlacements.any(
+            (NodePlacement placement) => placement.category == category,
+          );
+        })
         .toList(growable: false);
+    final Map<String, List<NodeType>> nodesBySubcategory = <String, List<NodeType>>{};
+    for (final NodeType type in categoryNodes) {
+      for (final NodePlacement placement in type.allPlacements) {
+        if (placement.category != category) {
+          continue;
+        }
+        nodesBySubcategory
+            .putIfAbsent(placement.subcategory, () => <NodeType>[])
+            .add(type);
+      }
+    }
+    for (final List<NodeType> types in nodesBySubcategory.values) {
+      types.sort((NodeType a, NodeType b) => a.title.compareTo(b.title));
+    }
+    final List<String> subcategoryOrder = nodesBySubcategory.keys.toList()..sort();
     final bool collapsed = _collapsedCategories[category] ?? false;
 
     return <Widget>[
@@ -542,34 +943,86 @@ class CanvasLogic {
           ),
         ),
       if (!collapsed)
-        for (final NodeType type in categoryNodes)
-          Padding(
-            padding: const EdgeInsets.only(left: 28, bottom: 6),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: category.color.withValues(alpha: 0.18),
-                  foregroundColor: Colors.white,
-                  side: BorderSide(
-                    color: category.color.withValues(alpha: 0.35),
+        for (final String subcategory in subcategoryOrder) ...<Widget>[
+          Builder(
+            builder: (BuildContext context) {
+              final String collapseKey = '${category.name}::$subcategory';
+              final bool subcategoryCollapsed =
+                  _collapsedSubcategories[collapseKey] ?? false;
+              return Column(
+                children: <Widget>[
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () {
+                      _collapsedSubcategories[collapseKey] =
+                          !subcategoryCollapsed;
+                      update();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 28, bottom: 6, top: 2),
+                      child: Row(
+                        children: <Widget>[
+                          Icon(
+                            subcategoryCollapsed
+                                ? Icons.chevron_right
+                                : Icons.expand_more,
+                            color: Colors.white.withValues(alpha: 0.72),
+                            size: 18,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              subcategory,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.72),
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                onPressed: () {
-                  addNode(type);
-                  update();
-                },
-                child: Text('+ ${type.title}'),
-              ),
-            ),
+                  if (!subcategoryCollapsed)
+                    for (final NodeType type in nodesBySubcategory[subcategory]!)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 36, bottom: 6),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: category.color.withValues(alpha: 0.18),
+                              foregroundColor: Colors.white,
+                              side: BorderSide(
+                                color: category.color.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            onPressed: () {
+                              addNode(type);
+                              update();
+                            },
+                            child: Text('+ ${type.title}'),
+                          ),
+                        ),
+                      ),
+                ],
+              );
+            },
           ),
+        ],
     ];
   }
 
   List<Widget> connectionWidgets() {
-    return connections.map((Map<String, dynamic> connection) {
-      final NodeModel? fromNode = _findNode(connection['fromNode'] as String);
-      final NodeModel? toNode = _findNode(connection['toNode'] as String);
+    final Map<String, NodeModel> nodeById = <String, NodeModel>{
+      for (final NodeModel node in nodes) node.id: node,
+    };
+    return connections.asMap().entries.map((MapEntry<int, Map<String, dynamic>> entry) {
+      final int connectionIndex = entry.key;
+      final Map<String, dynamic> connection = entry.value;
+      final NodeModel? fromNode = nodeById[connection['fromNode'] as String];
+      final NodeModel? toNode = nodeById[connection['toNode'] as String];
 
       if (fromNode == null || toNode == null) {
         return const SizedBox.shrink();
@@ -577,15 +1030,20 @@ class CanvasLogic {
 
       final Offset start = _outputAnchor(fromNode, toNode);
       final Offset end = _inputAnchor(fromNode, toNode);
+      final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
 
-      return CustomPaint(
-        painter: ConnectionPainter(
-          start: start,
-          end: end,
-          selected: selectedConnectionIndex == connections.indexOf(connection),
-        ),
-        size: Size.infinite,
-      );
+        return CustomPaint(
+          painter: ConnectionPainter(
+            start: start,
+            end: end,
+            preferVertical: preferVertical,
+            gridWidth: _gridWidth,
+            gridHeight: _gridHeight,
+            obstacles: _connectionObstacles(fromNode, toNode),
+            selected: selectedConnectionIndex == connectionIndex,
+          ),
+          size: Size.infinite,
+        );
     }).toList();
   }
 
@@ -641,6 +1099,15 @@ class CanvasLogic {
           );
         },
         onRunThis: () async {
+          final Set<String> datasetIds = _datasetsForNode(node);
+          if (await promptLoadFromDiskInsteadOfRun(
+            context: context,
+            node: node,
+            datasetIds: datasetIds,
+            update: update,
+          )) {
+            return;
+          }
           try {
             await prepareRunUi('Running ${node.title}');
             await runThisStep(node.id);
@@ -666,6 +1133,15 @@ class CanvasLogic {
           }
         },
         onRunFromStart: () async {
+          final Set<String> datasetIds = _datasetsForNode(node);
+          if (await promptLoadFromDiskInsteadOfRun(
+            context: context,
+            node: node,
+            datasetIds: datasetIds,
+            update: update,
+          )) {
+            return;
+          }
           try {
             await prepareRunUi('Running pipeline to ${node.title}');
             await runFromStart(node.id);
@@ -857,9 +1333,11 @@ class CanvasLogic {
     if (node.type is ImportNodeType) {
       ImportNodeType.applyDatasetAliases(params, datasets.values);
     }
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
     for (final Dataset dataset in datasets.values) {
-      node.datasetStates[dataset.id] = DatasetState.stale;
-      _markDescendantsStale(node.id, dataset.id);
+      node.datasetStates[dataset.id] = availableDatasetIds.contains(dataset.id)
+          ? DatasetState.ready
+          : DatasetState.notReady;
     }
     update();
   }
@@ -883,24 +1361,42 @@ class CanvasLogic {
       return <Dataset>[];
     }
 
-    return datasetsForVisualizationNode(node.id);
+    return sourceDatasetsForVisualizationNode(node.id);
   }
 
-  List<Dataset> datasetsForVisualizationNode(String nodeId) {
+  Future<List<Dataset>> datasetsForVisualizationNode(String nodeId) async {
+    return materializedDatasetViewsForNode(
+      nodeId,
+      sourceDatasetsForVisualizationNode(nodeId),
+    );
+  }
+
+  List<Dataset> sourceDatasetsForVisualizationNode(String nodeId) {
     final NodeModel? node = _findNode(nodeId);
     if (node == null) {
       return <Dataset>[];
     }
 
     final Set<String> datasetIds = _datasetsForNode(node);
-    return datasets.values
+    final List<Dataset> matchingDatasets = datasets.values
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
-        .map((Dataset dataset) => materializedDatasetViewForNode(node.id, dataset))
-        .toList()
-      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+        .toList(growable: false);
+    matchingDatasets.sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    return matchingDatasets;
   }
 
-  Dataset materializedDatasetViewForNode(String nodeId, Dataset source) {
+  Future<List<Dataset>> materializedDatasetViewsForNode(
+    String nodeId,
+    List<Dataset> sources,
+  ) async {
+    final List<Dataset> views = <Dataset>[];
+    for (final Dataset source in sources) {
+      views.add(await materializedDatasetViewForNode(nodeId, source));
+    }
+    return views;
+  }
+
+  Future<Dataset> materializedDatasetViewForNode(String nodeId, Dataset source) async {
     final Dataset view = Dataset(
       source.id,
       label: source.label,
@@ -909,8 +1405,10 @@ class CanvasLogic {
     );
     view.loaded = source.loaded;
     view.ram.addAll(source.ram);
-    final DatasetArtifactSnapshot? snapshot =
-        _nodeRamSnapshots[nodeId]?[source.id];
+    final DatasetArtifactSnapshot? snapshot = await _loadSnapshotForNodeDataset(
+      nodeId,
+      source.id,
+    );
     if (snapshot != null && !snapshot.isEmpty) {
       snapshot.applyToDataset(view);
     }
@@ -928,7 +1426,13 @@ class CanvasLogic {
     if (node.type is VisualizationNodeType) {
       return true;
     }
+    if (node.type is BridgeDetectorNodeType) {
+      return true;
+    }
     if (node.type is PSDNodeType) {
+      return true;
+    }
+    if (node.type is SleepStagingNodeType) {
       return true;
     }
     return node.outputPorts.any((PortSpec port) {
@@ -937,8 +1441,58 @@ class CanvasLogic {
   }
 
   String visualizationViewForNode(NodeModel node) {
+    return _fallbackVisualizationViewForNode(node);
+  }
+
+  String visualizationViewForNodeAndDatasets(
+    NodeModel node,
+    List<Dataset> datasets,
+  ) {
+    for (final Dataset dataset in datasets) {
+      if (dataset.bridgeDetection != null) {
+        return 'bridge';
+      }
+    }
+    for (final Dataset dataset in datasets) {
+      if (dataset.timeFrequency != null) {
+        return 'time_frequency';
+      }
+    }
+    for (final Dataset dataset in datasets) {
+      if (dataset.spectrum != null) {
+        return 'psd';
+      }
+    }
+    for (final Dataset dataset in datasets) {
+      final TimeSeriesData? timeSeries = dataset.timeSeries;
+      if (timeSeries != null &&
+          timeSeries.markers.any((TimeMarker marker) => isSleepStageMarker(marker))) {
+        return 'hypnogram';
+      }
+    }
+    for (final Dataset dataset in datasets) {
+      if (dataset.timeSeries != null || dataset.segmentedTimeSeries != null) {
+        return 'raw';
+      }
+    }
+    return _fallbackVisualizationViewForNode(node);
+  }
+
+  String _fallbackVisualizationViewForNode(NodeModel node) {
+    if (node.type is SleepStagingNodeType) {
+      return 'hypnogram';
+    }
+    if (node.type is BridgeDetectorNodeType) {
+      return 'bridge';
+    }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents = _immediateParents(node.id);
+      if (parents.any((NodeModel parent) => parent.type is SleepStagingNodeType)) {
+        return 'hypnogram';
+      }
+      if (parents.any((NodeModel parent) => parent.type is BridgeDetectorNodeType)) {
+        return 'bridge';
+      }
       if (parents.any((NodeModel parent) => parent.type is PSDNodeType)) {
         return 'psd';
       }
@@ -1069,8 +1623,12 @@ class CanvasLogic {
           await node.type.run(dataset, node.params);
           node.datasetStates[dataset.id] = DatasetState.done;
           await _materializeNodeOutput(node, dataset);
+          _markImmediateChildrenStale(node.id, dataset.id);
         } catch (_) {
-          node.datasetStates[dataset.id] = DatasetState.stale;
+          node.datasetStates[dataset.id] = _availableDatasetIdsForNode(node)
+                  .contains(dataset.id)
+              ? DatasetState.ready
+              : DatasetState.notReady;
           rethrow;
         }
       }
@@ -1129,7 +1687,9 @@ class CanvasLogic {
     return datasets.values
         .where((Dataset dataset) {
           return parents.every(
-            (NodeModel parent) => parent.datasetStates[dataset.id] == DatasetState.done,
+            (NodeModel parent) =>
+                (parent.datasetStates[dataset.id] ?? DatasetState.notReady) !=
+                DatasetState.notReady,
           );
         })
         .map((Dataset dataset) => dataset.id)
@@ -1139,7 +1699,7 @@ class CanvasLogic {
   Map<String, DatasetState> _processedDatasetStatesForNode(NodeModel node) {
     return <String, DatasetState>{
       for (final Dataset dataset in datasets.values)
-        dataset.id: node.datasetStates[dataset.id] ?? DatasetState.notReady,
+        dataset.id: _effectiveDatasetStateForNode(node, dataset.id),
     };
   }
 
@@ -1155,7 +1715,8 @@ class CanvasLogic {
     for (final NodeModel parent in parents) {
       final String descriptor = _nodeDescriptor(parent);
       for (final Dataset dataset in datasets.values) {
-        if (parent.datasetStates[dataset.id] == DatasetState.done) {
+        if ((parent.datasetStates[dataset.id] ?? DatasetState.notReady) !=
+            DatasetState.notReady) {
           labelsByDataset
               .putIfAbsent(dataset.id, () => <String>[])
               .add(descriptor);
@@ -1201,9 +1762,24 @@ class CanvasLogic {
     return parents;
   }
 
+  List<NodeModel> _immediateChildren(String nodeId) {
+    final List<NodeModel> children = <NodeModel>[];
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['fromNode'] != nodeId) continue;
+      final NodeModel? child = _findNode(connection['toNode'] as String);
+      if (child != null) {
+        children.add(child);
+      }
+    }
+    return children;
+  }
+
   List<NodeModel> _orderedNodes(Set<String> nodeIds) {
     final Map<String, int> inDegree = <String, int>{
       for (final String id in nodeIds) id: 0,
+    };
+    final Map<String, List<String>> outgoingEdges = <String, List<String>>{
+      for (final String id in nodeIds) id: <String>[],
     };
 
     for (final Map<String, dynamic> connection in connections) {
@@ -1211,6 +1787,7 @@ class CanvasLogic {
       final String toNode = connection['toNode'] as String;
       if (nodeIds.contains(fromNode) && nodeIds.contains(toNode)) {
         inDegree[toNode] = (inDegree[toNode] ?? 0) + 1;
+        outgoingEdges.putIfAbsent(fromNode, () => <String>[]).add(toNode);
       }
     }
 
@@ -1219,16 +1796,13 @@ class CanvasLogic {
         .where((String id) => nodeIds.contains(id) && inDegree[id] == 0)
         .toList();
     final List<String> orderedIds = <String>[];
+    int queueIndex = 0;
 
-    while (queue.isNotEmpty) {
-      final String current = queue.removeAt(0);
+    while (queueIndex < queue.length) {
+      final String current = queue[queueIndex++];
       orderedIds.add(current);
 
-      for (final Map<String, dynamic> connection in connections) {
-        if (connection['fromNode'] != current) continue;
-        final String target = connection['toNode'] as String;
-        if (!nodeIds.contains(target)) continue;
-
+      for (final String target in outgoingEdges[current] ?? const <String>[]) {
         inDegree[target] = (inDegree[target] ?? 1) - 1;
         if (inDegree[target] == 0) {
           queue.add(target);
@@ -1310,9 +1884,60 @@ class CanvasLogic {
     }
   }
 
-  void _markDescendantsStale(String nodeId, String datasetId) {
-    for (final String descendantId in _collectDescendantsInclusive(nodeId)) {
-      _findNode(descendantId)?.datasetStates[datasetId] = DatasetState.stale;
+  void _refreshDatasetAvailability(String datasetId) {
+    final List<NodeModel> orderedNodes =
+        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
+    for (final NodeModel node in orderedNodes) {
+      final bool selectedForNode = _datasetsForNode(node).contains(datasetId);
+      if (!selectedForNode) {
+        if ((node.datasetStates[datasetId] ?? DatasetState.notReady) !=
+            DatasetState.done) {
+          node.datasetStates[datasetId] = DatasetState.notReady;
+        }
+        continue;
+      }
+
+      final List<NodeModel> parents = _immediateParents(node.id);
+      final bool structurallyReady =
+          node.type is ImportNodeType ||
+          parents.every(
+            (NodeModel parent) =>
+                (parent.datasetStates[datasetId] ?? DatasetState.notReady) !=
+                DatasetState.notReady,
+          );
+
+      if (!structurallyReady) {
+        if ((node.datasetStates[datasetId] ?? DatasetState.notReady) !=
+            DatasetState.done) {
+          node.datasetStates[datasetId] = DatasetState.notReady;
+        }
+        continue;
+      }
+
+      final DatasetState currentState =
+          node.datasetStates[datasetId] ?? DatasetState.notReady;
+      final bool hasMaterializedResult =
+          _nodeRamSnapshots[node.id]?.containsKey(datasetId) == true ||
+          _nodeDiskSnapshotIds[node.id]?.contains(datasetId) == true;
+      if ((currentState == DatasetState.done ||
+              currentState == DatasetState.stale) &&
+          hasMaterializedResult) {
+        continue;
+      }
+
+      node.datasetStates[datasetId] = DatasetState.ready;
+    }
+  }
+
+  void _markImmediateChildrenStale(String nodeId, String datasetId) {
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['fromNode'] != nodeId) {
+        continue;
+      }
+      final NodeModel? child = _findNode(connection['toNode'] as String);
+      if (child?.datasetStates[datasetId] == DatasetState.done) {
+        child!.datasetStates[datasetId] = DatasetState.stale;
+      }
     }
   }
 
@@ -1340,7 +1965,7 @@ class CanvasLogic {
     }
 
     markerNode.datasetStates[dataset.id] = DatasetState.done;
-    _markDescendantsStale(markerNode.id, dataset.id);
+    _markImmediateChildrenStale(markerNode.id, dataset.id);
     selectedNodeId = markerNode.id;
     selectedConnectionIndex = null;
     _clearPendingConnection();
@@ -1360,6 +1985,9 @@ class CanvasLogic {
       supportsDisk: supportsNodeSnapshotDiskStore,
       refresh: (Map<String, dynamic> params) =>
           _datasetStatusSnapshotForNode(node: node, params: params),
+      hasLoadableDiskCache:
+          (Map<String, dynamic> params, Set<String> datasetIds) =>
+              _nodeHasLoadableDiskCache(node: node, datasetIds: datasetIds),
       runAllPrevious: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _runNodeDatasetAction(
         runLabel: 'Running pipeline to ${node.title}',
@@ -1434,6 +2062,9 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: jsonEncode(snapshot.toJson()),
       );
+      _nodeDiskSnapshotIds
+          .putIfAbsent(node.id, () => <String>{})
+          .add(dataset.id);
       if (policy == NodeStoragePolicy.preferDisk) {
         _nodeRamSnapshots[node.id]?.remove(dataset.id);
       }
@@ -1462,6 +2093,11 @@ class CanvasLogic {
           diskSavedDatasetIds.add(datasetIds[index]);
         }
       }
+      if (diskSavedDatasetIds.isEmpty) {
+        _nodeDiskSnapshotIds.remove(node.id);
+      } else {
+        _nodeDiskSnapshotIds[node.id] = diskSavedDatasetIds;
+      }
     }
 
     return NodeDatasetStatusSnapshot(
@@ -1489,6 +2125,30 @@ class CanvasLogic {
     } finally {
       finishRunUi();
     }
+  }
+
+  Future<bool> _nodeHasLoadableDiskCache({
+    required NodeModel node,
+    required Set<String> datasetIds,
+  }) async {
+    if (!supportsNodeSnapshotDiskStore || datasetIds.isEmpty) {
+      return false;
+    }
+    for (final Dataset dataset in _datasetsForAction(datasetIds)) {
+      final bool inRam = _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
+      if (inRam) {
+        continue;
+      }
+      final bool onDisk = await hasNodeSnapshotOnDisk(
+        nodeId: node.id,
+        datasetId: dataset.id,
+      );
+      if (onDisk) {
+        _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<String> _saveNodeSnapshotsToDisk({
@@ -1520,6 +2180,9 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: jsonEncode(snapshot.toJson()),
       );
+      _nodeDiskSnapshotIds
+          .putIfAbsent(node.id, () => <String>{})
+          .add(dataset.id);
       savedCount++;
     }
 
@@ -1561,9 +2224,12 @@ class CanvasLogic {
       }
       _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
           snapshot;
+      _nodeDiskSnapshotIds
+          .putIfAbsent(node.id, () => <String>{})
+          .add(dataset.id);
       snapshot.applyToDataset(dataset);
       node.datasetStates[dataset.id] = DatasetState.done;
-      _markDescendantsStale(node.id, dataset.id);
+      _markImmediateChildrenStale(node.id, dataset.id);
       loadedCount++;
     }
 
@@ -1631,6 +2297,10 @@ class CanvasLogic {
         nodeId: node.id,
         datasetId: dataset.id,
       );
+      _nodeDiskSnapshotIds[node.id]?.remove(dataset.id);
+      if (_nodeDiskSnapshotIds[node.id]?.isEmpty ?? false) {
+        _nodeDiskSnapshotIds.remove(node.id);
+      }
       deletedCount++;
     }
 
@@ -1674,6 +2344,10 @@ class CanvasLogic {
             nodeId: node.id,
             datasetId: dataset.id,
           );
+          _nodeDiskSnapshotIds[node.id]?.remove(dataset.id);
+          if (_nodeDiskSnapshotIds[node.id]?.isEmpty ?? false) {
+            _nodeDiskSnapshotIds.remove(node.id);
+          }
           changed = true;
         }
       }
@@ -1685,7 +2359,7 @@ class CanvasLogic {
         node.datasetStates[dataset.id] = nextState;
         changed = true;
       }
-      _markDescendantsStale(node.id, dataset.id);
+      _markImmediateChildrenStale(node.id, dataset.id);
       if (changed) {
         clearedCount++;
       }
@@ -1707,6 +2381,54 @@ class CanvasLogic {
       return;
     }
     snapshot.applyToDataset(dataset);
+  }
+
+  Future<bool> promptLoadFromDiskInsteadOfRun({
+    required BuildContext context,
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final bool hasLoadableCache = await _nodeHasLoadableDiskCache(
+      node: node,
+      datasetIds: datasetIds,
+    );
+    if (!hasLoadableCache || !context.mounted) {
+      return false;
+    }
+    final bool? loadInstead = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Load from disk instead?'),
+          content: Text(
+            'BrainStory found cached output for ${node.title} on disk. Loading it is likely faster than recomputing it.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Run anyway'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Load from disk'),
+            ),
+          ],
+        );
+      },
+    );
+    if (loadInstead != true) {
+      return false;
+    }
+    final String message = await _loadNodeSnapshotsToRam(
+      node: node,
+      datasetIds: datasetIds,
+      update: update,
+    );
+    if (context.mounted) {
+      _showStatusSnackBar(context, message);
+    }
+    return true;
   }
 
   Future<void> _restoreUpstreamInputForRun(
@@ -1761,9 +2483,65 @@ class CanvasLogic {
     if (snapshot.isEmpty) {
       return null;
     }
+    _nodeDiskSnapshotIds.putIfAbsent(nodeId, () => <String>{}).add(datasetId);
     _nodeRamSnapshots
         .putIfAbsent(nodeId, () => <String, DatasetArtifactSnapshot>{})[datasetId] = snapshot;
     return snapshot;
+  }
+
+  Future<void> _refreshDiskSnapshotFlagsForLoadedProject() async {
+    _nodeRamSnapshots.clear();
+    _nodeDiskSnapshotIds.clear();
+    if (!supportsNodeSnapshotDiskStore) {
+      return;
+    }
+    for (final NodeModel node in nodes) {
+      for (final Dataset dataset in datasets.values) {
+        final bool exists = await hasNodeSnapshotOnDisk(
+          nodeId: node.id,
+          datasetId: dataset.id,
+        );
+        if (exists) {
+          _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+        }
+      }
+    }
+  }
+
+  void _normalizeNodeStatesAfterProjectLoad() {
+    for (final NodeModel node in nodes) {
+      for (final Dataset dataset in datasets.values) {
+        final DatasetState rawState =
+            node.datasetStates[dataset.id] ?? DatasetState.notReady;
+        if (rawState == DatasetState.notReady) {
+          node.datasetStates[dataset.id] = DatasetState.notReady;
+          continue;
+        }
+        node.datasetStates[dataset.id] = DatasetState.ready;
+      }
+    }
+  }
+
+  DatasetState _effectiveDatasetStateForNode(
+    NodeModel node,
+    String datasetId,
+  ) {
+    final DatasetState rawState =
+        node.datasetStates[datasetId] ?? DatasetState.notReady;
+    if (rawState != DatasetState.stale) {
+      return rawState;
+    }
+
+    final bool hasResult =
+        _nodeRamSnapshots[node.id]?.containsKey(datasetId) == true ||
+        _nodeDiskSnapshotIds[node.id]?.contains(datasetId) == true;
+    if (hasResult) {
+      return DatasetState.stale;
+    }
+
+    return _availableDatasetIdsForNode(node).contains(datasetId)
+        ? DatasetState.ready
+        : DatasetState.notReady;
   }
 
   NodeModel _nodeWithParams(
@@ -1814,20 +2592,7 @@ class CanvasLogic {
   }
 
   Color _nodeColor(NodeModel node) {
-    switch (node.type.category) {
-      case NodeCategory.import:
-        return Colors.teal.shade700;
-      case NodeCategory.transform:
-        return Colors.indigo.shade700;
-      case NodeCategory.markerFunctions:
-        return Colors.pink.shade700;
-      case NodeCategory.visualize:
-        return Colors.orange.shade700;
-      case NodeCategory.export:
-        return Colors.green.shade700;
-      case NodeCategory.other:
-        return Colors.grey.shade800;
-    }
+    return node.type.category.color;
   }
 
   bool _isHighlighted(NodeModel node) {
@@ -2084,48 +2849,43 @@ class CanvasLogic {
 
       final Offset start = _outputAnchor(fromNode, toNode);
       final Offset end = _inputAnchor(fromNode, toNode);
-      if (_isPointNearConnection(point, start, end)) {
+      if (_isPointNearConnection(
+        point,
+        start,
+        end,
+        obstacles: _connectionObstacles(fromNode, toNode),
+      )) {
         return index;
       }
     }
     return null;
   }
 
-  bool _isPointNearConnection(Offset point, Offset start, Offset end) {
-    final Offset cp1 = Offset(start.dx + 100, start.dy);
-    final Offset cp2 = Offset(end.dx - 100, end.dy);
+  bool _isPointNearConnection(
+    Offset point,
+    Offset start,
+    Offset end, {
+    List<Rect> obstacles = const <Rect>[],
+  }) {
     const double threshold = 12.0;
-    const int steps = 32;
+    final bool preferVertical = (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
+    final List<Offset> points = buildConnectionPolyline(
+      start: start,
+      end: end,
+      preferVertical: preferVertical,
+      gridWidth: _gridWidth,
+      gridHeight: _gridHeight,
+      obstacles: obstacles,
+    );
 
-    Offset previous = start;
-    for (int step = 1; step <= steps; step++) {
-      final double t = step / steps;
-      final Offset current = _sampleCubic(start, cp1, cp2, end, t);
+    for (int index = 1; index < points.length; index++) {
+      final Offset previous = points[index - 1];
+      final Offset current = points[index];
       if (_distanceToSegment(point, previous, current) <= threshold) {
         return true;
       }
-      previous = current;
     }
     return false;
-  }
-
-  Offset _sampleCubic(
-    Offset p0,
-    Offset p1,
-    Offset p2,
-    Offset p3,
-    double t,
-  ) {
-    final double mt = 1 - t;
-    final double x = (mt * mt * mt * p0.dx) +
-        (3 * mt * mt * t * p1.dx) +
-        (3 * mt * t * t * p2.dx) +
-        (t * t * t * p3.dx);
-    final double y = (mt * mt * mt * p0.dy) +
-        (3 * mt * mt * t * p1.dy) +
-        (3 * mt * t * t * p2.dy) +
-        (t * t * t * p3.dy);
-    return Offset(x, y);
   }
 
   double _distanceToSegment(Offset point, Offset a, Offset b) {
@@ -2143,5 +2903,19 @@ class CanvasLogic {
       a.dy + (dy * clampedT),
     );
     return (point - projection).distance;
+  }
+
+  List<Rect> _connectionObstacles(NodeModel fromNode, NodeModel toNode) {
+    return nodes
+        .where((NodeModel node) => node.id != fromNode.id && node.id != toNode.id)
+        .map((NodeModel node) {
+          return Rect.fromLTWH(
+            node.position.dx,
+            node.position.dy,
+            _cardWidth,
+            _cardHeight,
+          );
+        })
+        .toList(growable: false);
   }
 }

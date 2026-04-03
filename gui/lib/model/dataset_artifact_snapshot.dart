@@ -6,6 +6,9 @@ class DatasetArtifactSnapshot {
     this.timeSeries,
     this.segmentedTimeSeries,
     this.spectrum,
+    this.fooofResult,
+    this.featureTable,
+    this.bridgeDetection,
     this.timeFrequency,
     this.matrixTransformation,
   });
@@ -13,6 +16,9 @@ class DatasetArtifactSnapshot {
   final TimeSeriesData? timeSeries;
   final SegmentedTimeSeriesData? segmentedTimeSeries;
   final FrequencySpectrumData? spectrum;
+  final FooofResultData? fooofResult;
+  final FeatureTableData? featureTable;
+  final BridgeDetectionData? bridgeDetection;
   final TimeFrequencyData? timeFrequency;
   final MatrixTransformationData? matrixTransformation;
 
@@ -20,6 +26,9 @@ class DatasetArtifactSnapshot {
       timeSeries == null &&
       segmentedTimeSeries == null &&
       spectrum == null &&
+      fooofResult == null &&
+      featureTable == null &&
+      bridgeDetection == null &&
       timeFrequency == null &&
       matrixTransformation == null;
 
@@ -36,6 +45,15 @@ class DatasetArtifactSnapshot {
       spectrum: dataset.spectrum == null
           ? null
           : FrequencySpectrumData.fromJson(dataset.spectrum!.toJson()),
+      fooofResult: dataset.fooofResult == null
+          ? null
+          : FooofResultData.fromJson(dataset.fooofResult!.toJson()),
+      featureTable: dataset.featureTable == null
+          ? null
+          : FeatureTableData.fromJson(dataset.featureTable!.toJson()),
+      bridgeDetection: dataset.bridgeDetection == null
+          ? null
+          : BridgeDetectionData.fromJson(dataset.bridgeDetection!.toJson()),
       timeFrequency: dataset.timeFrequency == null
           ? null
           : TimeFrequencyData.fromJson(dataset.timeFrequency!.toJson()),
@@ -57,6 +75,15 @@ class DatasetArtifactSnapshot {
     dataset.spectrum = spectrum == null
         ? null
         : FrequencySpectrumData.fromJson(spectrum!.toJson());
+    dataset.fooofResult = fooofResult == null
+        ? null
+        : FooofResultData.fromJson(fooofResult!.toJson());
+    dataset.featureTable = featureTable == null
+        ? null
+        : FeatureTableData.fromJson(featureTable!.toJson());
+    dataset.bridgeDetection = bridgeDetection == null
+        ? null
+        : BridgeDetectionData.fromJson(bridgeDetection!.toJson());
     dataset.timeFrequency = timeFrequency == null
         ? null
         : TimeFrequencyData.fromJson(timeFrequency!.toJson());
@@ -71,6 +98,9 @@ class DatasetArtifactSnapshot {
       if (segmentedTimeSeries != null)
         'segmentedTimeSeries': segmentedTimeSeries!.toJson(),
       if (spectrum != null) 'spectrum': spectrum!.toJson(),
+      if (fooofResult != null) 'fooofResult': fooofResult!.toJson(),
+      if (featureTable != null) 'featureTable': featureTable!.toJson(),
+      if (bridgeDetection != null) 'bridgeDetection': bridgeDetection!.toJson(),
       if (timeFrequency != null) 'timeFrequency': timeFrequency!.toJson(),
       if (matrixTransformation != null)
         'matrixTransformation': matrixTransformation!.toJson(),
@@ -89,6 +119,17 @@ class DatasetArtifactSnapshot {
           : null,
       spectrum: json['spectrum'] is Map<String, dynamic>
           ? FrequencySpectrumData.fromJson(json['spectrum'] as Map<String, dynamic>)
+          : null,
+      fooofResult: json['fooofResult'] is Map<String, dynamic>
+          ? FooofResultData.fromJson(json['fooofResult'] as Map<String, dynamic>)
+          : null,
+      featureTable: json['featureTable'] is Map<String, dynamic>
+          ? FeatureTableData.fromJson(json['featureTable'] as Map<String, dynamic>)
+          : null,
+      bridgeDetection: json['bridgeDetection'] is Map<String, dynamic>
+          ? BridgeDetectionData.fromJson(
+              json['bridgeDetection'] as Map<String, dynamic>,
+            )
           : null,
       timeFrequency: json['timeFrequency'] is Map<String, dynamic>
           ? TimeFrequencyData.fromJson(

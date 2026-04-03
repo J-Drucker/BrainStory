@@ -14,6 +14,9 @@ class BandpassNodeType extends NodeType {
   NodeCategory get category => NodeCategory.transform;
 
   @override
+  String get subcategory => 'Frequency Domain';
+
+  @override
   Map<String, dynamic> get defaultParams => {
     'low': 1.0,
     'high': 40.0,
@@ -89,47 +92,92 @@ class BandpassNodeType extends NodeType {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        TextFormField(
-          initialValue: params['low']?.toString() ?? '1.0',
-          decoration: const InputDecoration(labelText: 'Low Cut (Hz)'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        _BandpassNumberField(
+          key: const ValueKey<String>('bandpass-low'),
+          label: 'Low Cut (Hz)',
+          value: params['low']?.toString() ?? '1.0',
           onChanged: (String value) {
-            setState(() {
-              params['low'] = double.tryParse(value) ?? params['low'];
-            });
+            params['low'] = double.tryParse(value) ?? params['low'];
           },
         ),
-        TextFormField(
-          initialValue: params['high']?.toString() ?? '40.0',
-          decoration: const InputDecoration(labelText: 'High Cut (Hz)'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        _BandpassNumberField(
+          key: const ValueKey<String>('bandpass-high'),
+          label: 'High Cut (Hz)',
+          value: params['high']?.toString() ?? '40.0',
           onChanged: (String value) {
-            setState(() {
-              params['high'] = double.tryParse(value) ?? params['high'];
-            });
+            params['high'] = double.tryParse(value) ?? params['high'];
           },
         ),
-        TextFormField(
-          initialValue: params['steepness']?.toString() ?? '0.8',
-          decoration: const InputDecoration(labelText: 'Steepness'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        _BandpassNumberField(
+          key: const ValueKey<String>('bandpass-steepness'),
+          label: 'Steepness',
+          value: params['steepness']?.toString() ?? '0.8',
           onChanged: (String value) {
-            setState(() {
-              params['steepness'] = double.tryParse(value) ?? params['steepness'];
-            });
+            params['steepness'] = double.tryParse(value) ?? params['steepness'];
           },
         ),
-        TextFormField(
-          initialValue: params['notch']?.toString() ?? '',
-          decoration: const InputDecoration(labelText: 'Notch (Hz, optional)'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        _BandpassNumberField(
+          key: const ValueKey<String>('bandpass-notch'),
+          label: 'Notch (Hz, optional)',
+          value: params['notch']?.toString() ?? '',
           onChanged: (String value) {
-            setState(() {
-              params['notch'] = value.isEmpty ? null : double.tryParse(value);
-            });
+            params['notch'] = value.isEmpty ? null : double.tryParse(value);
           },
         ),
       ],
+    );
+  }
+}
+
+class _BandpassNumberField extends StatefulWidget {
+  const _BandpassNumberField({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_BandpassNumberField> createState() => _BandpassNumberFieldState();
+}
+
+class _BandpassNumberFieldState extends State<_BandpassNumberField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _BandpassNumberField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value && _controller.text != widget.value) {
+      _controller.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      decoration: InputDecoration(labelText: widget.label),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: widget.onChanged,
     );
   }
 }

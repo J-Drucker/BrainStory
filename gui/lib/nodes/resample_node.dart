@@ -11,7 +11,10 @@ class ResampleNodeType extends NodeType {
   String get title => 'Resample';
 
   @override
-  NodeCategory get category => NodeCategory.transform;
+  NodeCategory get category => NodeCategory.import;
+
+  @override
+  String get subcategory => 'Subcategory 1';
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
@@ -60,43 +63,27 @@ class ResampleNodeType extends NodeType {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          initialValue: params['newSampleRate']?.toString() ?? '256.0',
-          decoration: const InputDecoration(labelText: 'New sample rate (Hz)'),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'newSampleRate',
+          labelText: 'New sample rate (Hz)',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (String value) {
-            setState(() {
-              params['newSampleRate'] =
-                  double.tryParse(value) ?? params['newSampleRate'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              double.tryParse(value) ?? previous,
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: params['method']?.toString() ?? 'cubic_spline',
-          decoration: const InputDecoration(labelText: 'Method'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'method',
+          labelText: 'Method',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(
               value: 'cubic_spline',
-              child: Text('Cubic spline'),
+              label: 'Cubic spline',
             ),
-            DropdownMenuItem<String>(
-              value: 'linear',
-              child: Text('Linear'),
-            ),
-            DropdownMenuItem<String>(
-              value: 'nearest',
-              child: Text('Nearest'),
-            ),
+            NodeDropdownOption<String>(value: 'linear', label: 'Linear'),
+            NodeDropdownOption<String>(value: 'nearest', label: 'Nearest'),
           ],
-          onChanged: (String? value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              params['method'] = value;
-            });
-          },
         ),
         CheckboxListTile(
           contentPadding: EdgeInsets.zero,

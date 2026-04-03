@@ -62,6 +62,55 @@ class Dataset {
     ram['psd.segmentCount'] = value.segmentCount;
   }
 
+  FooofResultData? get fooofResult =>
+      ram['artifact.fooofResult'] as FooofResultData?;
+  set fooofResult(FooofResultData? value) {
+    if (value == null) {
+      ram.remove('artifact.fooofResult');
+      ram.remove('fooof.intercept');
+      ram.remove('fooof.exponent');
+      ram.remove('fooof.peaks');
+      return;
+    }
+    ram['artifact.fooofResult'] = value;
+    ram['fooof.intercept'] = value.intercept;
+    ram['fooof.exponent'] = value.exponent;
+    ram['fooof.peaks'] =
+        value.peaks.map((FooofPeakData peak) => peak.toJson()).toList(growable: false);
+  }
+
+  FeatureTableData? get featureTable =>
+      ram['artifact.featureTable'] as FeatureTableData?;
+  set featureTable(FeatureTableData? value) {
+    if (value == null) {
+      ram.remove('artifact.featureTable');
+      ram.remove('featureTable.columns');
+      ram.remove('featureTable.rows');
+      ram.remove('featureTable.csv');
+      return;
+    }
+    ram['artifact.featureTable'] = value;
+    ram['featureTable.columns'] = value.columns;
+    ram['featureTable.rows'] = value.rows;
+    ram['featureTable.csv'] = value.toCsv();
+  }
+
+  BridgeDetectionData? get bridgeDetection =>
+      ram['artifact.bridgeDetection'] as BridgeDetectionData?;
+  set bridgeDetection(BridgeDetectionData? value) {
+    if (value == null) {
+      ram.remove('artifact.bridgeDetection');
+      ram.remove('bridgeDetection.windowSampleCount');
+      ram.remove('bridgeDetection.frameCount');
+      ram.remove('bridgeDetection.valueCount');
+      return;
+    }
+    ram['artifact.bridgeDetection'] = value;
+    ram['bridgeDetection.windowSampleCount'] = value.windowSampleCount;
+    ram['bridgeDetection.frameCount'] = value.frameCount;
+    ram['bridgeDetection.valueCount'] = value.valueCount;
+  }
+
   SegmentedTimeSeriesData? get segmentedTimeSeries =>
       ram['artifact.segmentedTimeSeries'] as SegmentedTimeSeriesData?;
   set segmentedTimeSeries(SegmentedTimeSeriesData? value) {

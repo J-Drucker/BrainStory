@@ -51,6 +51,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Object? _filterCacheKey;
   List<List<double>>? _filteredChannels;
   List<Map<String, dynamic>>? _draftMarkers;
+  Object? _markerCacheKey;
+  List<TimeMarker>? _cachedMarkers;
+  Object? _colorCacheKey;
+  List<Color>? _cachedChannelColors;
 
   @override
   void initState() {
@@ -88,10 +92,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     final List<List<double>> channels = _effectiveChannels(timeSeries);
     final List<String> labels = _channelLabels(timeSeries, channels.length);
+    final List<Color> channelColors = _channelColors(channels.length);
     final int channelCount = channels.length;
     final double durationSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
     final int visibleChannels = _visibleChannelCount(channelCount);
     final bool markersOnly = _rawViewMode() == 'markers_only';
+    final List<TimeMarker> markers = _currentMarkersForDataset();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -122,8 +128,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       traceAreaHeight,
                       _channelHeight(traceAreaHeight, visibleChannels) * channelCount,
                     );
-              final List<TimeMarker> markers = _currentMarkersForDataset();
-
               return Column(
                 children: <Widget>[
                   Expanded(
@@ -151,11 +155,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                       width: labelWidth,
                                       child: _ChannelLabelColumn(
                                         labels: labels,
-                                        colors: List<Color>.generate(
-                                          channelCount,
-                                          (int index) => _colorForChannel(index),
-                                          growable: false,
-                                        ),
+                                        colors: channelColors,
                                         channelHeight: _channelHeight(
                                           traceAreaHeight,
                                           visibleChannels,
@@ -207,11 +207,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                       pixelsPerSecond: pixelsPerSecond,
                                                       yScaleUv: _yScaleUv(),
                                                       showSignals: !markersOnly,
-                                                      colors: List<Color>.generate(
-                                                        channelCount,
-                                                        (int index) => _colorForChannel(index),
-                                                        growable: false,
-                                                      ),
+                                                      colors: channelColors,
                                                       markers: markers,
                                                       horizontalOffset:
                                                           _horizontalController.hasClients
@@ -280,7 +276,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 ],
                 _MarkerSection(
                   expanded: (widget.params['marker_list_expanded'] as bool?) ?? false,
-                  markers: _currentMarkersForDataset(),
+                  markers: markers,
                   onToggle: (bool expanded) =>
                       _updateParam('marker_list_expanded', expanded),
                   onDelete: _deleteMarker,
@@ -486,6 +482,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           key == 'preview_high') {
         _filterCacheKey = null;
       }
+      if (key == 'channel_colors') {
+        _colorCacheKey = null;
+      }
     });
     widget.onChanged?.call();
   }
@@ -498,11 +497,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     final List<TimeMarker> currentMarkers = _currentMarkersForDataset();
     final TimeMarker marker = TimeMarker(
-      timeSeconds: localPosition.dx / pixelsPerSecond,
+      onsetMicros: ((localPosition.dx / pixelsPerSecond) * 1000000.0).round(),
+      durationMicros: 0,
       label: markerMode == 'artifact'
           ? 'Artifact ${currentMarkers.length + 1}'
           : 'Marker ${currentMarkers.length + 1}',
-      kind: markerMode,
+      markerType: markerMode,
     );
 
     _setDraftMarkersForDataset(<TimeMarker>[
@@ -520,8 +520,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   List<TimeMarker> _currentMarkersForDataset() {
+    final Object cacheKey = Object.hash(
+      widget.dataset.id,
+      widget.dataset.timeSeries?.markers,
+      _draftMarkers,
+      widget.params['markers'],
+    );
+    if (_markerCacheKey == cacheKey && _cachedMarkers != null) {
+      return _cachedMarkers!;
+    }
     final List<dynamic> rawMarkers = _effectiveRawMarkers;
-    return rawMarkers
+    final List<TimeMarker> editedMarkers = rawMarkers
         .whereType<Map<String, dynamic>>()
         .where((Map<String, dynamic> marker) => marker['datasetId'] == widget.dataset.id)
         .map((Map<String, dynamic> marker) {
@@ -530,6 +539,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           return TimeMarker.fromJson(payload);
         })
         .toList(growable: false);
+    if (editedMarkers.isNotEmpty) {
+      _markerCacheKey = cacheKey;
+      _cachedMarkers = editedMarkers;
+      return editedMarkers;
+    }
+    _markerCacheKey = cacheKey;
+    _cachedMarkers = widget.dataset.timeSeries?.markers ?? const <TimeMarker>[];
+    return _cachedMarkers!;
   }
 
   List<dynamic> get _effectiveRawMarkers =>
@@ -554,6 +571,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     setState(() {
       _draftMarkers = preservedMarkers;
+      _markerCacheKey = null;
     });
     widget.onChanged?.call();
   }
@@ -566,6 +584,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     setState(() {
       widget.params['markers'] = draftMarkers;
       _draftMarkers = null;
+      _markerCacheKey = null;
     });
     widget.onMarkersChanged?.call(draftMarkers);
     widget.onChanged?.call();
@@ -574,6 +593,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   void _discardMarkerDraft() {
     setState(() {
       _draftMarkers = null;
+      _markerCacheKey = null;
     });
     widget.onChanged?.call();
   }
@@ -685,6 +705,25 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     return _palette[channelIndex % _palette.length];
   }
 
+  List<Color> _channelColors(int channelCount) {
+    final Object cacheKey = Object.hash(
+      widget.dataset.id,
+      channelCount,
+      widget.params['channel_colors'],
+    );
+    if (_colorCacheKey == cacheKey && _cachedChannelColors != null) {
+      return _cachedChannelColors!;
+    }
+    final List<Color> colors = List<Color>.generate(
+      channelCount,
+      _colorForChannel,
+      growable: false,
+    );
+    _colorCacheKey = cacheKey;
+    _cachedChannelColors = colors;
+    return colors;
+  }
+
   void _cycleChannelColor(int channelIndex) {
     final Color current = _colorForChannel(channelIndex);
     final int currentIndex = _palette.indexWhere(
@@ -696,6 +735,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     colorMap['${widget.dataset.id}:$channelIndex'] = nextColor.toARGB32();
     setState(() {
       widget.params['channel_colors'] = colorMap;
+      _colorCacheKey = null;
     });
     widget.onChanged?.call();
   }
@@ -930,7 +970,7 @@ class _MarkerList extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: markers.map((TimeMarker marker) {
-        final bool isArtifact = marker.kind == 'artifact';
+        final bool isArtifact = marker.markerType == MarkerType.artifact;
         return InputChip(
           label: Text(
             '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
@@ -1230,7 +1270,7 @@ class _RawSignalPainter extends CustomPainter {
         continue;
       }
       final Paint markerPaint = Paint()
-        ..color = marker.kind == 'artifact'
+        ..color = marker.markerType == MarkerType.artifact
             ? Colors.redAccent
             : Colors.amberAccent
         ..strokeWidth = 2;
@@ -1315,7 +1355,12 @@ class _RawSignalPainter extends CustomPainter {
       }
 
       final Path path = Path();
-      for (int sampleIndex = startSample; sampleIndex < endSample; sampleIndex++) {
+      final int visibleSampleCount = endSample - startSample;
+      final int stride = math.max(
+        1,
+        (visibleSampleCount / math.max(1.0, viewportWidth * 2)).ceil(),
+      );
+      for (int sampleIndex = startSample; sampleIndex < endSample; sampleIndex += stride) {
         final double x = (sampleIndex / sampleRate) * pixelsPerSecond;
         final double y = centerY - (samples[sampleIndex] * pixelsPerUv);
         if (sampleIndex == startSample) {
@@ -1323,6 +1368,13 @@ class _RawSignalPainter extends CustomPainter {
         } else {
           path.lineTo(x, y);
         }
+      }
+      if ((endSample - 1) > startSample) {
+        final int lastSampleIndex = endSample - 1;
+        path.lineTo(
+          (lastSampleIndex / sampleRate) * pixelsPerSecond,
+          centerY - (samples[lastSampleIndex] * pixelsPerUv),
+        );
       }
 
       final Paint signalPaint = Paint()

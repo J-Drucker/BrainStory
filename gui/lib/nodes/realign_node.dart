@@ -76,59 +76,36 @@ class RealignNodeType extends NodeType {
           'Realign temporarily upsamples each segment, estimates the best time shift by cross-correlation, then downsamples back to the original segmented sample rate. This is intended for artifact alignment after segmentation.',
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          initialValue: params['upsampleRateHz']?.toString() ?? '100000.0',
-          decoration: const InputDecoration(
-            labelText: 'Temporary upsample rate (Hz)',
-          ),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'upsampleRateHz',
+          labelText: 'Temporary upsample rate (Hz)',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (String value) {
-            setState(() {
-              params['upsampleRateHz'] =
-                  double.tryParse(value) ?? params['upsampleRateHz'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              double.tryParse(value) ?? previous,
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: params['method']?.toString() ?? 'cubic_spline',
-          decoration: const InputDecoration(labelText: 'Resampling method'),
-          items: const <DropdownMenuItem<String>>[
-            DropdownMenuItem<String>(
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'method',
+          labelText: 'Resampling method',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(
               value: 'cubic_spline',
-              child: Text('Cubic spline'),
+              label: 'Cubic spline',
             ),
-            DropdownMenuItem<String>(
-              value: 'linear',
-              child: Text('Linear'),
-            ),
-            DropdownMenuItem<String>(
-              value: 'nearest',
-              child: Text('Nearest'),
-            ),
+            NodeDropdownOption<String>(value: 'linear', label: 'Linear'),
+            NodeDropdownOption<String>(value: 'nearest', label: 'Nearest'),
           ],
-          onChanged: (String? value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              params['method'] = value;
-            });
-          },
         ),
         const SizedBox(height: 12),
-        TextFormField(
-          initialValue: params['maxShiftMs']?.toString() ?? '5.0',
-          decoration: const InputDecoration(
-            labelText: 'Maximum shift (ms)',
-          ),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'maxShiftMs',
+          labelText: 'Maximum shift (ms)',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (String value) {
-            setState(() {
-              params['maxShiftMs'] =
-                  double.tryParse(value) ?? params['maxShiftMs'];
-            });
-          },
+          parser: (String value, dynamic previous) =>
+              double.tryParse(value) ?? previous,
         ),
       ],
     );
