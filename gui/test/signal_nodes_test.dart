@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -213,6 +214,68 @@ time,Fz,Cz
     expect(parsed.samples.length, 306060);
     expect(parsed.markers, isNotEmpty);
     expect(parsed.markers.first.label, isNotEmpty);
+  });
+
+  test('loadDatasetSignal imports a synthetic BrainVision fixture', () async {
+    final Directory tempDir =
+        await Directory.systemTemp.createTemp('brainstory_bv_');
+    addTearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    final File vhdrFile = File('${tempDir.path}\\sample.vhdr');
+    final File eegFile = File('${tempDir.path}\\sample.eeg');
+    final File vmrkFile = File('${tempDir.path}\\sample.vmrk');
+
+    await vhdrFile.writeAsString('''
+Brain Vision Data Exchange Header File Version 1.0
+[Common Infos]
+DataFile=sample.eeg
+MarkerFile=sample.vmrk
+DataFormat=BINARY
+DataOrientation=MULTIPLEXED
+NumberOfChannels=2
+SamplingInterval=2000
+
+[Binary Infos]
+BinaryFormat=INT_16
+
+[Channel Infos]
+Ch1=Fp1,,
+Ch2=Fp2,,
+''');
+
+    await vmrkFile.writeAsString('''
+Brain Vision Data Exchange Marker File, Version 1.0
+[Marker Infos]
+Mk1=Stimulus,S  1,1,1,0
+Mk2=Artifact,Bad Segment,11,5,0
+''');
+
+    final ByteData eegData = ByteData(4 * 2 * 2);
+    final List<int> values = <int>[100, 1000, 200, 900, 300, 800, 400, 700];
+    for (int i = 0; i < values.length; i++) {
+      eegData.setInt16(i * 2, values[i], Endian.little);
+    }
+    await eegFile.writeAsBytes(eegData.buffer.asUint8List());
+
+    final ParsedSignalData parsed = await loadDatasetSignal(
+      vhdrFile.path,
+      fallbackSampleRate: 256.0,
+    );
+
+    expect(parsed.channelSamples.length, 2);
+    expect(parsed.channelLabels, <String>['Fp1', 'Fp2']);
+    expect(parsed.sampleRate, closeTo(500.0, 0.001));
+    expect(parsed.channelSamples[0], <double>[100, 200, 300, 400]);
+    expect(parsed.channelSamples[1], <double>[1000, 900, 800, 700]);
+    expect(parsed.markers, hasLength(2));
+    expect(parsed.markers.first.label, 'S  1');
+    expect(parsed.markers.first.markerType, MarkerType.event);
+    expect(parsed.markers.last.label, 'Bad Segment');
+    expect(parsed.markers.last.markerType, MarkerType.artifact);
   });
 
   test('buildSingleChannelEdfBytes round-trips through EDF parsing', () async {
@@ -552,6 +615,7 @@ time,Fz,Cz
 
     expect(computation.templates, hasLength(1));
     expect(computation.templates.first.previewSamples, isNotEmpty);
+    expect(computation.templates.first.previewChannels, isNotEmpty);
     expect(computation.templates.first.durationMicros, greaterThan(0));
     expect(computation.templates.first.previewSamples.length, lessThanOrEqualTo(160));
     expect(computation.candidates, isNotEmpty);

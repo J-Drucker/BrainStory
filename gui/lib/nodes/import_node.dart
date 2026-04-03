@@ -77,7 +77,7 @@ class ImportNodeType extends NodeType {
           ),
           const SizedBox(height: 12),
           const Text(
-            'CSV, TSV, whitespace-delimited text, EDF, and EEGLAB .set/.fdt pairs are supported. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
+            'CSV, TSV, whitespace-delimited text, EDF, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
           ),
           const SizedBox(height: 12),
           const Text(
@@ -185,17 +185,33 @@ String eeglabMetadataPathForSelection(String path) {
   return '${normalized.substring(0, normalized.length - 4)}.set';
 }
 
+String brainVisionHeaderPathForSelection(String path) {
+  final String trimmed = path.trim();
+  if (trimmed.isEmpty) {
+    return trimmed;
+  }
+  final String normalized = trimmed.replaceAll('/', '\\');
+  final String lower = normalized.toLowerCase();
+  if (lower.endsWith('.eeg') || lower.endsWith('.vmrk')) {
+    return '${normalized.substring(0, normalized.length - 4)}.vhdr';
+  }
+  return trimmed;
+}
+
 Future<ParsedSignalData> loadDatasetSignal(
   String path, {
   required double fallbackSampleRate,
   Uint8List? fileBytes,
   String? sourceDescription,
 }) async {
-  final String normalizedPath = eeglabMetadataPathForSelection(path);
+  final String normalizedPath = brainVisionHeaderPathForSelection(
+    eeglabMetadataPathForSelection(path),
+  );
   final String resolvedSourceDescription =
       sourceDescription ?? (normalizedPath.isEmpty ? 'synthetic' : normalizedPath);
-  final String normalizedSourceDescription =
-      eeglabMetadataPathForSelection(resolvedSourceDescription);
+  final String normalizedSourceDescription = brainVisionHeaderPathForSelection(
+    eeglabMetadataPathForSelection(resolvedSourceDescription),
+  );
 
   if ((normalizedPath.isEmpty && fileBytes == null) ||
       normalizedSourceDescription == 'synthetic') {
@@ -232,6 +248,43 @@ Future<ParsedSignalData> loadDatasetSignal(
   if (lowerPath.endsWith('.fdt')) {
     throw const FormatException(
       'Select the EEGLAB .set file, not the .fdt sidecar.',
+    );
+  }
+  if (lowerPath.endsWith('.vhdr')) {
+    final String headerText = fileBytes != null
+        ? utf8.decode(fileBytes, allowMalformed: true)
+        : await readTextFromPath(normalizedPath);
+    final ParsedBrainVisionHeader header = parseBrainVisionHeaderText(
+      headerText,
+      sourceDescription: normalizedSourceDescription,
+    );
+    final String eegPath = _resolveSiblingPath(
+      basePath: normalizedPath,
+      siblingName: header.dataFileName,
+    );
+    if (eegPath.isEmpty) {
+      throw const FormatException(
+        'BrainVision .vhdr import requires a sibling .eeg data file.',
+      );
+    }
+    final String vmrkPath = _resolveSiblingPath(
+      basePath: normalizedPath,
+      siblingName: header.markerFileName,
+    );
+    final Uint8List eegBytes = await readBytesFromPath(eegPath);
+    final String vmrkText =
+        vmrkPath.isEmpty ? '' : await readTextFromPath(vmrkPath);
+    final List<TimeMarker> markers = vmrkText.trim().isEmpty
+        ? const <TimeMarker>[]
+        : parseBrainVisionMarkerText(
+            vmrkText,
+            sampleRate: header.sampleRate,
+          );
+    return parseBrainVisionEegBytes(
+      eegBytes,
+      metadata: header,
+      sourceDescription: normalizedSourceDescription,
+      markers: markers,
     );
   }
 
@@ -317,6 +370,186 @@ ParsedSignalData parseSignalText(
   );
 }
 
+class ParsedBrainVisionHeader {
+  const ParsedBrainVisionHeader({
+    required this.channelCount,
+    required this.sampleRate,
+    required this.channelLabels,
+    required this.dataFileName,
+    required this.markerFileName,
+    required this.binaryFormat,
+    required this.dataOrientation,
+  });
+
+  final int channelCount;
+  final double sampleRate;
+  final List<String> channelLabels;
+  final String dataFileName;
+  final String markerFileName;
+  final String binaryFormat;
+  final String dataOrientation;
+}
+
+ParsedBrainVisionHeader parseBrainVisionHeaderText(
+  String text, {
+  required String sourceDescription,
+}) {
+  final Map<String, Map<String, String>> sections = _parseIniSections(text);
+  final Map<String, String> common =
+      sections['Common Infos'] ?? const <String, String>{};
+  final Map<String, String> binary =
+      sections['Binary Infos'] ?? const <String, String>{};
+  final Map<String, String> channels =
+      sections['Channel Infos'] ?? const <String, String>{};
+
+  final int channelCount = int.tryParse(common['NumberOfChannels'] ?? '') ?? 0;
+  final double samplingIntervalMicros =
+      double.tryParse(common['SamplingInterval'] ?? '') ?? double.nan;
+  final String dataFileName = (common['DataFile'] ?? '').trim();
+  final String markerFileName = (common['MarkerFile'] ?? '').trim();
+  final String dataOrientation =
+      (common['DataOrientation'] ?? 'MULTIPLEXED').trim().toUpperCase();
+  final String binaryFormat =
+      (binary['BinaryFormat'] ?? 'INT_16').trim().toUpperCase();
+
+  if (channelCount <= 0 ||
+      samplingIntervalMicros.isNaN ||
+      samplingIntervalMicros <= 0 ||
+      dataFileName.isEmpty) {
+    throw FormatException('BrainVision header in $sourceDescription is incomplete.');
+  }
+
+  final double sampleRate = 1000000.0 / samplingIntervalMicros;
+  final List<String> channelLabels = List<String>.generate(
+    channelCount,
+    (int index) {
+      final String line = channels['Ch${index + 1}'] ?? '';
+      final String label = line.split(',').first.trim();
+      return label.isEmpty ? 'Ch ${index + 1}' : label;
+    },
+    growable: false,
+  );
+
+  return ParsedBrainVisionHeader(
+    channelCount: channelCount,
+    sampleRate: sampleRate,
+    channelLabels: channelLabels,
+    dataFileName: dataFileName,
+    markerFileName: markerFileName,
+    binaryFormat: binaryFormat,
+    dataOrientation: dataOrientation,
+  );
+}
+
+List<TimeMarker> parseBrainVisionMarkerText(
+  String text, {
+  required double sampleRate,
+}) {
+  final Map<String, Map<String, String>> sections = _parseIniSections(text);
+  final Map<String, String> markerSection =
+      sections['Marker Infos'] ?? const <String, String>{};
+  final List<String> keys = markerSection.keys.toList(growable: false)..sort();
+  final List<TimeMarker> markers = <TimeMarker>[];
+  for (final String key in keys) {
+    if (!key.toLowerCase().startsWith('mk')) {
+      continue;
+    }
+    final String raw = markerSection[key] ?? '';
+    if (raw.trim().isEmpty) {
+      continue;
+    }
+    final List<String> parts = _splitBrainVisionCsv(raw);
+    if (parts.length < 3) {
+      continue;
+    }
+    final String kind = parts[0].trim();
+    final String label = parts[1].trim().isEmpty ? kind : parts[1].trim();
+    final int position = int.tryParse(parts[2].trim()) ?? 0;
+    final int points =
+        parts.length >= 4 ? (int.tryParse(parts[3].trim()) ?? 0) : 0;
+    if (position <= 0) {
+      continue;
+    }
+    final String markerType = _brainVisionMarkerType(kind, label);
+    markers.add(
+      TimeMarker(
+        onsetMicros: (((position - 1) / sampleRate) * 1000000.0).round(),
+        durationMicros: markerType == MarkerType.event
+            ? 0
+            : ((math.max(0, points) / sampleRate) * 1000000.0).round(),
+        label: label,
+        markerType: markerType,
+      ),
+    );
+  }
+  return markers;
+}
+
+ParsedSignalData parseBrainVisionEegBytes(
+  Uint8List bytes, {
+  required ParsedBrainVisionHeader metadata,
+  required String sourceDescription,
+  required List<TimeMarker> markers,
+}) {
+  final int bytesPerSample = switch (metadata.binaryFormat) {
+    'INT_16' => 2,
+    'UINT_16' => 2,
+    'IEEE_FLOAT_32' => 4,
+    _ => throw FormatException(
+        'BrainVision binary format ${metadata.binaryFormat} is not supported yet.',
+      ),
+  };
+  final int totalValues = bytes.lengthInBytes ~/ bytesPerSample;
+  if (metadata.channelCount <= 0 ||
+      totalValues < metadata.channelCount ||
+      totalValues % metadata.channelCount != 0) {
+    throw const FormatException(
+      'BrainVision .eeg payload does not divide evenly into channels.',
+    );
+  }
+
+  final int sampleCount = totalValues ~/ metadata.channelCount;
+  final ByteData data = ByteData.sublistView(bytes);
+  final List<List<double>> channelSamples = List<List<double>>.generate(
+    metadata.channelCount,
+    (_) => List<double>.filled(sampleCount, 0.0),
+    growable: false,
+  );
+
+  int offset = 0;
+  if (metadata.dataOrientation == 'VECTORIZED') {
+    for (int channelIndex = 0; channelIndex < metadata.channelCount; channelIndex++) {
+      for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        channelSamples[channelIndex][sampleIndex] = _brainVisionValueAt(
+          data,
+          offset,
+          metadata.binaryFormat,
+        );
+        offset += bytesPerSample;
+      }
+    }
+  } else {
+    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+      for (int channelIndex = 0; channelIndex < metadata.channelCount; channelIndex++) {
+        channelSamples[channelIndex][sampleIndex] = _brainVisionValueAt(
+          data,
+          offset,
+          metadata.binaryFormat,
+        );
+        offset += bytesPerSample;
+      }
+    }
+  }
+
+  return ParsedSignalData(
+    channelSamples: channelSamples,
+    sampleRate: metadata.sampleRate,
+    channelLabels: metadata.channelLabels,
+    sourceDescription: sourceDescription,
+    markers: markers,
+  );
+}
+
 ParsedSignalData parseEdfBytes(
   Uint8List bytes, {
   required String sourceDescription,
@@ -397,6 +630,80 @@ ParsedSignalData parseEdfBytes(
         ? '$sourceDescription [${selectedSignals.first.label}]'
         : '$sourceDescription [${selectedSignals.first.label} + ${selectedSignals.length - 1} more]',
   );
+}
+
+Map<String, Map<String, String>> _parseIniSections(String text) {
+  final Map<String, Map<String, String>> sections =
+      <String, Map<String, String>>{};
+  String currentSection = '';
+  for (final String rawLine in text.split(RegExp(r'\r?\n'))) {
+    final String line = rawLine.trim();
+    if (line.isEmpty || line.startsWith(';')) {
+      continue;
+    }
+    if (line.startsWith('[') && line.endsWith(']')) {
+      currentSection = line.substring(1, line.length - 1).trim();
+      sections.putIfAbsent(currentSection, () => <String, String>{});
+      continue;
+    }
+    final int equalsIndex = line.indexOf('=');
+    if (equalsIndex <= 0 || currentSection.isEmpty) {
+      continue;
+    }
+    final String key = line.substring(0, equalsIndex).trim();
+    final String value = line.substring(equalsIndex + 1).trim();
+    sections.putIfAbsent(currentSection, () => <String, String>{})[key] = value;
+  }
+  return sections;
+}
+
+List<String> _splitBrainVisionCsv(String line) {
+  final List<String> parts = <String>[];
+  final StringBuffer current = StringBuffer();
+  bool inQuotes = false;
+  for (int i = 0; i < line.length; i++) {
+    final String char = line[i];
+    if (char == '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char == ',' && !inQuotes) {
+      parts.add(current.toString().trim());
+      current.clear();
+      continue;
+    }
+    current.write(char);
+  }
+  parts.add(current.toString().trim());
+  return parts;
+}
+
+String _brainVisionMarkerType(String kind, String label) {
+  final String lowerKind = kind.toLowerCase();
+  final String lowerLabel = label.toLowerCase();
+  if (lowerKind.contains('artifact') ||
+      lowerLabel.contains('artifact') ||
+      lowerLabel.contains('bad')) {
+    return MarkerType.artifact;
+  }
+  if (lowerKind.contains('segment') || lowerLabel.contains('segment')) {
+    return MarkerType.segment;
+  }
+  if (lowerKind.contains('window') || lowerLabel.contains('window')) {
+    return MarkerType.window;
+  }
+  return MarkerType.event;
+}
+
+double _brainVisionValueAt(ByteData data, int offset, String binaryFormat) {
+  return switch (binaryFormat) {
+    'INT_16' => data.getInt16(offset, Endian.little).toDouble(),
+    'UINT_16' => data.getUint16(offset, Endian.little).toDouble(),
+    'IEEE_FLOAT_32' => data.getFloat32(offset, Endian.little).toDouble(),
+    _ => throw FormatException(
+        'BrainVision binary format $binaryFormat is not supported yet.',
+      ),
+  };
 }
 
 List<String> _splitRow(String line) {
@@ -600,12 +907,79 @@ String _resolveSiblingPath({
   if (basePath.trim().isEmpty || siblingName.trim().isEmpty) {
     return '';
   }
-  final String normalizedBase = basePath.replaceAll('/', '\\');
+  final String normalizedSibling = siblingName.replaceAll('/', '\\');
+  if (RegExp(r'^[A-Za-z]:\\').hasMatch(normalizedSibling) ||
+      normalizedSibling.startsWith('\\\\')) {
+    return _normalizeWindowsPath(normalizedSibling);
+  }
+  final String normalizedBase = _normalizeWindowsPath(basePath.replaceAll('/', '\\'));
   final int separatorIndex = normalizedBase.lastIndexOf('\\');
   if (separatorIndex < 0) {
-    return siblingName;
+    return _normalizeWindowsPath(normalizedSibling);
   }
-  return '${normalizedBase.substring(0, separatorIndex + 1)}$siblingName';
+  final String baseDirectory = normalizedBase.substring(0, separatorIndex + 1);
+  final String baseFolderName = _lastPathSegment(
+    baseDirectory.substring(0, math.max(0, baseDirectory.length - 1)),
+  ).toLowerCase();
+  final List<String> siblingParts = normalizedSibling
+      .split('\\')
+      .where((String part) => part.isNotEmpty)
+      .toList(growable: false);
+  final String relativeSibling = siblingParts.length > 1 &&
+          siblingParts.first.toLowerCase() == baseFolderName
+      ? siblingParts.skip(1).join('\\')
+      : normalizedSibling;
+  return _normalizeWindowsPath('$baseDirectory$relativeSibling');
+}
+
+String _normalizeWindowsPath(String path) {
+  final String normalized = path.replaceAll('/', '\\');
+  final bool hasDrive = RegExp(r'^[A-Za-z]:\\').hasMatch(normalized);
+  final bool isUnc = normalized.startsWith('\\\\');
+  final List<String> rawParts = normalized.split('\\');
+  final List<String> output = <String>[];
+  int startIndex = 0;
+  if (hasDrive) {
+    output.add(rawParts.first);
+    startIndex = 1;
+  } else if (isUnc) {
+    output.add('');
+    output.add('');
+    startIndex = 2;
+  }
+  for (int i = startIndex; i < rawParts.length; i++) {
+    final String part = rawParts[i];
+    if (part.isEmpty || part == '.') {
+      continue;
+    }
+    if (part == '..') {
+      if (output.isNotEmpty &&
+          output.last.isNotEmpty &&
+          output.last != '..' &&
+          !output.last.endsWith(':')) {
+        output.removeLast();
+      } else {
+        output.add('..');
+      }
+      continue;
+    }
+    output.add(part);
+  }
+  if (output.isEmpty) {
+    return '';
+  }
+  if (isUnc) {
+    return '\\\\${output.skip(2).join('\\')}';
+  }
+  return output.join('\\');
+}
+
+String _lastPathSegment(String path) {
+  final String normalized = path.replaceAll('/', '\\');
+  final int separatorIndex = normalized.lastIndexOf('\\');
+  return separatorIndex >= 0
+      ? normalized.substring(separatorIndex + 1)
+      : normalized;
 }
 
 List<String> _extractEeglabChannelLabels(_MatValue? value, {

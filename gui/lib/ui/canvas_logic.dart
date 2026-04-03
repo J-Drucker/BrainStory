@@ -184,18 +184,25 @@ class CanvasLogic {
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
           label: 'BrainStory Signals',
-          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'set', 'fdt'],
+          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'set', 'fdt', 'vhdr'],
         ),
       ],
     );
 
     for (final XFile file in files) {
-      final String normalizedPath = eeglabMetadataPathForSelection(file.path);
+      final String normalizedPath = brainVisionHeaderPathForSelection(
+        eeglabMetadataPathForSelection(file.path),
+      );
       final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
-      final Uint8List? bytes = selectedFdt ? null : await file.readAsBytes();
+      final bool selectedBrainVisionSidecar = file.name.toLowerCase().endsWith('.eeg') ||
+          file.name.toLowerCase().endsWith('.vmrk');
+      final Uint8List? bytes =
+          (selectedFdt || selectedBrainVisionSidecar) ? null : await file.readAsBytes();
       final String sourceName = selectedFdt
           ? '${file.name.substring(0, file.name.length - 4)}.set'
-          : file.name;
+          : selectedBrainVisionSidecar
+              ? '${file.name.substring(0, file.name.length - 4)}.vhdr'
+              : file.name;
       final Dataset dataset = datasets.putIfAbsent(
         normalizedPath.isEmpty ? sourceName : normalizedPath,
         () => Dataset(
