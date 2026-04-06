@@ -17,6 +17,7 @@ import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
+import 'package:brainstory_gui/nodes/recode_markers_node.dart';
 import 'package:brainstory_gui/nodes/realign_node.dart';
 import 'package:brainstory_gui/nodes/resample_node.dart';
 import 'package:brainstory_gui/nodes/segmentation_node.dart';
@@ -515,6 +516,42 @@ Mk2=Artifact,Bad Segment,11,5,0
       <String>['WAKE', 'SWS', 'REM', 'WAKE'],
     );
     expect(sleepMarkers.every((TimeMarker marker) => marker.markerType == MarkerType.window), isTrue);
+  });
+
+  test('recode markers node renames selected marker labels and leaves others alone', () async {
+    final Dataset dataset = Dataset('recode', label: 'Recode');
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.generate(32, (int index) => index.toDouble()),
+      sampleRate: 256.0,
+      markers: const <TimeMarker>[
+        TimeMarker(
+          onsetMicros: 0,
+          label: '1',
+          markerType: MarkerType.event,
+        ),
+        TimeMarker(
+          onsetMicros: 1000000,
+          label: '2',
+          markerType: MarkerType.event,
+        ),
+        TimeMarker(
+          onsetMicros: 2000000,
+          label: '1',
+          markerType: MarkerType.event,
+        ),
+      ],
+    );
+
+    await RecodeMarkersNodeType().run(dataset, <String, dynamic>{
+      'recodeMap': <String, dynamic>{
+        'event|1': 'Target',
+      },
+    });
+
+    expect(
+      dataset.timeSeries!.markers.map((TimeMarker marker) => marker.label).toList(),
+      <String>['Target', '2', 'Target'],
+    );
   });
 
   test('FOOOF node estimates aperiodic fit and detects oscillatory peaks', () async {

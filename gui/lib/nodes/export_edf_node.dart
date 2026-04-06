@@ -14,7 +14,10 @@ class ExportNodeType extends NodeType {
   String get title => 'Export';
 
   @override
-  NodeCategory get category => NodeCategory.export;
+  NodeCategory get category => NodeCategory.endpoints;
+
+  @override
+  String get subcategory => 'Export';
 
   @override
   Map<String, dynamic> get defaultParams => {

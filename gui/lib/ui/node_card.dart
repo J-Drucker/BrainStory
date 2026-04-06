@@ -1,5 +1,19 @@
 import 'package:flutter/material.dart';
 
+class NodeOutputHandleViewData {
+  const NodeOutputHandleViewData({
+    required this.portIndex,
+    required this.color,
+    this.badgeText = '',
+    this.tooltip = '',
+  });
+
+  final int portIndex;
+  final Color color;
+  final String badgeText;
+  final String tooltip;
+}
+
 class NodeCard extends StatelessWidget {
   final double width;
   final double height;
@@ -10,10 +24,13 @@ class NodeCard extends StatelessWidget {
   final bool highlighted;
   final Color? highlightColor;
   final bool done;
+  final List<NodeOutputHandleViewData> outputHandles;
+  final int? selectedOutputPortIndex;
 
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
   final void Function()? onDoubleTap;
+  final void Function(int portIndex)? onOutputTap;
 
   final void Function()? onRunThis;
   final void Function()? onRunFromStart;
@@ -36,8 +53,11 @@ class NodeCard extends StatelessWidget {
     this.highlighted = false,
     this.highlightColor,
     this.done = false,
+    this.outputHandles = const <NodeOutputHandleViewData>[],
+    this.selectedOutputPortIndex,
     this.onTap,
     this.onDoubleTap,
+    this.onOutputTap,
     this.onRunThis,
     this.onRunFromStart,
     this.onRunToEnd,
@@ -50,21 +70,31 @@ class NodeCard extends StatelessWidget {
     return Positioned(
       left: position.dx,
       top: position.dy,
-      child: GestureDetector(
-        onTap: onTap,
-        onDoubleTap: onDoubleTap,
-        onSecondaryTapDown: (details) {
-          _showContextMenu(context, details.globalPosition);
-        },
-        child: Draggable(
-          dragAnchorStrategy: childDragAnchorStrategy,
-          feedback: _buildCard(),
-          childWhenDragging: Opacity(
-            opacity: 0.5,
-            child: _buildCard(),
-          ),
-          onDragEnd: (details) => onDragEnd(details.offset),
-          child: _buildCard(),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            GestureDetector(
+              onTap: onTap,
+              onDoubleTap: onDoubleTap,
+              onSecondaryTapDown: (details) {
+                _showContextMenu(context, details.globalPosition);
+              },
+              child: Draggable(
+                dragAnchorStrategy: childDragAnchorStrategy,
+                feedback: _buildCard(),
+                childWhenDragging: Opacity(
+                  opacity: 0.5,
+                  child: _buildCard(),
+                ),
+                onDragEnd: (details) => onDragEnd(details.offset),
+                child: _buildCard(),
+              ),
+            ),
+            ..._buildOutputHandles(),
+          ],
         ),
       ),
     );
@@ -129,7 +159,7 @@ class NodeCard extends StatelessWidget {
             ),
               Positioned.fill(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 10),
+                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 22),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
@@ -168,6 +198,34 @@ class NodeCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  List<Widget> _buildOutputHandles() {
+    if (outputHandles.isEmpty || onOutputTap == null) {
+      return const <Widget>[];
+    }
+
+    const double handleSize = 18;
+    const double handleGap = 6;
+    final double totalWidth =
+        (outputHandles.length * handleSize) + ((outputHandles.length - 1) * handleGap);
+    final double startLeft = (width - totalWidth) / 2;
+
+    return outputHandles.asMap().entries.map((MapEntry<int, NodeOutputHandleViewData> entry) {
+      final int visualIndex = entry.key;
+      final NodeOutputHandleViewData handle = entry.value;
+      final double left = startLeft + (visualIndex * (handleSize + handleGap));
+      return Positioned(
+        left: left,
+        top: height - handleSize - 6,
+        child: _NodeOutputHandle(
+          size: handleSize,
+          data: handle,
+          selected: selectedOutputPortIndex == handle.portIndex,
+          onTap: () => onOutputTap?.call(handle.portIndex),
+        ),
+      );
+    }).toList(growable: false);
   }
 
   void _showContextMenu(BuildContext context, Offset pos) async {
@@ -209,5 +267,86 @@ class NodeCard extends StatelessWidget {
         onDelete?.call();
         break;
     }
+  }
+}
+
+class _NodeOutputHandle extends StatefulWidget {
+  const _NodeOutputHandle({
+    required this.size,
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final double size;
+  final NodeOutputHandleViewData data;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_NodeOutputHandle> createState() => _NodeOutputHandleState();
+}
+
+class _NodeOutputHandleState extends State<_NodeOutputHandle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool emphasized = _hovered || widget.selected;
+    final Widget square = AnimatedContainer(
+      duration: const Duration(milliseconds: 120),
+      width: widget.size,
+      height: widget.size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: widget.data.color,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: emphasized ? Colors.white : Colors.black.withValues(alpha: 0.18),
+          width: emphasized ? 2 : 1,
+        ),
+        boxShadow: emphasized
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: widget.data.color.withValues(alpha: 0.5),
+                  blurRadius: 10,
+                  spreadRadius: 1.2,
+                ),
+              ]
+            : <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.24),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+      ),
+      child: Text(
+        widget.data.badgeText,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.96),
+          fontSize: widget.data.badgeText.length > 2 ? 7 : 8,
+          fontWeight: FontWeight.w800,
+          height: 1.0,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.visible,
+      ),
+    );
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Tooltip(
+        message: widget.data.tooltip,
+        waitDuration: const Duration(milliseconds: 350),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: square,
+        ),
+      ),
+    );
   }
 }

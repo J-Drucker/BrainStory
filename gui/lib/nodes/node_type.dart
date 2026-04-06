@@ -15,8 +15,7 @@ enum NodeCategory {
   transform,
   machineLearning,
   markerFunctions,
-  visualize,
-  export,
+  endpoints,
   other,
 }
 
@@ -33,10 +32,8 @@ extension NodeCategoryPresentation on NodeCategory {
         return 'Machine Learning';
       case NodeCategory.markerFunctions:
         return 'Markers and Metadata';
-      case NodeCategory.visualize:
-        return 'Visualize';
-      case NodeCategory.export:
-        return 'Export';
+      case NodeCategory.endpoints:
+        return 'Endpoints';
       case NodeCategory.other:
         return 'Other';
     }
@@ -52,10 +49,8 @@ extension NodeCategoryPresentation on NodeCategory {
         return Colors.redAccent;
       case NodeCategory.markerFunctions:
         return Colors.yellow.shade700;
-      case NodeCategory.visualize:
+      case NodeCategory.endpoints:
         return Colors.teal;
-      case NodeCategory.export:
-        return Colors.pinkAccent;
       case NodeCategory.other:
         return Colors.grey;
     }
@@ -245,14 +240,12 @@ abstract class NodeType {
   NodeStoragePolicy get defaultStoragePolicy {
     switch (category) {
       case NodeCategory.import:
-      case NodeCategory.visualize:
+      case NodeCategory.endpoints:
         return NodeStoragePolicy.preferRam;
       case NodeCategory.transform:
       case NodeCategory.machineLearning:
       case NodeCategory.markerFunctions:
         return NodeStoragePolicy.automatic;
-      case NodeCategory.export:
-        return NodeStoragePolicy.onDemand;
       case NodeCategory.other:
         return NodeStoragePolicy.automatic;
     }

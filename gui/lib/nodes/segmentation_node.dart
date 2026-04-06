@@ -80,7 +80,7 @@ class SegmentationNodeType extends NodeType {
               },
               child: Column(
                 children: <Widget>[
-                  _SegmentationModeCard(
+                  _SegmentationModeSection(
                     value: 'events',
                     title: 'Events',
                     description: 'Create segments around marker events.',
@@ -89,8 +89,8 @@ class SegmentationNodeType extends NodeType {
                       setState: setState,
                     ),
                   ),
-                  SizedBox(height: 12),
-                  _SegmentationModeCard(
+                  const Divider(height: 24),
+                  _SegmentationModeSection(
                     value: 'blocks',
                     title: 'Blocks',
                     description: 'Create segments from included marker spans.',
@@ -99,8 +99,8 @@ class SegmentationNodeType extends NodeType {
                       setState: setState,
                     ),
                   ),
-                  SizedBox(height: 12),
-                  _SegmentationModeCard(
+                  const Divider(height: 24),
+                  _SegmentationModeSection(
                     value: 'equal_windows',
                     title: 'Equal Windows',
                     description: 'Split the recording into uniform windows.',
@@ -117,7 +117,7 @@ class SegmentationNodeType extends NodeType {
           Expanded(
             child: Column(
               children: <Widget>[
-                _RightPanelShell(
+                _RightPanelSection(
                   title: activeDataset == null
                       ? 'Marker Overview'
                       : 'Marker Overview: ${activeDataset.label}',
@@ -126,8 +126,8 @@ class SegmentationNodeType extends NodeType {
                     markers: markers,
                   ),
                 ),
-                const SizedBox(height: 12),
-                _RightPanelShell(
+                const SizedBox(height: 14),
+                _RightPanelSection(
                   title: 'Include / Exclude Markers',
                   child: _MarkerSelectionPanel(
                     dataset: activeDataset,
@@ -486,8 +486,8 @@ class _SampleInterval {
   final int stopIndex;
 }
 
-class _SegmentationModeCard extends StatelessWidget {
-  const _SegmentationModeCard({
+class _SegmentationModeSection extends StatelessWidget {
+  const _SegmentationModeSection({
     required this.value,
     required this.title,
     required this.description,
@@ -504,61 +504,62 @@ class _SegmentationModeCard extends StatelessWidget {
     final RadioGroupRegistry<String>? radioGroup = RadioGroup.maybeOf<String>(context);
     final String? groupValue = radioGroup?.groupValue;
     final bool active = value == groupValue;
-    final Widget content = AnimatedOpacity(
-      duration: const Duration(milliseconds: 120),
-      opacity: active ? 1.0 : 0.45,
-      child: AbsorbPointer(
-        absorbing: !active,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: active ? Colors.indigo.shade300 : Colors.grey.shade300,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Radio<String>(
-                    value: value,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
+    final Color textColor = active ? Colors.black : Colors.black45;
+    return InkWell(
+      onTap: () => radioGroup?.onChanged(value),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 120),
+        opacity: active ? 1.0 : 0.55,
+        child: AbsorbPointer(
+          absorbing: !active,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Radio<String>(
+                      value: value,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          color: textColor,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 44),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(description),
-                    const SizedBox(height: 10),
-                    ...options,
                   ],
                 ),
-              ),
-            ],
+                Padding(
+                  padding: const EdgeInsets.only(left: 44),
+                  child: DefaultTextStyle(
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 14,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          description,
+                          style: TextStyle(color: textColor),
+                        ),
+                        const SizedBox(height: 10),
+                        ...options,
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    );
-
-    return InkWell(
-      onTap: () => radioGroup?.onChanged(value),
-      borderRadius: BorderRadius.circular(10),
-      child: content,
     );
   }
 }
@@ -749,8 +750,8 @@ class _NumericOptionFieldState extends State<_NumericOptionField> {
   }
 }
 
-class _RightPanelShell extends StatelessWidget {
-  const _RightPanelShell({
+class _RightPanelSection extends StatelessWidget {
+  const _RightPanelSection({
     required this.title,
     required this.child,
   });
@@ -760,15 +761,9 @@ class _RightPanelShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       height: 220,
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -778,8 +773,15 @@ class _RightPanelShell extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 10),
-          Expanded(child: child),
+          const SizedBox(height: 6),
+          Divider(height: 1, color: Colors.grey.shade400),
+          const SizedBox(height: 8),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: child,
+            ),
+          ),
         ],
       ),
     );
@@ -898,11 +900,12 @@ class _MarkerSelectionPanel extends StatelessWidget {
       );
     }
 
+    final List<_MarkerLabelSummary> groups = _summarizeMarkersByLabel(markers);
     return ListView.builder(
-      itemCount: markers.length,
+      itemCount: groups.length,
       itemBuilder: (BuildContext context, int index) {
-        final TimeMarker marker = markers[index];
-        final String key = markerKeyForMarker(marker);
+        final _MarkerLabelSummary group = groups[index];
+        final String key = group.key;
         final bool included = (includedMarkers[key] as bool?) ?? true;
         return CheckboxListTile(
           dense: true,
@@ -912,15 +915,15 @@ class _MarkerSelectionPanel extends StatelessWidget {
             width: 10,
             height: 10,
             decoration: BoxDecoration(
-              color: _markerColor(index, marker),
+              color: _markerColor(index, group.sampleMarker),
               shape: BoxShape.circle,
             ),
           ),
           title: Text(
-            '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
+            group.label,
             style: const TextStyle(fontSize: 13),
           ),
-          subtitle: Text(marker.kind),
+          subtitle: Text('${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}'),
           onChanged: (bool? value) {
             final Map<String, dynamic> nextMap = Map<String, dynamic>.from(includedMarkers);
             nextMap[key] = value ?? true;
@@ -930,6 +933,56 @@ class _MarkerSelectionPanel extends StatelessWidget {
       },
     );
   }
+}
+
+class _MarkerLabelSummary {
+  const _MarkerLabelSummary({
+    required this.key,
+    required this.label,
+    required this.kind,
+    required this.count,
+    required this.sampleMarker,
+  });
+
+  final String key;
+  final String label;
+  final String kind;
+  final int count;
+  final TimeMarker sampleMarker;
+}
+
+List<_MarkerLabelSummary> _summarizeMarkersByLabel(List<TimeMarker> markers) {
+  final Map<String, _MarkerLabelSummary> grouped = <String, _MarkerLabelSummary>{};
+  for (final TimeMarker marker in markers) {
+    final String key = markerKeyForMarker(marker);
+    final _MarkerLabelSummary? existing = grouped[key];
+    if (existing == null) {
+      grouped[key] = _MarkerLabelSummary(
+        key: key,
+        label: marker.label,
+        kind: marker.kind,
+        count: 1,
+        sampleMarker: marker,
+      );
+    } else {
+      grouped[key] = _MarkerLabelSummary(
+        key: key,
+        label: existing.label,
+        kind: existing.kind,
+        count: existing.count + 1,
+        sampleMarker: existing.sampleMarker,
+      );
+    }
+  }
+  final List<_MarkerLabelSummary> summaries = grouped.values.toList(growable: false);
+  summaries.sort((_MarkerLabelSummary a, _MarkerLabelSummary b) {
+    final int kindCompare = a.kind.compareTo(b.kind);
+    if (kindCompare != 0) {
+      return kindCompare;
+    }
+    return a.label.compareTo(b.label);
+  });
+  return summaries;
 }
 
 Color _markerColor(int index, TimeMarker marker) {

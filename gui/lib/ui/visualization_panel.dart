@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../model/node.dart';
+import '../platform/brainstory_engine.dart';
 import '../nodes/sleep_staging_node.dart';
 import 'canvas_logic.dart';
 import 'raw_signal_browser.dart';
@@ -284,7 +285,10 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                   datasets,
                 );
                 final bool needsActiveDatasetPicker =
-                    (view == 'raw' || view == 'hypnogram' || view == 'bridge') &&
+                    (view == 'raw' ||
+                            view == 'segments' ||
+                            view == 'hypnogram' ||
+                            view == 'bridge') &&
                     selectedSourceDatasets.length > 1;
                 return Column(
                   children: <Widget>[
@@ -477,6 +481,16 @@ class _VisualizationChart extends StatelessWidget {
       );
       return _HypnogramChart(dataset: activeDataset);
     }
+    if (view == 'segments') {
+      final Dataset activeDataset = datasets.firstWhere(
+        (Dataset dataset) => dataset.id == activeDatasetId,
+        orElse: () => datasets.first,
+      );
+      return _SegmentedChart(
+        dataset: activeDataset,
+        params: params,
+      );
+    }
     if (comparisonNode && datasets.length > 1) {
       return const _ChartMessage(
         title: 'Raw comparison is not ready yet',
@@ -514,6 +528,752 @@ class _VisualizationChart extends StatelessWidget {
       onChanged: onChanged,
     );
   }
+}
+
+class _SegmentedChart extends StatefulWidget {
+  const _SegmentedChart({
+    required this.dataset,
+    required this.params,
+  });
+
+  final Dataset dataset;
+  final Map<String, dynamic> params;
+
+  @override
+  State<_SegmentedChart> createState() => _SegmentedChartState();
+}
+
+class _SegmentedChartState extends State<_SegmentedChart> {
+  @override
+  Widget build(BuildContext context) {
+    final SegmentedTimeSeriesData? segmented = widget.dataset.segmentedTimeSeries;
+    if (segmented == null || segmented.segments.isEmpty) {
+      return const _ChartMessage(
+        title: 'No segmented data',
+        body: 'Run a Segmentation-backed path before opening the segmented viewer.',
+      );
+    }
+
+    final Map<String, dynamic> params = widget.params;
+    params.putIfAbsent('segmented_view_mode', () => 'aggregate');
+    params.putIfAbsent('segmented_individual_by', () => 'segments');
+    params.putIfAbsent('segmented_aggregate_by', () => 'segments');
+    params.putIfAbsent('segmented_individual_count', () => 4);
+    params.putIfAbsent('segmented_include_bad', () => false);
+    params.putIfAbsent('segmented_show_mean', () => true);
+    params.putIfAbsent('segmented_show_traces', () => true);
+    params.putIfAbsent('segmented_show_spread', () => false);
+    params.putIfAbsent('segmented_focus_channel_index', () => 0);
+    params.putIfAbsent('segmented_focus_segment_index', () => 0);
+    params.putIfAbsent('segmented_individual_page_start', () => 0);
+
+    final bool includeBad = params['segmented_include_bad'] as bool? ?? false;
+    final List<SignalSegmentData> visibleSegments = segmented.segments
+        .where((SignalSegmentData segment) => includeBad || !_segmentIsBad(segment))
+        .toList(growable: false);
+    if (visibleSegments.isEmpty) {
+      return const _ChartMessage(
+        title: 'No visible segments',
+        body: 'All segments are currently excluded as bad. Enable "Include bad segments" to inspect them.',
+      );
+    }
+
+    final String mode = (params['segmented_view_mode'] ?? 'individual').toString();
+    final String individualBy =
+        (params['segmented_individual_by'] ?? 'segments').toString();
+    final String aggregateBy =
+        (params['segmented_aggregate_by'] ?? 'segments').toString();
+    final int pageSize =
+        ((params['segmented_individual_count'] as num?)?.toInt() ?? 4).clamp(1, 16);
+    final int focusChannelIndex = _clampIndex(
+      (params['segmented_focus_channel_index'] as num?)?.toInt() ?? 0,
+      segmented.channelLabels.isEmpty ? 1 : segmented.channelLabels.length,
+    );
+    final int focusSegmentIndex = _clampIndex(
+      (params['segmented_focus_segment_index'] as num?)?.toInt() ?? 0,
+      visibleSegments.length,
+    );
+    final int pageStart = _clampPageStart(
+      (params['segmented_individual_page_start'] as num?)?.toInt() ?? 0,
+      individualBy == 'segments'
+          ? visibleSegments.length
+          : math.max(
+              1,
+              visibleSegments[focusSegmentIndex].channelSamples.length,
+            ),
+      pageSize,
+    );
+
+    params['segmented_focus_channel_index'] = focusChannelIndex;
+    params['segmented_focus_segment_index'] = focusSegmentIndex;
+    params['segmented_individual_page_start'] = pageStart;
+
+    final String subtitle =
+        '${widget.dataset.label} • ${visibleSegments.length}/${segmented.segmentCount} visible segment${visibleSegments.length == 1 ? '' : 's'}';
+
+    return _ChartCard(
+      title: 'Segments',
+      subtitle: subtitle,
+      toolbar: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          SegmentedButton<String>(
+            segments: const <ButtonSegment<String>>[
+              ButtonSegment<String>(value: 'individual', label: Text('Individual')),
+              ButtonSegment<String>(value: 'aggregate', label: Text('Aggregate')),
+            ],
+            selected: <String>{mode},
+            onSelectionChanged: (Set<String> selection) {
+              setState(() {
+                params['segmented_view_mode'] = selection.first;
+              });
+            },
+          ),
+          FilterChip(
+            label: const Text('Include bad segments'),
+            selected: includeBad,
+            onSelected: (bool value) {
+              setState(() {
+                params['segmented_include_bad'] = value;
+                params['segmented_individual_page_start'] = 0;
+                params['segmented_focus_segment_index'] = 0;
+              });
+            },
+          ),
+          if (mode == 'individual') ...<Widget>[
+            SegmentedButton<String>(
+              segments: const <ButtonSegment<String>>[
+                ButtonSegment<String>(value: 'segments', label: Text('By Segments')),
+                ButtonSegment<String>(value: 'channels', label: Text('By Channels')),
+              ],
+              selected: <String>{individualBy},
+              onSelectionChanged: (Set<String> selection) {
+                setState(() {
+                  params['segmented_individual_by'] = selection.first;
+                  params['segmented_individual_page_start'] = 0;
+                });
+              },
+            ),
+            _PsdMenuChip<int>(
+              label: 'Show',
+              valueLabel: '$pageSize',
+              options: const <int>[1, 4, 9, 16],
+              itemLabel: (int value) => '$value',
+              onSelected: (int value) {
+                setState(() {
+                  params['segmented_individual_count'] = value;
+                  params['segmented_individual_page_start'] = 0;
+                });
+              },
+            ),
+            if (individualBy == 'segments')
+              _PsdMenuChip<int>(
+                label: 'Channel',
+                valueLabel: _segmentChannelLabel(segmented, focusChannelIndex),
+                options: List<int>.generate(
+                  segmented.channelLabels.isEmpty
+                      ? math.max(1, visibleSegments.first.channelSamples.length)
+                      : segmented.channelLabels.length,
+                  (int index) => index,
+                  growable: false,
+                ),
+                itemLabel: (int index) => _segmentChannelLabel(segmented, index),
+                onSelected: (int value) {
+                  setState(() {
+                    params['segmented_focus_channel_index'] = value;
+                  });
+                },
+              ),
+            if (individualBy == 'channels')
+              _PsdMenuChip<int>(
+                label: 'Segment',
+                valueLabel: _segmentDisplayLabel(visibleSegments[focusSegmentIndex], focusSegmentIndex),
+                options: List<int>.generate(
+                  visibleSegments.length,
+                  (int index) => index,
+                  growable: false,
+                ),
+                itemLabel: (int index) =>
+                    _segmentDisplayLabel(visibleSegments[index], index),
+                onSelected: (int value) {
+                  setState(() {
+                    params['segmented_focus_segment_index'] = value;
+                    params['segmented_individual_page_start'] = 0;
+                  });
+                },
+              ),
+            _PagerChip(
+              startIndex: pageStart,
+              pageSize: pageSize,
+              totalCount: individualBy == 'segments'
+                  ? visibleSegments.length
+                  : math.max(
+                      1,
+                      visibleSegments[focusSegmentIndex].channelSamples.length,
+                    ),
+              onPrevious: pageStart > 0
+                  ? () {
+                      setState(() {
+                        params['segmented_individual_page_start'] =
+                            math.max(0, pageStart - pageSize);
+                      });
+                    }
+                  : null,
+              onNext: pageStart + pageSize <
+                      (individualBy == 'segments'
+                          ? visibleSegments.length
+                          : math.max(
+                              1,
+                              visibleSegments[focusSegmentIndex].channelSamples.length,
+                            ))
+                  ? () {
+                      setState(() {
+                        params['segmented_individual_page_start'] = pageStart + pageSize;
+                      });
+                    }
+                  : null,
+            ),
+          ] else ...<Widget>[
+            SegmentedButton<String>(
+              segments: const <ButtonSegment<String>>[
+                ButtonSegment<String>(value: 'segments', label: Text('By Segments')),
+                ButtonSegment<String>(value: 'channels', label: Text('By Channels')),
+                ButtonSegment<String>(value: 'both', label: Text('By Both')),
+              ],
+              selected: <String>{aggregateBy},
+              onSelectionChanged: (Set<String> selection) {
+                setState(() {
+                  params['segmented_aggregate_by'] = selection.first;
+                });
+              },
+            ),
+            if (aggregateBy == 'channels')
+              _PsdMenuChip<int>(
+                label: 'Segment',
+                valueLabel: _segmentDisplayLabel(visibleSegments[focusSegmentIndex], focusSegmentIndex),
+                options: List<int>.generate(
+                  visibleSegments.length,
+                  (int index) => index,
+                  growable: false,
+                ),
+                itemLabel: (int index) =>
+                    _segmentDisplayLabel(visibleSegments[index], index),
+                onSelected: (int value) {
+                  setState(() {
+                    params['segmented_focus_segment_index'] = value;
+                  });
+                },
+              ),
+            FilterChip(
+              label: const Text('Show mean'),
+              selected: params['segmented_show_mean'] as bool? ?? true,
+              onSelected: (bool value) {
+                setState(() {
+                  params['segmented_show_mean'] = value;
+                });
+              },
+            ),
+            FilterChip(
+              label: const Text('Show traces'),
+              selected: params['segmented_show_traces'] as bool? ?? true,
+              onSelected: (bool value) {
+                setState(() {
+                  params['segmented_show_traces'] = value;
+                });
+              },
+            ),
+            FilterChip(
+              label: const Text('Show spread'),
+              selected: params['segmented_show_spread'] as bool? ?? false,
+              onSelected: (bool value) {
+                setState(() {
+                  params['segmented_show_spread'] = value;
+                });
+              },
+            ),
+          ],
+        ],
+      ),
+      child: mode == 'individual'
+          ? _SegmentIndividualView(
+              segmented: segmented,
+              visibleSegments: visibleSegments,
+              by: individualBy,
+              pageSize: pageSize,
+              pageStart: pageStart,
+              focusChannelIndex: focusChannelIndex,
+              focusSegmentIndex: focusSegmentIndex,
+            )
+          : _SegmentAggregateView(
+              segmented: segmented,
+              visibleSegments: visibleSegments,
+              aggregateBy: aggregateBy,
+              focusChannelIndex: focusChannelIndex,
+              focusSegmentIndex: focusSegmentIndex,
+              showMean: params['segmented_show_mean'] as bool? ?? true,
+              showTraces: params['segmented_show_traces'] as bool? ?? true,
+              showSpread: params['segmented_show_spread'] as bool? ?? false,
+            ),
+    );
+  }
+}
+
+class _SegmentIndividualView extends StatelessWidget {
+  const _SegmentIndividualView({
+    required this.segmented,
+    required this.visibleSegments,
+    required this.by,
+    required this.pageSize,
+    required this.pageStart,
+    required this.focusChannelIndex,
+    required this.focusSegmentIndex,
+  });
+
+  final SegmentedTimeSeriesData segmented;
+  final List<SignalSegmentData> visibleSegments;
+  final String by;
+  final int pageSize;
+  final int pageStart;
+  final int focusChannelIndex;
+  final int focusSegmentIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<_MiniTraceData> traces = by == 'segments'
+        ? visibleSegments
+            .skip(pageStart)
+            .take(pageSize)
+            .toList(growable: false)
+            .asMap()
+            .entries
+            .map((MapEntry<int, SignalSegmentData> entry) {
+              final int absoluteIndex = pageStart + entry.key;
+              final SignalSegmentData segment = entry.value;
+              return _MiniTraceData(
+                title: _segmentDisplayLabel(segment, absoluteIndex),
+                points: _segmentChannelSpots(
+                  segment,
+                  segmented.sampleRate,
+                  focusChannelIndex,
+                ),
+                color: _seriesColor(absoluteIndex),
+              );
+            })
+            .toList(growable: false)
+        : List<int>.generate(
+            math.max(0, visibleSegments[focusSegmentIndex].channelSamples.length - pageStart),
+            (int index) => pageStart + index,
+            growable: false,
+          )
+            .take(pageSize)
+            .map((int channelIndex) => _MiniTraceData(
+                  title: _segmentChannelLabel(segmented, channelIndex),
+                  points: _segmentChannelSpots(
+                    visibleSegments[focusSegmentIndex],
+                    segmented.sampleRate,
+                    channelIndex,
+                  ),
+                  color: _seriesColor(channelIndex),
+                ))
+            .toList(growable: false);
+
+    if (traces.isEmpty) {
+      return const _ChartMessage(
+        title: 'Nothing to show',
+        body: 'There are no segments or channels in the selected page.',
+      );
+    }
+
+    final List<double> allX =
+        traces.expand((_MiniTraceData trace) => trace.points.map((FlSpot spot) => spot.x)).toList();
+    final List<double> allY =
+        traces.expand((_MiniTraceData trace) => trace.points.map((FlSpot spot) => spot.y)).toList();
+    final double minX = allX.isEmpty ? 0.0 : allX.reduce(math.min);
+    final double maxX = allX.isEmpty ? 1.0 : allX.reduce(math.max);
+    final double minY = allY.isEmpty ? -1.0 : allY.reduce(math.min);
+    final double maxY = allY.isEmpty ? 1.0 : allY.reduce(math.max);
+    final int crossAxisCount = traces.length <= 1
+        ? 1
+        : traces.length <= 4
+            ? 2
+            : traces.length <= 9
+                ? 3
+                : 4;
+
+    return GridView.builder(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        childAspectRatio: 1.35,
+      ),
+      itemCount: traces.length,
+      itemBuilder: (BuildContext context, int index) {
+        final _MiniTraceData trace = traces[index];
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  trace.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: LineChart(
+                    LineChartData(
+                      minX: minX,
+                      maxX: maxX,
+                      minY: minY,
+                      maxY: maxY,
+                      gridData: FlGridData(
+                        show: true,
+                        horizontalInterval: _niceAxisStep(maxY - minY),
+                        verticalInterval: _niceAxisStep(maxX - minX),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      lineTouchData: const LineTouchData(enabled: false),
+                      titlesData: _chartTitles(
+                        minX: minX,
+                        maxX: maxX,
+                        minY: minY,
+                        maxY: maxY,
+                        xAxisLabel: 'ms',
+                        yAxisLabel: 'uV',
+                      ),
+                      lineBarsData: <LineChartBarData>[
+                        LineChartBarData(
+                          spots: trace.points,
+                          isCurved: false,
+                          barWidth: 1.8,
+                          color: trace.color,
+                          dotData: const FlDotData(show: false),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SegmentAggregateView extends StatelessWidget {
+  const _SegmentAggregateView({
+    required this.segmented,
+    required this.visibleSegments,
+    required this.aggregateBy,
+    required this.focusChannelIndex,
+    required this.focusSegmentIndex,
+    required this.showMean,
+    required this.showTraces,
+    required this.showSpread,
+  });
+
+  final SegmentedTimeSeriesData segmented;
+  final List<SignalSegmentData> visibleSegments;
+  final String aggregateBy;
+  final int focusChannelIndex;
+  final int focusSegmentIndex;
+  final bool showMean;
+  final bool showTraces;
+  final bool showSpread;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!showMean && !showTraces && !showSpread) {
+      return const _ChartMessage(
+        title: 'Nothing to render',
+        body: 'Enable at least one aggregate option: mean, traces, or spread.',
+      );
+    }
+
+    if (aggregateBy == 'segments') {
+      return _SegmentAggregateMontageView(
+        segmented: segmented,
+        visibleSegments: visibleSegments,
+        showMean: showMean,
+        showTraces: showTraces,
+        showSpread: showSpread,
+      );
+    }
+
+    final List<_AlignedTrace> traces = switch (aggregateBy) {
+      'channels' => _alignedChannelTracesForSegment(
+          segmented: segmented,
+          segment: visibleSegments[focusSegmentIndex],
+        ),
+      'both' => _alignedChannelTracesForAllSegments(segmented, visibleSegments),
+      _ => const <_AlignedTrace>[],
+    };
+
+    if (traces.isEmpty) {
+      return const _ChartMessage(
+        title: 'No aggregate data',
+        body: 'This aggregate selection did not produce any traces to summarize.',
+      );
+    }
+
+    final _AggregatePlotData? plotData = _buildAggregatePlotData(
+      traces,
+      showMean: showMean,
+      showTraces: showTraces,
+      showSpread: showSpread,
+    );
+    if (plotData == null) {
+      return const _ChartMessage(
+        title: 'No aggregate data',
+        body: 'The selected traces do not contain any samples.',
+      );
+    }
+
+    final String aggregateLabel = switch (aggregateBy) {
+      'channels' => 'channels in ${_segmentDisplayLabel(visibleSegments[focusSegmentIndex], focusSegmentIndex)}',
+      'both' => 'all channels across all visible segments',
+      _ => 'segments',
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Aggregate by $aggregateLabel',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: LineChart(
+            LineChartData(
+              minX: plotData.minX,
+              maxX: plotData.maxX,
+              minY: plotData.minY,
+              maxY: plotData.maxY,
+              gridData: FlGridData(
+                show: true,
+                horizontalInterval: _niceAxisStep(plotData.maxY - plotData.minY),
+                verticalInterval: _niceAxisStep(plotData.maxX - plotData.minX),
+              ),
+              borderData: FlBorderData(show: false),
+              lineTouchData: const LineTouchData(enabled: false),
+              titlesData: _chartTitles(
+                minX: plotData.minX,
+                maxX: plotData.maxX,
+                minY: plotData.minY,
+                maxY: plotData.maxY,
+                xAxisLabel: 'ms',
+                yAxisLabel: 'uV',
+              ),
+              betweenBarsData: plotData.betweenBars,
+              lineBarsData: plotData.lineBars,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SegmentAggregateMontageView extends StatelessWidget {
+  const _SegmentAggregateMontageView({
+    required this.segmented,
+    required this.visibleSegments,
+    required this.showMean,
+    required this.showTraces,
+    required this.showSpread,
+  });
+
+  final SegmentedTimeSeriesData segmented;
+  final List<SignalSegmentData> visibleSegments;
+  final bool showMean;
+  final bool showTraces;
+  final bool showSpread;
+
+  @override
+  Widget build(BuildContext context) {
+    final int channelCount = segmented.channelLabels.isNotEmpty
+        ? segmented.channelLabels.length
+        : math.max(1, visibleSegments.first.channelSamples.length);
+    return ListView.separated(
+      itemCount: channelCount,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (BuildContext context, int channelIndex) {
+        final List<_AlignedTrace> traces = _alignedSegmentTracesForChannel(
+          segmented: segmented,
+          segments: visibleSegments,
+          channelIndex: channelIndex,
+        );
+        final _AggregatePlotData? plotData = _buildAggregatePlotData(
+          traces,
+          showMean: showMean,
+          showTraces: showTraces,
+          showSpread: showSpread,
+        );
+        if (plotData == null) {
+          return const SizedBox.shrink();
+        }
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  _segmentChannelLabel(segmented, channelIndex),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SizedBox(
+                  height: 130,
+                  child: LineChart(
+                    LineChartData(
+                      minX: plotData.minX,
+                      maxX: plotData.maxX,
+                      minY: plotData.minY,
+                      maxY: plotData.maxY,
+                      gridData: FlGridData(
+                        show: true,
+                        horizontalInterval: _niceAxisStep(plotData.maxY - plotData.minY),
+                        verticalInterval: _niceAxisStep(plotData.maxX - plotData.minX),
+                      ),
+                      borderData: FlBorderData(show: false),
+                      lineTouchData: const LineTouchData(enabled: false),
+                      titlesData: _chartTitles(
+                        minX: plotData.minX,
+                        maxX: plotData.maxX,
+                        minY: plotData.minY,
+                        maxY: plotData.maxY,
+                        xAxisLabel: 'ms',
+                        yAxisLabel: 'uV',
+                      ),
+                      betweenBarsData: plotData.betweenBars,
+                      lineBarsData: plotData.lineBars,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PagerChip extends StatelessWidget {
+  const _PagerChip({
+    required this.startIndex,
+    required this.pageSize,
+    required this.totalCount,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  final int startIndex;
+  final int pageSize;
+  final int totalCount;
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final int start = totalCount == 0 ? 0 : startIndex + 1;
+    final int stop = math.min(totalCount, startIndex + pageSize);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 16,
+            color: Colors.white70,
+            onPressed: onPrevious,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Text(
+            '$start-$stop / $totalCount',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 16,
+            color: Colors.white70,
+            onPressed: onNext,
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniTraceData {
+  const _MiniTraceData({
+    required this.title,
+    required this.points,
+    required this.color,
+  });
+
+  final String title;
+  final List<FlSpot> points;
+  final Color color;
+}
+
+class _AlignedTrace {
+  const _AlignedTrace({
+    required this.values,
+    required this.xValues,
+  });
+
+  final List<double> values;
+  final List<double> xValues;
+}
+
+class _AggregatePlotData {
+  const _AggregatePlotData({
+    required this.lineBars,
+    required this.betweenBars,
+    required this.minX,
+    required this.maxX,
+    required this.minY,
+    required this.maxY,
+  });
+
+  final List<LineChartBarData> lineBars;
+  final List<BetweenBarsData> betweenBars;
+  final double minX;
+  final double maxX;
+  final double minY;
+  final double maxY;
 }
 
 class _HypnogramChart extends StatelessWidget {
@@ -1253,6 +2013,267 @@ class _BridgeScaleLegend extends StatelessWidget {
   }
 }
 
+int _clampIndex(int value, int length) {
+  if (length <= 0) {
+    return 0;
+  }
+  return value.clamp(0, length - 1);
+}
+
+int _clampPageStart(int start, int totalCount, int pageSize) {
+  if (totalCount <= 0) {
+    return 0;
+  }
+  final int safePageSize = math.max(1, pageSize);
+  final int maxStart = math.max(0, totalCount - safePageSize);
+  return start.clamp(0, maxStart);
+}
+
+bool _segmentIsBad(SignalSegmentData segment) {
+  final String label = segment.label.trim().toLowerCase();
+  final String kind = segment.kind.trim().toLowerCase();
+  return label.contains('bad') ||
+      label.contains('artifact') ||
+      label.contains('reject') ||
+      kind.contains('bad') ||
+      kind.contains('artifact') ||
+      kind.contains('reject');
+}
+
+String _segmentDisplayLabel(SignalSegmentData segment, int index) {
+  final String label = segment.label.trim();
+  return label.isEmpty ? 'Segment ${index + 1}' : '${index + 1}. $label';
+}
+
+String _segmentChannelLabel(SegmentedTimeSeriesData segmented, int index) {
+  if (index >= 0 && index < segmented.channelLabels.length) {
+    return segmented.channelLabels[index];
+  }
+  return 'Ch ${index + 1}';
+}
+
+List<FlSpot> _segmentChannelSpots(
+  SignalSegmentData segment,
+  double sampleRate,
+  int channelIndex,
+) {
+  if (channelIndex < 0 || channelIndex >= segment.channelSamples.length) {
+    return const <FlSpot>[];
+  }
+  final List<double> values = segment.channelSamples[channelIndex];
+  final double startMs = _relativeSegmentStartMs(segment);
+  final double stepMs = sampleRate <= 0 ? 1.0 : 1000.0 / sampleRate;
+  return List<FlSpot>.generate(
+    values.length,
+    (int index) => FlSpot(startMs + (index * stepMs), values[index]),
+    growable: false,
+  );
+}
+
+double _relativeSegmentStartMs(SignalSegmentData segment) {
+  final double anchor = segment.anchorTimeSeconds ?? segment.startSeconds;
+  return (segment.startSeconds - anchor) * 1000.0;
+}
+
+List<_AlignedTrace> _alignedSegmentTracesForChannel({
+  required SegmentedTimeSeriesData segmented,
+  required List<SignalSegmentData> segments,
+  required int channelIndex,
+}) {
+  final List<_AlignedTrace> traces = <_AlignedTrace>[];
+  for (final SignalSegmentData segment in segments) {
+    final List<FlSpot> spots = _segmentChannelSpots(
+      segment,
+      segmented.sampleRate,
+      channelIndex,
+    );
+    if (spots.isEmpty) {
+      continue;
+    }
+    traces.add(
+      _AlignedTrace(
+        values: spots.map((FlSpot spot) => spot.y).toList(growable: false),
+        xValues: spots.map((FlSpot spot) => spot.x).toList(growable: false),
+      ),
+    );
+  }
+  return traces;
+}
+
+List<_AlignedTrace> _alignedChannelTracesForSegment({
+  required SegmentedTimeSeriesData segmented,
+  required SignalSegmentData segment,
+}) {
+  final List<_AlignedTrace> traces = <_AlignedTrace>[];
+  for (int channelIndex = 0; channelIndex < segment.channelSamples.length; channelIndex++) {
+    final List<FlSpot> spots = _segmentChannelSpots(
+      segment,
+      segmented.sampleRate,
+      channelIndex,
+    );
+    if (spots.isEmpty) {
+      continue;
+    }
+    traces.add(
+      _AlignedTrace(
+        values: spots.map((FlSpot spot) => spot.y).toList(growable: false),
+        xValues: spots.map((FlSpot spot) => spot.x).toList(growable: false),
+      ),
+    );
+  }
+  return traces;
+}
+
+List<_AlignedTrace> _alignedChannelTracesForAllSegments(
+  SegmentedTimeSeriesData segmented,
+  List<SignalSegmentData> segments,
+) {
+  final List<_AlignedTrace> traces = <_AlignedTrace>[];
+  for (final SignalSegmentData segment in segments) {
+    traces.addAll(
+      _alignedChannelTracesForSegment(
+        segmented: segmented,
+        segment: segment,
+      ),
+    );
+  }
+  return traces;
+}
+
+_AggregatePlotData? _buildAggregatePlotData(
+  List<_AlignedTrace> traces, {
+  required bool showMean,
+  required bool showTraces,
+  required bool showSpread,
+}) {
+  if (traces.isEmpty) {
+    return null;
+  }
+  final int minLength = traces
+      .map((_AlignedTrace trace) => trace.values.length)
+      .reduce((int a, int b) => math.min(a, b));
+  if (minLength <= 0) {
+    return null;
+  }
+
+  final List<double> xValues = traces.first.xValues.take(minLength).toList(growable: false);
+  final AggregateSeriesStats? aggregateStats = computeAggregateSeriesStatsWithFallback(
+    traces
+        .map(
+          (_AlignedTrace trace) => trace.values.take(minLength).toList(growable: false),
+        )
+        .toList(growable: false),
+  );
+  if (aggregateStats == null) {
+    return null;
+  }
+
+  final List<FlSpot> meanSpots = List<FlSpot>.generate(
+    minLength,
+    (int sampleIndex) => FlSpot(xValues[sampleIndex], aggregateStats.mean[sampleIndex]),
+    growable: false,
+  );
+  final List<FlSpot> upperSpots = List<FlSpot>.generate(
+    minLength,
+    (int sampleIndex) => FlSpot(
+      xValues[sampleIndex],
+      aggregateStats.mean[sampleIndex] + aggregateStats.standardDeviation[sampleIndex],
+    ),
+    growable: false,
+  );
+  final List<FlSpot> lowerSpots = List<FlSpot>.generate(
+    minLength,
+    (int sampleIndex) => FlSpot(
+      xValues[sampleIndex],
+      aggregateStats.mean[sampleIndex] - aggregateStats.standardDeviation[sampleIndex],
+    ),
+    growable: false,
+  );
+
+  final List<double> allY = <double>[
+    if (showTraces)
+      ...traces.expand((_AlignedTrace trace) => trace.values.take(minLength)),
+    if (showMean) ...meanSpots.map((FlSpot spot) => spot.y),
+    if (showSpread) ...upperSpots.map((FlSpot spot) => spot.y),
+    if (showSpread) ...lowerSpots.map((FlSpot spot) => spot.y),
+  ];
+  final double minX = xValues.isEmpty ? 0.0 : xValues.first;
+  final double maxX = xValues.isEmpty ? 1.0 : xValues.last;
+  final double minY = allY.isEmpty ? -1.0 : allY.reduce(math.min);
+  final double maxY = allY.isEmpty ? 1.0 : allY.reduce(math.max);
+
+  final List<LineChartBarData> lineBars = <LineChartBarData>[];
+  final List<BetweenBarsData> betweenBars = <BetweenBarsData>[];
+  if (showSpread) {
+    lineBars.add(
+      LineChartBarData(
+        spots: lowerSpots,
+        isCurved: false,
+        color: Colors.transparent,
+        barWidth: 0,
+        dotData: const FlDotData(show: false),
+      ),
+    );
+    lineBars.add(
+      LineChartBarData(
+        spots: upperSpots,
+        isCurved: false,
+        color: Colors.transparent,
+        barWidth: 0,
+        dotData: const FlDotData(show: false),
+      ),
+    );
+    betweenBars.add(
+      BetweenBarsData(
+        fromIndex: 0,
+        toIndex: 1,
+        color: Colors.cyanAccent.withValues(alpha: 0.14),
+      ),
+    );
+  }
+  if (showTraces) {
+    for (int index = 0; index < traces.length; index++) {
+      final _AlignedTrace trace = traces[index];
+      lineBars.add(
+        LineChartBarData(
+          spots: List<FlSpot>.generate(
+            minLength,
+            (int sampleIndex) => FlSpot(
+              xValues[sampleIndex],
+              trace.values[sampleIndex],
+            ),
+            growable: false,
+          ),
+          isCurved: false,
+          color: _seriesColor(index).withValues(alpha: 0.24),
+          barWidth: 1,
+          dotData: const FlDotData(show: false),
+        ),
+      );
+    }
+  }
+  if (showMean) {
+    lineBars.add(
+      LineChartBarData(
+        spots: meanSpots,
+        isCurved: false,
+        color: Colors.cyanAccent,
+        barWidth: 2.4,
+        dotData: const FlDotData(show: false),
+      ),
+    );
+  }
+
+  return _AggregatePlotData(
+    lineBars: lineBars,
+    betweenBars: betweenBars,
+    minX: minX,
+    maxX: maxX,
+    minY: minY,
+    maxY: maxY,
+  );
+}
+
 Color _bridgeCorrelationColor(double value) {
   final double clamped = value.clamp(-1.0, 1.0);
   if (clamped < 0) {
@@ -1608,19 +2629,23 @@ FlTitlesData _chartTitles({
   required double maxX,
   required double minY,
   required double maxY,
-  required bool logY,
+  bool logY = false,
+  String xAxisLabel = 'Hz',
+  String? yAxisLabel,
 }) {
   final double xInterval = _niceAxisStep(maxX - minX);
   final double yInterval = _niceAxisStep(maxY - minY);
+  final String resolvedYAxisLabel =
+      yAxisLabel ?? (logY ? 'log10(uV^2/Hz)' : 'uV^2/Hz');
   return FlTitlesData(
     topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
     rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
     bottomTitles: AxisTitles(
       axisNameWidget: Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: const Text(
-          'Hz',
-          style: TextStyle(color: Colors.white70),
+        child: Text(
+          xAxisLabel,
+          style: const TextStyle(color: Colors.white70),
         ),
       ),
       sideTitles: SideTitles(
@@ -1643,9 +2668,9 @@ FlTitlesData _chartTitles({
     ),
     leftTitles: AxisTitles(
       axisNameWidget: RotatedBox(
-        quarterTurns: 3,
+        quarterTurns: 1,
         child: Text(
-          logY ? 'log10(uV^2/Hz)' : 'uV^2/Hz',
+          resolvedYAxisLabel,
           style: const TextStyle(color: Colors.white70),
         ),
       ),

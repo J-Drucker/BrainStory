@@ -49,6 +49,18 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
+find_program(CARGO_EXECUTABLE cargo)
+if(CARGO_EXECUTABLE)
+  set(BRAINSTORY_ENGINE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.toml")
+  set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/debug")
+  set(BRAINSTORY_ENGINE_BUILD_ARGS build --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "Profile")
+    set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/release")
+    set(BRAINSTORY_ENGINE_BUILD_ARGS build --release --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
+  endif()
+endif()
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
@@ -83,6 +95,12 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
 
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
+
+if(CARGO_EXECUTABLE)
+  install(FILES "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()

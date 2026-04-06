@@ -19,12 +19,15 @@ import '../nodes/debug_output_node.dart';
 import '../nodes/eye_blinks_node.dart';
 import '../nodes/export_edf_node.dart';
 import '../nodes/fooof_node.dart';
+import '../nodes/impedances_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/machine_learning_nodes.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
+import '../nodes/publish_node.dart';
+import '../nodes/recode_markers_node.dart';
 import '../nodes/realign_node.dart';
 import '../nodes/resample_node.dart';
 import '../nodes/segmentation_node.dart';
@@ -35,6 +38,17 @@ import '../platform/node_snapshot_store.dart';
 import '../platform/project_file_save.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
+
+enum _OutputHandleKind {
+  timeSeries,
+  spectrum,
+  timeFrequency,
+  markers,
+  segments,
+  table,
+  matrix,
+  other,
+}
 
 class RunActivity {
   const RunActivity({
@@ -79,13 +93,16 @@ class CanvasLogic {
     CNNNodeType(),
     AddRemoveMarkersNodeType(),
     InteractiveArtifactDetectionNodeType(),
+    RecodeMarkersNodeType(),
     SegmentationNodeType(),
     EyeBlinksNodeType(),
     SleepStagingNodeType(),
     RealignNodeType(),
+    ImpedancesNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
     ExportNodeType(),
+    PublishNodeType(),
   ];
 
   final List<NodeModel> nodes = <NodeModel>[];
@@ -108,6 +125,7 @@ class CanvasLogic {
   int? selectedConnectionIndex;
 
   String? _pendingFromNodeId;
+  int? _pendingFromPortIndex;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
   final Map<String, bool> _collapsedSubcategories = <String, bool>{};
 
@@ -272,6 +290,7 @@ class CanvasLogic {
 
   void _clearPendingConnection() {
     _pendingFromNodeId = null;
+    _pendingFromPortIndex = null;
   }
 
   void _collectNodeBranches(
@@ -376,6 +395,8 @@ class CanvasLogic {
         final String fileType =
             (params['fileType'] ?? 'edf').toString().toUpperCase();
         return 'Processed outputs were exported as $fileType files.';
+      case 'Publish':
+        return 'A publish endpoint was configured to generate manuscript-ready descriptions of the workflow and its outputs.';
       default:
         return '${node.title} was included as a processing stage.';
     }
@@ -807,8 +828,7 @@ class CanvasLogic {
       NodeCategory.transform,
       NodeCategory.machineLearning,
       NodeCategory.markerFunctions,
-      NodeCategory.visualize,
-      NodeCategory.export,
+      NodeCategory.endpoints,
     ];
 
     return Container(
@@ -1047,7 +1067,8 @@ class CanvasLogic {
         return const SizedBox.shrink();
       }
 
-      final Offset start = _outputAnchor(fromNode, toNode);
+      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
+      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
       final Offset end = _inputAnchor(fromNode, toNode);
       final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
 
@@ -1060,6 +1081,7 @@ class CanvasLogic {
             gridHeight: _gridHeight,
             obstacles: _connectionObstacles(fromNode, toNode),
             selected: selectedConnectionIndex == connectionIndex,
+            color: _outputColorForPort(fromNode, fromPort),
           ),
           size: Size.infinite,
         );
@@ -1086,6 +1108,9 @@ class CanvasLogic {
         highlighted: _isHighlighted(node),
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
+        outputHandles: _outputHandlesForNode(node),
+        selectedOutputPortIndex:
+            _pendingFromNodeId == node.id ? _pendingFromPortIndex : null,
         onDragEnd: (Offset globalOffset) {
           node.position = _nearestAvailablePosition(
             translateDropOffset(globalOffset),
@@ -1095,6 +1120,10 @@ class CanvasLogic {
         },
         onTap: () {
           _handleNodeTap(node);
+          update();
+        },
+        onOutputTap: (int portIndex) {
+          _handleOutputTap(node, portIndex);
           update();
         },
         onDoubleTap: () {
@@ -1215,12 +1244,9 @@ class CanvasLogic {
   }
 
   void _handleNodeTap(NodeModel node) {
-    if (_pendingFromNodeId == null) {
+    if (_pendingFromNodeId == null || _pendingFromPortIndex == null) {
       selectedNodeId = node.id;
       selectedConnectionIndex = null;
-      if (node.outputPorts.isNotEmpty) {
-        _pendingFromNodeId = node.id;
-      }
       return;
     }
 
@@ -1239,27 +1265,23 @@ class CanvasLogic {
       return;
     }
 
-    final Map<String, int>? portPair = _matchingPortPair(fromNode, node);
+    final int fromPortIndex = _pendingFromPortIndex!;
+    final int? toPortIndex = _matchingInputPortForOutputPort(fromNode, fromPortIndex, node);
     final bool validDirection = _isValidDownstreamPlacement(fromNode, node);
     final bool introducesCycle =
         _collectDescendantsInclusive(node.id).contains(fromNode.id);
 
-    if (portPair == null || !validDirection || introducesCycle) {
+    if (toPortIndex == null || !validDirection || introducesCycle) {
       selectedNodeId = node.id;
       selectedConnectionIndex = null;
-      if (node.outputPorts.isNotEmpty) {
-        _pendingFromNodeId = node.id;
-      } else {
-        _clearPendingConnection();
-      }
       return;
     }
 
     final Map<String, dynamic> nextConnection = <String, dynamic>{
       'fromNode': fromNode.id,
-      'fromPort': portPair['fromPort']!,
+      'fromPort': fromPortIndex,
       'toNode': node.id,
-      'toPort': portPair['toPort']!,
+      'toPort': toPortIndex,
     };
 
     final bool duplicate = connections.any(
@@ -1276,11 +1298,18 @@ class CanvasLogic {
 
     selectedNodeId = node.id;
     selectedConnectionIndex = null;
-    if (node.outputPorts.isNotEmpty) {
-      _pendingFromNodeId = node.id;
-    } else {
+    _clearPendingConnection();
+  }
+
+  void _handleOutputTap(NodeModel node, int portIndex) {
+    selectedNodeId = node.id;
+    selectedConnectionIndex = null;
+    if (_pendingFromNodeId == node.id && _pendingFromPortIndex == portIndex) {
       _clearPendingConnection();
+      return;
     }
+    _pendingFromNodeId = node.id;
+    _pendingFromPortIndex = portIndex;
   }
 
   NodeModel? _findNode(String id) {
@@ -1451,6 +1480,9 @@ class CanvasLogic {
     if (node.type is PSDNodeType) {
       return true;
     }
+    if (node.type is SegmentationNodeType || node.type is RealignNodeType) {
+      return true;
+    }
     if (node.type is SleepStagingNodeType) {
       return true;
     }
@@ -1490,6 +1522,11 @@ class CanvasLogic {
       }
     }
     for (final Dataset dataset in datasets) {
+      if (dataset.segmentedTimeSeries != null) {
+        return 'segments';
+      }
+    }
+    for (final Dataset dataset in datasets) {
       if (dataset.timeSeries != null || dataset.segmentedTimeSeries != null) {
         return 'raw';
       }
@@ -1515,10 +1552,19 @@ class CanvasLogic {
       if (parents.any((NodeModel parent) => parent.type is PSDNodeType)) {
         return 'psd';
       }
+      if (parents.any(
+        (NodeModel parent) =>
+            parent.type is SegmentationNodeType || parent.type is RealignNodeType,
+      )) {
+        return 'segments';
+      }
       if (parents.any((NodeModel parent) => parent.type.title.contains('Time-Frequency'))) {
         return 'time_frequency';
       }
       return 'raw';
+    }
+    if (node.type is SegmentationNodeType || node.type is RealignNodeType) {
+      return 'segments';
     }
     return node.type is PSDNodeType ? 'psd' : 'raw';
   }
@@ -2643,13 +2689,10 @@ class CanvasLogic {
   }
 
   bool _isHighlighted(NodeModel node) {
-    return node.id == selectedNodeId || node.id == _pendingFromNodeId;
+    return node.id == selectedNodeId;
   }
 
   Color _nodeHighlightColor(NodeModel node) {
-    if (node.id == _pendingFromNodeId) {
-      return const Color(0xFFC4B35F);
-    }
     return const Color(0xFF958A52);
   }
 
@@ -2758,13 +2801,25 @@ class CanvasLogic {
     );
     nodes.add(markerNode);
 
-    final Map<String, int>? portPair = _matchingPortPair(sourceNode, markerNode);
-    if (portPair != null) {
+    int? fromPortIndex;
+    int? toPortIndex;
+    for (int candidateFromPort = 0;
+        candidateFromPort < sourceNode.outputPorts.length;
+        candidateFromPort++) {
+      final int? candidateToPort =
+          _matchingInputPortForOutputPort(sourceNode, candidateFromPort, markerNode);
+      if (candidateToPort != null) {
+        fromPortIndex = candidateFromPort;
+        toPortIndex = candidateToPort;
+        break;
+      }
+    }
+    if (fromPortIndex != null && toPortIndex != null) {
       connections.add(<String, dynamic>{
         'fromNode': sourceNode.id,
-        'fromPort': portPair['fromPort']!,
+        'fromPort': fromPortIndex,
         'toNode': markerNode.id,
-        'toPort': portPair['toPort']!,
+        'toPort': toPortIndex,
       });
     }
 
@@ -2842,20 +2897,20 @@ class CanvasLogic {
     return '#${nodes.indexOf(node) + 1} ${node.title}';
   }
 
-  Map<String, int>? _matchingPortPair(NodeModel fromNode, NodeModel toNode) {
-    for (int fromPortIndex = 0;
-        fromPortIndex < fromNode.outputPorts.length;
-        fromPortIndex++) {
-      final PortType outputType = fromNode.outputPorts[fromPortIndex].type;
-      for (int toPortIndex = 0;
-          toPortIndex < toNode.inputPorts.length;
-          toPortIndex++) {
-        if (toNode.inputPorts[toPortIndex].type == outputType) {
-          return <String, int>{
-            'fromPort': fromPortIndex,
-            'toPort': toPortIndex,
-          };
-        }
+  int? _matchingInputPortForOutputPort(
+    NodeModel fromNode,
+    int fromPortIndex,
+    NodeModel toNode,
+  ) {
+    if (fromPortIndex < 0 || fromPortIndex >= fromNode.outputPorts.length) {
+      return null;
+    }
+    final PortType outputType = fromNode.outputPorts[fromPortIndex].type;
+    for (int toPortIndex = 0;
+        toPortIndex < toNode.inputPorts.length;
+        toPortIndex++) {
+      if (toNode.inputPorts[toPortIndex].type == outputType) {
+        return toPortIndex;
       }
     }
     return null;
@@ -2867,18 +2922,23 @@ class CanvasLogic {
     return dx >= 24 || dy >= 24;
   }
 
-  Offset _outputAnchor(NodeModel fromNode, NodeModel toNode) {
+  Offset _outputAnchor(
+    NodeModel fromNode,
+    NodeModel toNode, {
+    required int fromPortIndex,
+  }) {
     final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
+    final Rect? outputRect = _outputRectForPort(fromNode, fromPortIndex);
     if (preferVertical) {
       return Offset(
-        fromNode.position.dx + (_cardWidth / 2),
-        fromNode.position.dy + _cardHeight,
+        outputRect?.center.dx ?? (fromNode.position.dx + (_cardWidth / 2)),
+        outputRect?.bottom ?? (fromNode.position.dy + _cardHeight),
       );
     }
 
     return Offset(
-      fromNode.position.dx + _cardWidth,
-      fromNode.position.dy + (_cardHeight / 2),
+      outputRect?.right ?? (fromNode.position.dx + _cardWidth),
+      outputRect?.center.dy ?? (fromNode.position.dy + (_cardHeight / 2)),
     );
   }
 
@@ -2912,7 +2972,8 @@ class CanvasLogic {
         continue;
       }
 
-      final Offset start = _outputAnchor(fromNode, toNode);
+      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
+      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
       final Offset end = _inputAnchor(fromNode, toNode);
       if (_isPointNearConnection(
         point,
@@ -2983,4 +3044,252 @@ class CanvasLogic {
         })
         .toList(growable: false);
   }
+
+  List<NodeOutputHandleViewData> _outputHandlesForNode(NodeModel node) {
+    final DatasetArtifactSnapshot? snapshot = _primarySnapshotForNode(node);
+    if (snapshot == null && !_hasAnyDiskSnapshot(node.id)) {
+      return const <NodeOutputHandleViewData>[];
+    }
+
+    final List<NodeOutputHandleViewData> handles = <NodeOutputHandleViewData>[];
+    for (int portIndex = 0; portIndex < node.outputPorts.length; portIndex++) {
+      final PortSpec port = node.outputPorts[portIndex];
+      final _OutputHandleDescriptor? descriptor = _outputDescriptorForPort(
+        node: node,
+        portIndex: portIndex,
+        port: port,
+        snapshot: snapshot,
+      );
+      if (descriptor == null) {
+        continue;
+      }
+      handles.add(
+        NodeOutputHandleViewData(
+          portIndex: portIndex,
+          color: _outputHandleColor(descriptor.kind),
+          badgeText: descriptor.badgeText,
+          tooltip: descriptor.tooltip,
+        ),
+      );
+    }
+    return handles;
+  }
+
+  bool _hasAnyDiskSnapshot(String nodeId) =>
+      (_nodeDiskSnapshotIds[nodeId]?.isNotEmpty ?? false);
+
+  DatasetArtifactSnapshot? _primarySnapshotForNode(NodeModel node) {
+    final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+    if (snapshots == null || snapshots.isEmpty) {
+      return null;
+    }
+
+    final List<Dataset> orderedDatasets = datasets.values.toList()
+      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    for (final Dataset dataset in orderedDatasets) {
+      final DatasetArtifactSnapshot? snapshot = snapshots[dataset.id];
+      if (snapshot != null && !snapshot.isEmpty) {
+        return snapshot;
+      }
+    }
+
+    for (final DatasetArtifactSnapshot snapshot in snapshots.values) {
+      if (!snapshot.isEmpty) {
+        return snapshot;
+      }
+    }
+    return null;
+  }
+
+  _OutputHandleDescriptor? _outputDescriptorForPort({
+    required NodeModel node,
+    required int portIndex,
+    required PortSpec port,
+    required DatasetArtifactSnapshot? snapshot,
+  }) {
+    final String portName = port.name.toLowerCase();
+    switch (port.type) {
+      case PortType.signal:
+        if (portName.contains('psd') && snapshot?.spectrum != null) {
+          final int segmentCount = snapshot!.spectrum!.segmentCount;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.spectrum,
+            badgeText: segmentCount == 1 ? '' : '$segmentCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (snapshot?.timeSeries != null) {
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.timeSeries,
+            badgeText: '',
+            tooltip: '${port.name} output',
+          );
+        }
+        return _hasAnyDiskSnapshot(node.id)
+            ? _OutputHandleDescriptor(
+                kind: portName.contains('psd')
+                    ? _OutputHandleKind.spectrum
+                    : _OutputHandleKind.timeSeries,
+                badgeText: '',
+                tooltip: '${port.name} output',
+              )
+            : null;
+      case PortType.markers:
+        final int markerCount = snapshot?.timeSeries?.markers.length ?? 0;
+        if (snapshot?.timeSeries != null || _hasAnyDiskSnapshot(node.id)) {
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.markers,
+            badgeText: markerCount == 1 ? '' : '$markerCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        return null;
+      case PortType.metadata:
+        if (portName.contains('segments') && snapshot?.segmentedTimeSeries != null) {
+          final int segmentCount = snapshot!.segmentedTimeSeries!.segmentCount;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.segments,
+            badgeText: segmentCount == 1 ? '' : '$segmentCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (snapshot?.timeFrequency != null &&
+            (portName.contains('time_frequency') || portName.contains('time-frequency'))) {
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.timeFrequency,
+            badgeText: '',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (snapshot?.featureTable != null) {
+          final int rowCount = snapshot!.featureTable!.rows.length;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.table,
+            badgeText: rowCount == 1 ? '' : '$rowCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (snapshot?.bridgeDetection != null) {
+          final int frameCount = snapshot!.bridgeDetection!.frameCount;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.table,
+            badgeText: frameCount == 1 ? '' : '$frameCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (snapshot?.fooofResult != null) {
+          final int peakCount = snapshot!.fooofResult!.peaks.length;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.table,
+            badgeText: peakCount == 1 ? '' : '$peakCount',
+            tooltip: '${port.name} output',
+          );
+        }
+        if (_hasAnyDiskSnapshot(node.id)) {
+          return _OutputHandleDescriptor(
+            kind: portName.contains('segments')
+                ? _OutputHandleKind.segments
+                : _OutputHandleKind.table,
+            badgeText: '',
+            tooltip: '${port.name} output',
+          );
+        }
+        return null;
+      case PortType.matrixTransformation:
+        if (snapshot?.matrixTransformation != null) {
+          final int count = snapshot!.matrixTransformation!.componentLabels.isNotEmpty
+              ? snapshot.matrixTransformation!.componentLabels.length
+              : snapshot.matrixTransformation!.matrix.length;
+          return _OutputHandleDescriptor(
+            kind: _OutputHandleKind.matrix,
+            badgeText: count == 1 ? '' : '$count',
+            tooltip: '${port.name} output',
+          );
+        }
+        return _hasAnyDiskSnapshot(node.id)
+            ? _OutputHandleDescriptor(
+                kind: _OutputHandleKind.matrix,
+                badgeText: '',
+                tooltip: '${port.name} output',
+              )
+            : null;
+    }
+  }
+
+  Rect? _outputRectForPort(NodeModel node, int portIndex) {
+    final List<NodeOutputHandleViewData> visibleHandles = _outputHandlesForNode(node);
+    const double handleSize = 18;
+    const double handleGap = 6;
+
+    if (visibleHandles.isNotEmpty) {
+      final int visibleIndex =
+          visibleHandles.indexWhere((NodeOutputHandleViewData handle) => handle.portIndex == portIndex);
+      if (visibleIndex >= 0) {
+        final double totalWidth =
+            (visibleHandles.length * handleSize) + ((visibleHandles.length - 1) * handleGap);
+        final double startLeft = (node.position.dx + (_cardWidth - totalWidth) / 2);
+        return Rect.fromLTWH(
+          startLeft + (visibleIndex * (handleSize + handleGap)),
+          node.position.dy + _cardHeight - handleSize - 6,
+          handleSize,
+          handleSize,
+        );
+      }
+    }
+
+    final int outputCount = math.max(1, node.outputPorts.length);
+    final double totalWidth =
+        (outputCount * handleSize) + ((outputCount - 1) * handleGap);
+    final double startLeft = node.position.dx + (_cardWidth - totalWidth) / 2;
+    return Rect.fromLTWH(
+      startLeft + (portIndex * (handleSize + handleGap)),
+      node.position.dy + _cardHeight - handleSize - 6,
+      handleSize,
+      handleSize,
+    );
+  }
+
+  Color _outputColorForPort(NodeModel node, int portIndex) {
+    final PortSpec port = node.outputPorts[portIndex];
+    final _OutputHandleDescriptor? descriptor = _outputDescriptorForPort(
+      node: node,
+      portIndex: portIndex,
+      port: port,
+      snapshot: _primarySnapshotForNode(node),
+    );
+    return _outputHandleColor(descriptor?.kind ?? _OutputHandleKind.other);
+  }
+
+  Color _outputHandleColor(_OutputHandleKind kind) {
+    switch (kind) {
+      case _OutputHandleKind.timeSeries:
+        return const Color(0xFF4E9AF1);
+      case _OutputHandleKind.spectrum:
+        return const Color(0xFF8B5CF6);
+      case _OutputHandleKind.timeFrequency:
+        return const Color(0xFF14B8A6);
+      case _OutputHandleKind.markers:
+        return const Color(0xFFF59E0B);
+      case _OutputHandleKind.segments:
+        return const Color(0xFF06B6D4);
+      case _OutputHandleKind.table:
+        return const Color(0xFFFF6B6B);
+      case _OutputHandleKind.matrix:
+        return const Color(0xFFEC4899);
+      case _OutputHandleKind.other:
+        return Colors.white70;
+    }
+  }
+}
+
+class _OutputHandleDescriptor {
+  const _OutputHandleDescriptor({
+    required this.kind,
+    required this.badgeText,
+    required this.tooltip,
+  });
+
+  final _OutputHandleKind kind;
+  final String badgeText;
+  final String tooltip;
 }

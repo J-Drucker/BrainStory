@@ -9,7 +9,10 @@ class DebugOutputNodeType extends NodeType {
   String get title => 'Debug Output';
 
   @override
-  NodeCategory get category => NodeCategory.visualize;
+  NodeCategory get category => NodeCategory.endpoints;
+
+  @override
+  String get subcategory => 'Visualize';
 
   @override
   Map<String, dynamic> get defaultParams => {

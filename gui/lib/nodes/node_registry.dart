@@ -5,9 +5,12 @@ import 'bridge_detector_node.dart';
 import 'channel_exclusion_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
+import 'impedances_node.dart';
 import 'machine_learning_nodes.dart';
 import 'interactive_artifact_detection_node.dart';
 import 'psd_node.dart';
+import 'publish_node.dart';
+import 'recode_markers_node.dart';
 import 'realign_node.dart';
 import 'resample_node.dart';
 import 'matrix_transform_nodes.dart';
@@ -19,14 +22,14 @@ import 'spectral_features_node.dart';
 import 'debug_output_node.dart';
 import 'eye_blinks_node.dart';
 import 'export_edf_node.dart';
+import 'visualization_node.dart';
 
 enum NodeGroup {
   import,
   transform,
   machineLearning,
   markerFunctions,
-  visualize,
-  export,
+  endpoints,
 }
 
 extension NodeGroupLabel on NodeGroup {
@@ -40,10 +43,8 @@ extension NodeGroupLabel on NodeGroup {
         return 'Machine Learning';
       case NodeGroup.markerFunctions:
         return 'Markers and Metadata';
-      case NodeGroup.visualize:
-        return 'Visualize';
-      case NodeGroup.export:
-        return 'Export';
+      case NodeGroup.endpoints:
+        return 'Endpoints';
     }
   }
 }
@@ -66,8 +67,7 @@ class NodeRegistry {
     NodeGroup.transform,
     NodeGroup.machineLearning,
     NodeGroup.markerFunctions,
-    NodeGroup.visualize,
-    NodeGroup.export,
+    NodeGroup.endpoints,
   ];
 
   static final List<NodeRegistryEntry> entries = [
@@ -116,6 +116,10 @@ class NodeRegistry {
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
+      create: () => RecodeMarkersNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
       create: () => SegmentationNodeType(),
     ),
     NodeRegistryEntry(
@@ -131,10 +135,11 @@ class NodeRegistry {
       create: () => RealignNodeType(),
     ),
 
-    // Visualize
-    NodeRegistryEntry(group: NodeGroup.visualize, create: () => DebugOutputNodeType()),
-
-    // Export
-    NodeRegistryEntry(group: NodeGroup.export, create: () => ExportNodeType()),
+    // Endpoints
+    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ImpedancesNodeType()),
+    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => VisualizationNodeType()),
+    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => DebugOutputNodeType()),
+    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ExportNodeType()),
+    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => PublishNodeType()),
   ];
 }

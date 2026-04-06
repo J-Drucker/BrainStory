@@ -1,5 +1,5 @@
 use crate::node::Node;
-use crate::types::{SignalData, NodeResult};
+use crate::types::SignalData;
 use std::collections::HashMap;
 
 pub struct Pipeline {

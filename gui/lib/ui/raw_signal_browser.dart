@@ -72,6 +72,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Offset? _dragSelectionStart;
   Offset? _dragSelectionCurrent;
   Offset? _dragSelectionGlobal;
+  String? _lastFocusedReferenceId;
 
   @override
   void initState() {
@@ -573,6 +574,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       _InteractiveArtifactReviewSection(
                         labelChoices:
                             InteractiveArtifactDetectionNodeType.supportedLabels,
+                        exemplarsExpanded:
+                            (widget.params['artifact_exemplars_expanded'] as bool?) ?? true,
+                        candidatesExpanded:
+                            (widget.params['artifact_candidates_expanded'] as bool?) ?? true,
                         templates: _artifactTemplateSummaries(),
                         exemplars: _artifactExemplars(),
                         pendingCandidates: _artifactCandidates(
@@ -592,22 +597,29 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         onAcceptAll: _acceptAllInteractiveArtifactCandidates,
                         onFocusExemplar: (ArtifactExemplarData exemplar) {
                           _jumpToTimeRange(
+                            referenceId: 'exemplar:${exemplar.id}',
                             onsetMicros: exemplar.onsetMicros,
                             durationMicros: exemplar.durationMicros,
                           );
                         },
                         onFocusPendingCandidate: (ArtifactCandidateData candidate) {
                           _jumpToTimeRange(
+                            referenceId: 'pending:${candidate.id}',
                             onsetMicros: candidate.onsetMicros,
                             durationMicros: candidate.durationMicros,
                           );
                         },
                         onFocusAcceptedCandidate: (ArtifactCandidateData candidate) {
                           _jumpToTimeRange(
+                            referenceId: 'accepted:${candidate.id}',
                             onsetMicros: candidate.onsetMicros,
                             durationMicros: candidate.durationMicros,
                           );
                         },
+                        onToggleExemplars: (bool expanded) =>
+                            _updateParam('artifact_exemplars_expanded', expanded),
+                        onToggleCandidates: (bool expanded) =>
+                            _updateParam('artifact_candidates_expanded', expanded),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -620,6 +632,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       onDelete: _deleteMarker,
                       onFocus: (TimeMarker marker) {
                         _jumpToTimeRange(
+                          referenceId:
+                              'marker:${marker.label}:${marker.onsetMicros}:${marker.durationMicros}',
                           onsetMicros: marker.onsetMicros,
                           durationMicros: marker.durationMicros,
                         );
@@ -1105,6 +1119,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   void _jumpToTimeRange({
+    required String referenceId,
     required int onsetMicros,
     required int durationMicros,
   }) {
@@ -1121,13 +1136,26 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final double durationSeconds = durationMicros / 1000000.0;
     final double centerSeconds = onsetSeconds + (durationSeconds / 2);
     final double recordingSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
-    final double targetStartSeconds = (centerSeconds - (secondsPerView / 2)).clamp(
-      0.0,
-      math.max(0.0, recordingSeconds - secondsPerView),
-    );
     final double viewportWidth = _horizontalController.position.viewportDimension;
     final double pixelsPerSecond = viewportWidth / secondsPerView;
+    final double currentStartSeconds =
+        _horizontalController.offset / pixelsPerSecond;
+    final double currentEndSeconds = currentStartSeconds + secondsPerView;
+    final bool alreadyVisible =
+        onsetSeconds >= currentStartSeconds &&
+        (onsetSeconds + math.max(durationSeconds, 0.001)) <= currentEndSeconds;
+    final bool centerThisTime = _lastFocusedReferenceId == referenceId && alreadyVisible;
+    final double targetStartSeconds = centerThisTime
+        ? (centerSeconds - (secondsPerView / 2)).clamp(
+            0.0,
+            math.max(0.0, recordingSeconds - secondsPerView),
+          )
+        : onsetSeconds.clamp(
+            0.0,
+            math.max(0.0, recordingSeconds - secondsPerView),
+          );
     final double targetOffset = targetStartSeconds * pixelsPerSecond;
+    _lastFocusedReferenceId = referenceId;
     _horizontalController.animateTo(
       targetOffset.clamp(
         0.0,
@@ -1150,6 +1178,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     widget.params.putIfAbsent('channel_colors', () => <String, dynamic>{});
     widget.params.putIfAbsent('controls_expanded', () => false);
     widget.params.putIfAbsent('marker_list_expanded', () => false);
+    widget.params.putIfAbsent('artifact_exemplars_expanded', () => true);
+    widget.params.putIfAbsent('artifact_candidates_expanded', () => true);
     widget.params.putIfAbsent('y_scale_uv', () => 100.0);
     widget.params.putIfAbsent('raw_view_mode', () => 'signals');
     if (_interactiveArtifactDetectionEnabled()) {
@@ -1527,12 +1557,21 @@ class _MarkerList extends StatelessWidget {
       runSpacing: 8,
       children: markers.map((TimeMarker marker) {
         final bool isArtifact = marker.markerType == MarkerType.artifact;
+        final Color markerColor = _markerDisplayColor(marker);
         return InputChip(
+          avatar: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: markerColor,
+              shape: BoxShape.circle,
+            ),
+          ),
           label: Text(
             '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
           ),
           selected: isArtifact,
-          selectedColor: Colors.redAccent.withValues(alpha: 0.25),
+          selectedColor: markerColor.withValues(alpha: 0.22),
           onPressed: () => onFocus(marker),
           onDeleted: () => onDelete(marker),
         );
@@ -1698,6 +1737,8 @@ Color _artifactTemplateColor(String label) {
 class _InteractiveArtifactReviewSection extends StatelessWidget {
   const _InteractiveArtifactReviewSection({
     required this.labelChoices,
+    required this.exemplarsExpanded,
+    required this.candidatesExpanded,
     required this.templates,
     required this.exemplars,
     required this.pendingCandidates,
@@ -1710,9 +1751,13 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
     required this.onFocusExemplar,
     required this.onFocusPendingCandidate,
     required this.onFocusAcceptedCandidate,
+    required this.onToggleExemplars,
+    required this.onToggleCandidates,
   });
 
   final List<String> labelChoices;
+  final bool exemplarsExpanded;
+  final bool candidatesExpanded;
   final List<ArtifactTemplateSummary> templates;
   final List<ArtifactExemplarData> exemplars;
   final List<ArtifactCandidateData> pendingCandidates;
@@ -1725,6 +1770,8 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
   final ValueChanged<ArtifactExemplarData> onFocusExemplar;
   final ValueChanged<ArtifactCandidateData> onFocusPendingCandidate;
   final ValueChanged<ArtifactCandidateData> onFocusAcceptedCandidate;
+  final ValueChanged<bool> onToggleExemplars;
+  final ValueChanged<bool> onToggleCandidates;
 
   @override
   Widget build(BuildContext context) {
@@ -1769,122 +1816,193 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 12),
-          const Text(
-            'Exemplars',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+          _SectionHeader(
+            title: 'Exemplars',
+            count: exemplars.length,
+            expanded: exemplarsExpanded,
+            onToggle: () => onToggleExemplars(!exemplarsExpanded),
           ),
-          const SizedBox(height: 8),
-          if (exemplars.isEmpty)
-            const Text(
-              'No exemplars yet.',
-              style: TextStyle(color: Colors.white54),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: exemplars.map((ArtifactExemplarData exemplar) {
-                return InputChip(
-                  label: Text(
-                    '${exemplar.label} @ ${(exemplar.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
-                  ),
-                  selected: true,
-                  selectedColor: Colors.pinkAccent.withValues(alpha: 0.22),
-                  onPressed: () => onFocusExemplar(exemplar),
-                  onDeleted: () => onDeleteExemplar(exemplar),
-                );
-              }).toList(growable: false),
-            ),
+          if (exemplarsExpanded) ...<Widget>[
+            const SizedBox(height: 8),
+            if (exemplars.isEmpty)
+              const Text(
+                'No exemplars yet.',
+                style: TextStyle(color: Colors.white54),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: exemplars.map((ArtifactExemplarData exemplar) {
+                  final Color labelColor = _artifactTemplateColor(exemplar.label);
+                  return InputChip(
+                    avatar: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: labelColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    label: Text(
+                      '${exemplar.label} @ ${(exemplar.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
+                    ),
+                    selected: true,
+                    selectedColor: labelColor.withValues(alpha: 0.22),
+                    onPressed: () => onFocusExemplar(exemplar),
+                    onDeleted: () => onDeleteExemplar(exemplar),
+                  );
+                }).toList(growable: false),
+              ),
+          ],
           const SizedBox(height: 12),
           Row(
             children: <Widget>[
-              const Expanded(
-                child: Text(
-                  'Candidate matches',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w600,
-                  ),
+              Expanded(
+                child: _SectionHeader(
+                  title: 'Candidate matches',
+                  count: pendingCandidates.length + acceptedCandidates.length,
+                  expanded: candidatesExpanded,
+                  onToggle: () => onToggleCandidates(!candidatesExpanded),
                 ),
               ),
+              const SizedBox(width: 8),
               ElevatedButton(
                 onPressed: pendingCandidates.isEmpty ? null : onAcceptAll,
                 child: const Text('Accept All'),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          if (pendingCandidates.isEmpty)
-            const Text(
-              'No pending candidates.',
-              style: TextStyle(color: Colors.white54),
-            )
-          else
-            Column(
-              children: pendingCandidates.map((ArtifactCandidateData candidate) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: Colors.white.withValues(alpha: 0.04),
-                    borderRadius: BorderRadius.circular(8),
-                    child: InkWell(
+          if (candidatesExpanded) ...<Widget>[
+            const SizedBox(height: 8),
+            if (pendingCandidates.isEmpty)
+              const Text(
+                'No pending candidates.',
+                style: TextStyle(color: Colors.white54),
+              )
+            else
+              Column(
+                children: pendingCandidates.map((ArtifactCandidateData candidate) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Material(
+                      color: _artifactTemplateColor(candidate.label).withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(8),
-                      onTap: () => onFocusPendingCandidate(candidate),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        child: Row(
-                          children: <Widget>[
-                            Expanded(
-                              child: Text(
-                                '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s • score ${candidate.score.toStringAsFixed(2)}',
-                                style: const TextStyle(color: Colors.white),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => onFocusPendingCandidate(candidate),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          child: Row(
+                            children: <Widget>[
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: _artifactTemplateColor(candidate.label),
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () => onRejectCandidate(candidate),
-                              child: const Text('Reject'),
-                            ),
-                            const SizedBox(width: 4),
-                            ElevatedButton(
-                              onPressed: () => onAcceptCandidate(candidate),
-                              child: const Text('Accept'),
-                            ),
-                          ],
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s • score ${candidate.score.toStringAsFixed(2)}',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: () => onRejectCandidate(candidate),
+                                child: const Text('Reject'),
+                              ),
+                              const SizedBox(width: 4),
+                              ElevatedButton(
+                                onPressed: () => onAcceptCandidate(candidate),
+                                child: const Text('Accept'),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }).toList(growable: false),
-            ),
-          if (acceptedCandidates.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 12),
-            const Text(
-              'Accepted candidates',
-              style: TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.w600,
+                  );
+                }).toList(growable: false),
               ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: acceptedCandidates.map((ArtifactCandidateData candidate) {
-                return InputChip(
-                  label: Text(
-                    '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
-                  ),
-                  selected: true,
-                  selectedColor: Colors.greenAccent.withValues(alpha: 0.18),
-                  onPressed: () => onFocusAcceptedCandidate(candidate),
-                  onDeleted: () => onUndoAccepted(candidate),
-                );
-              }).toList(growable: false),
-            ),
+            if (acceptedCandidates.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 12),
+              const Text(
+                'Accepted candidates',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: acceptedCandidates.map((ArtifactCandidateData candidate) {
+                  final Color labelColor = _artifactTemplateColor(candidate.label);
+                  return InputChip(
+                    avatar: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: labelColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    label: Text(
+                      '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
+                    ),
+                    selected: true,
+                    selectedColor: labelColor.withValues(alpha: 0.22),
+                    onPressed: () => onFocusAcceptedCandidate(candidate),
+                    onDeleted: () => onUndoAccepted(candidate),
+                  );
+                }).toList(growable: false),
+              ),
+            ],
           ],
       ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({
+    required this.title,
+    required this.count,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  final String title;
+  final int count;
+  final bool expanded;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      child: Row(
+        children: <Widget>[
+          Icon(
+            expanded ? Icons.expand_less : Icons.expand_more,
+            color: Colors.white70,
+            size: 18,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$title ($count)',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1951,36 +2069,46 @@ class _ArtifactTemplatePainter extends CustomPainter {
 
     double maxAbs = 1.0;
     for (final ArtifactTemplateSummary template in templates) {
-      for (final double sample in template.previewSamples) {
-        final double absValue = sample.abs();
-        if (absValue > maxAbs) {
-          maxAbs = absValue;
+      final List<List<double>> channels = template.previewChannels.isNotEmpty
+          ? template.previewChannels
+          : <List<double>>[template.previewSamples];
+      for (final List<double> channel in channels) {
+        for (final double sample in channel) {
+          final double absValue = sample.abs();
+          if (absValue > maxAbs) {
+            maxAbs = absValue;
+          }
         }
       }
     }
 
     for (final ArtifactTemplateSummary template in templates) {
-      final List<double> samples = template.previewSamples;
-      if (samples.length < 2) {
-        continue;
-      }
-      final Path path = Path();
-      for (int index = 0; index < samples.length; index++) {
-        final double x = samples.length == 1
-            ? 0
-            : (index / (samples.length - 1)) * size.width;
-        final double y = centerY - ((samples[index] / maxAbs) * (size.height * 0.38));
-        if (index == 0) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
+      final List<List<double>> channels = template.previewChannels.isNotEmpty
+          ? template.previewChannels
+          : <List<double>>[template.previewSamples];
+      for (final List<double> samples in channels) {
+        if (samples.length < 2) {
+          continue;
         }
+        final Path path = Path();
+        for (int index = 0; index < samples.length; index++) {
+          final double x = samples.length == 1
+              ? 0
+              : (index / (samples.length - 1)) * size.width;
+          final double y =
+              centerY - ((samples[index] / maxAbs) * (size.height * 0.38));
+          if (index == 0) {
+            path.moveTo(x, y);
+          } else {
+            path.lineTo(x, y);
+          }
+        }
+        final Paint paint = Paint()
+          ..color = _artifactTemplateColor(template.label).withValues(alpha: 0.22)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0;
+        canvas.drawPath(path, paint);
       }
-      final Paint paint = Paint()
-        ..color = _artifactTemplateColor(template.label)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.6;
-      canvas.drawPath(path, paint);
     }
   }
 

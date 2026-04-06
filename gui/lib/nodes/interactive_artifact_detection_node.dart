@@ -226,6 +226,7 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
 
     for (final MapEntry<String, List<ArtifactExemplarData>> entry in byLabel.entries) {
       final _ComputedTemplate? template = _buildTemplateForLabel(
+        channels: timeSeries.channels,
         signal: workingSignal,
         sampleRate: timeSeries.sampleRate,
         label: entry.key,
@@ -242,6 +243,7 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
           sampleCount: template.sampleCount,
           durationMicros: template.durationMicros,
           previewSamples: _decimateTemplatePreview(template.samples),
+          previewChannels: _decimateTemplateChannelsPreview(template.channelSamples),
         ),
       );
       nextCandidates.addAll(
@@ -450,6 +452,7 @@ class ArtifactTemplateSummary {
     required this.sampleCount,
     this.durationMicros = 0,
     this.previewSamples = const <double>[],
+    this.previewChannels = const <List<double>>[],
   });
 
   final String datasetId;
@@ -458,6 +461,7 @@ class ArtifactTemplateSummary {
   final int sampleCount;
   final int durationMicros;
   final List<double> previewSamples;
+  final List<List<double>> previewChannels;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -467,6 +471,7 @@ class ArtifactTemplateSummary {
       'sampleCount': sampleCount,
       'durationMicros': durationMicros,
       'previewSamples': previewSamples,
+      'previewChannels': previewChannels,
     };
   }
 
@@ -480,6 +485,13 @@ class ArtifactTemplateSummary {
       previewSamples: (json['previewSamples'] as List<dynamic>? ?? const <dynamic>[])
           .map((dynamic value) => (value as num).toDouble())
           .toList(growable: false),
+      previewChannels: (json['previewChannels'] as List<dynamic>? ?? const <dynamic>[])
+          .map(
+            (dynamic channel) => (channel as List<dynamic>)
+                .map((dynamic value) => (value as num).toDouble())
+                .toList(growable: false),
+          )
+          .toList(growable: false),
     );
   }
 }
@@ -488,12 +500,14 @@ class _ComputedTemplate {
   const _ComputedTemplate({
     required this.label,
     required this.samples,
+    required this.channelSamples,
     required this.sampleCount,
     required this.durationMicros,
   });
 
   final String label;
   final List<double> samples;
+  final List<List<double>> channelSamples;
   final int sampleCount;
   final int durationMicros;
 }
@@ -516,6 +530,7 @@ List<double> _artifactDetectionSignal(List<List<double>> channels) {
 }
 
 _ComputedTemplate? _buildTemplateForLabel({
+  required List<List<double>> channels,
   required List<double> signal,
   required double sampleRate,
   required String label,
@@ -537,12 +552,14 @@ _ComputedTemplate? _buildTemplateForLabel({
   final int targetDurationMicros =
       ((targetLength / sampleRate) * 1000000.0).round();
   final List<List<double>> alignedSegments = <List<double>>[];
+  final List<List<List<double>>> alignedChannelSegments = <List<List<double>>>[];
   List<double>? template;
 
   for (final ArtifactExemplarData exemplar in exemplars) {
     final int nominalStart =
         ((exemplar.onsetMicros / 1000000.0) * sampleRate).round();
     final int exemplarLength = exemplar.durationSamples(sampleRate);
+    int bestStart = nominalStart;
     List<double> bestSegment = _extractResampledWindow(
       signal,
       nominalStart,
@@ -571,23 +588,66 @@ _ComputedTemplate? _buildTemplateForLabel({
         final double score = _normalizedCorrelation(template, candidate);
         if (score > bestScore) {
           bestScore = score;
+          bestStart = nominalStart + shift;
           bestSegment = candidate;
         }
       }
     }
     alignedSegments.add(bestSegment);
+    alignedChannelSegments.add(
+      channels
+          .map(
+            (List<double> channel) => _extractResampledWindow(
+              channel,
+              bestStart,
+              exemplarLength,
+              targetLength,
+            ),
+          )
+          .where((List<double> channel) => channel.length == targetLength)
+          .toList(growable: false),
+    );
     template = _meanWaveform(alignedSegments);
   }
 
   if (template == null || template.isEmpty) {
     return null;
   }
+  final int channelCount = alignedChannelSegments.isEmpty
+      ? 0
+      : alignedChannelSegments
+          .map((List<List<double>> segment) => segment.length)
+          .reduce(math.min);
+  final List<List<double>> meanChannelTemplates = List<List<double>>.generate(
+    channelCount,
+    (int channelIndex) => _meanWaveform(
+      alignedChannelSegments
+          .map((List<List<double>> segment) => segment[channelIndex])
+          .toList(growable: false),
+    ),
+    growable: false,
+  );
   return _ComputedTemplate(
     label: label,
     samples: template,
+    channelSamples: meanChannelTemplates,
     sampleCount: template.length,
     durationMicros: targetDurationMicros,
   );
+}
+
+List<List<double>> _decimateTemplateChannelsPreview(
+  List<List<double>> channels, {
+  int targetPoints = 160,
+}) {
+  return channels
+      .map(
+        (List<double> channel) => _decimateTemplatePreview(
+          channel,
+          targetPoints: targetPoints,
+        ),
+      )
+      .toList(growable: false);
 }
 
 List<ArtifactCandidateData> _detectCandidatesForTemplate({

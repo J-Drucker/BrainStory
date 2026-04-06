@@ -8,7 +8,10 @@ class VisualizationNodeType extends NodeType {
   String get title => 'EEG Visualization';
 
   @override
-  NodeCategory get category => NodeCategory.visualize;
+  NodeCategory get category => NodeCategory.endpoints;
+
+  @override
+  String get subcategory => 'Visualize';
 
   @override
   Map<String, dynamic> get defaultParams => {

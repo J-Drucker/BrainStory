@@ -177,6 +177,7 @@ class ConnectionPainter extends CustomPainter {
     required this.gridHeight,
     this.obstacles = const <Rect>[],
     this.selected = false,
+    this.color = Colors.orangeAccent,
   });
 
   final Offset start;
@@ -186,11 +187,12 @@ class ConnectionPainter extends CustomPainter {
   final double gridHeight;
   final List<Rect> obstacles;
   final bool selected;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
     final Paint paint = Paint()
-      ..color = selected ? Colors.redAccent : Colors.orangeAccent
+      ..color = selected ? Colors.white : color
       ..strokeWidth = selected ? 4 : 2
       ..style = PaintingStyle.stroke;
 
@@ -214,6 +216,7 @@ class ConnectionPainter extends CustomPainter {
     return start != oldDelegate.start ||
         end != oldDelegate.end ||
         selected != oldDelegate.selected ||
+        color != oldDelegate.color ||
         preferVertical != oldDelegate.preferVertical ||
         gridWidth != oldDelegate.gridWidth ||
         gridHeight != oldDelegate.gridHeight ||
