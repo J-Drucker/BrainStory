@@ -1,8 +1,202 @@
+import 'dart:math' as math;
+
 class MarkerType {
   static const String event = 'event';
   static const String window = 'window';
   static const String artifact = 'artifact';
   static const String segment = 'segment';
+}
+
+enum BrainStoryArtifactKind {
+  timeSeries,
+  segmentedTimeSeries,
+  spectrum,
+  fooofResult,
+  featureTable,
+  bridgeDetection,
+  timeFrequency,
+  matrixTransformation,
+  markers,
+  channelCoordinates,
+  markerChange,
+  unknown,
+}
+
+BrainStoryArtifactKind artifactKindFromWireValue(String? wireValue) {
+  return BrainStoryArtifactKind.values.firstWhere(
+    (BrainStoryArtifactKind kind) => kind.name == wireValue,
+    orElse: () => BrainStoryArtifactKind.unknown,
+  );
+}
+
+enum ArtifactChangeType {
+  signalSamples,
+  markers,
+  channelLabels,
+  channelTopology,
+  channelCoordinates,
+  segmentWindows,
+  params,
+  storage,
+  unknown,
+}
+
+ArtifactChangeType artifactChangeTypeFromWireValue(String? wireValue) {
+  return ArtifactChangeType.values.firstWhere(
+    (ArtifactChangeType type) => type.name == wireValue,
+    orElse: () => ArtifactChangeType.unknown,
+  );
+}
+
+class ArtifactIdentity {
+  const ArtifactIdentity({
+    required this.artifactId,
+    required this.datasetId,
+    required this.kind,
+    this.producerNodeId,
+    this.sourceArtifactIds = const <String>[],
+    this.revision = 0,
+  });
+
+  final String artifactId;
+  final String datasetId;
+  final BrainStoryArtifactKind kind;
+  final String? producerNodeId;
+  final List<String> sourceArtifactIds;
+  final int revision;
+
+  ArtifactIdentity copyWith({
+    String? artifactId,
+    String? datasetId,
+    BrainStoryArtifactKind? kind,
+    String? producerNodeId,
+    bool clearProducerNodeId = false,
+    List<String>? sourceArtifactIds,
+    int? revision,
+  }) {
+    return ArtifactIdentity(
+      artifactId: artifactId ?? this.artifactId,
+      datasetId: datasetId ?? this.datasetId,
+      kind: kind ?? this.kind,
+      producerNodeId:
+          clearProducerNodeId ? null : (producerNodeId ?? this.producerNodeId),
+      sourceArtifactIds: sourceArtifactIds ?? this.sourceArtifactIds,
+      revision: revision ?? this.revision,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'artifactId': artifactId,
+      'datasetId': datasetId,
+      'kind': kind.name,
+      'producerNodeId': producerNodeId,
+      'sourceArtifactIds': sourceArtifactIds,
+      'revision': revision,
+    };
+  }
+
+  static ArtifactIdentity fromJson(Map<String, dynamic> json) {
+    return ArtifactIdentity(
+      artifactId: json['artifactId']?.toString() ?? '',
+      datasetId: json['datasetId']?.toString() ?? '',
+      kind: artifactKindFromWireValue(json['kind']?.toString()),
+      producerNodeId: json['producerNodeId']?.toString(),
+      sourceArtifactIds: (json['sourceArtifactIds'] as List<dynamic>? ??
+              const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .toList(growable: false),
+      revision: (json['revision'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class ArtifactChangeSet {
+  const ArtifactChangeSet({
+    required this.datasetId,
+    required this.changeTypes,
+    this.sourceNodeId,
+    this.artifactIds = const <String>[],
+    this.affectedChannelLabels = const <String>[],
+    this.affectedChannelIndices = const <int>[],
+    this.startMicros,
+    this.stopMicros,
+    this.paramKeys = const <String>[],
+    this.description = '',
+  });
+
+  final String datasetId;
+  final String? sourceNodeId;
+  final Set<ArtifactChangeType> changeTypes;
+  final List<String> artifactIds;
+  final List<String> affectedChannelLabels;
+  final List<int> affectedChannelIndices;
+  final int? startMicros;
+  final int? stopMicros;
+  final List<String> paramKeys;
+  final String description;
+
+  bool get touchesSamples => changeTypes.contains(ArtifactChangeType.signalSamples);
+  bool get touchesMarkers => changeTypes.contains(ArtifactChangeType.markers);
+  bool get touchesChannelTopology =>
+      changeTypes.contains(ArtifactChangeType.channelTopology);
+  bool get touchesChannelLabels =>
+      changeTypes.contains(ArtifactChangeType.channelLabels);
+  bool get touchesChannelCoordinates =>
+      changeTypes.contains(ArtifactChangeType.channelCoordinates);
+  bool get touchesSegmentWindows =>
+      changeTypes.contains(ArtifactChangeType.segmentWindows);
+  bool get touchesParams => changeTypes.contains(ArtifactChangeType.params);
+  bool get isChannelScoped =>
+      affectedChannelLabels.isNotEmpty || affectedChannelIndices.isNotEmpty;
+  bool get isTimeScoped => startMicros != null || stopMicros != null;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'datasetId': datasetId,
+      'sourceNodeId': sourceNodeId,
+      'changeTypes': changeTypes
+          .map((ArtifactChangeType type) => type.name)
+          .toList(growable: false),
+      'artifactIds': artifactIds,
+      'affectedChannelLabels': affectedChannelLabels,
+      'affectedChannelIndices': affectedChannelIndices,
+      'startMicros': startMicros,
+      'stopMicros': stopMicros,
+      'paramKeys': paramKeys,
+      'description': description,
+    };
+  }
+
+  static ArtifactChangeSet fromJson(Map<String, dynamic> json) {
+    return ArtifactChangeSet(
+      datasetId: json['datasetId']?.toString() ?? '',
+      sourceNodeId: json['sourceNodeId']?.toString(),
+      changeTypes: (json['changeTypes'] as List<dynamic>? ?? const <dynamic>[])
+          .map(
+            (dynamic value) =>
+                artifactChangeTypeFromWireValue(value.toString()),
+          )
+          .toSet(),
+      artifactIds: (json['artifactIds'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .toList(growable: false),
+      affectedChannelLabels:
+          (json['affectedChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      affectedChannelIndices:
+          (json['affectedChannelIndices'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toInt())
+              .toList(growable: false),
+      startMicros: (json['startMicros'] as num?)?.round(),
+      stopMicros: (json['stopMicros'] as num?)?.round(),
+      paramKeys: (json['paramKeys'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .toList(growable: false),
+      description: json['description']?.toString() ?? '',
+    );
+  }
 }
 
 enum MarkerChangeType {
@@ -254,6 +448,46 @@ class MarkerLabelTrack {
   }
 }
 
+class ChannelCoordinate {
+  const ChannelCoordinate({
+    required this.label,
+    required this.x,
+    required this.y,
+    required this.z,
+    this.coordinateSystem = 'standard',
+    this.units = 'normalized',
+  });
+
+  final String label;
+  final double x;
+  final double y;
+  final double z;
+  final String coordinateSystem;
+  final String units;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'label': label,
+      'x': x,
+      'y': y,
+      'z': z,
+      'coordinateSystem': coordinateSystem,
+      'units': units,
+    };
+  }
+
+  static ChannelCoordinate fromJson(Map<String, dynamic> json) {
+    return ChannelCoordinate(
+      label: json['label']?.toString() ?? '',
+      x: (json['x'] as num?)?.toDouble() ?? 0.0,
+      y: (json['y'] as num?)?.toDouble() ?? 0.0,
+      z: (json['z'] as num?)?.toDouble() ?? 0.0,
+      coordinateSystem: json['coordinateSystem']?.toString() ?? 'standard',
+      units: json['units']?.toString() ?? 'normalized',
+    );
+  }
+}
+
 String markerKeyForKindAndLabel({
   required String kind,
   required String label,
@@ -375,6 +609,7 @@ class TimeSeriesData {
     this.channelSamples = const <List<double>>[],
     required this.sampleRate,
     this.channelLabels = const <String>[],
+    this.channelCoordinates = const <String, ChannelCoordinate>{},
     this.markers = const <TimeMarker>[],
     this.factors = const <Factor>[],
     this.source = '',
@@ -387,6 +622,7 @@ class TimeSeriesData {
   final List<List<double>> channelSamples;
   final double sampleRate;
   final List<String> channelLabels;
+  final Map<String, ChannelCoordinate> channelCoordinates;
   final List<TimeMarker> markers;
   final List<Factor> factors;
   final String source;
@@ -441,6 +677,7 @@ class TimeSeriesData {
     List<List<double>>? channelSamples,
     double? sampleRate,
     List<String>? channelLabels,
+    Map<String, ChannelCoordinate>? channelCoordinates,
     List<TimeMarker>? markers,
     List<Factor>? factors,
     String? source,
@@ -450,6 +687,7 @@ class TimeSeriesData {
       channelSamples: channelSamples ?? this.channelSamples,
       sampleRate: sampleRate ?? this.sampleRate,
       channelLabels: channelLabels ?? this.channelLabels,
+      channelCoordinates: channelCoordinates ?? this.channelCoordinates,
       markers: markers ?? this.markers,
       factors: factors ?? this.factors,
       source: source ?? this.source,
@@ -462,6 +700,10 @@ class TimeSeriesData {
       'channelSamples': channelSamples,
       'sampleRate': sampleRate,
       'channelLabels': channelLabels,
+      'channelCoordinates': channelCoordinates.map(
+        (String key, ChannelCoordinate value) =>
+            MapEntry<String, dynamic>(key, value.toJson()),
+      ),
       'markers': markers.map((TimeMarker marker) => marker.toJson()).toList(growable: false),
       'factors': factors.map((Factor factor) => factor.toJson()).toList(growable: false),
       'source': source,
@@ -484,6 +726,15 @@ class TimeSeriesData {
       channelLabels: (json['channelLabels'] as List<dynamic>? ?? const <dynamic>[])
           .map((dynamic value) => value.toString())
           .toList(growable: false),
+      channelCoordinates: (json['channelCoordinates'] as Map? ?? const <String, dynamic>{})
+          .map<String, ChannelCoordinate>(
+        (dynamic key, dynamic value) => MapEntry<String, ChannelCoordinate>(
+          key.toString(),
+          ChannelCoordinate.fromJson(
+            Map<String, dynamic>.from(value as Map? ?? const <String, dynamic>{}),
+          ),
+        ),
+      ),
       markers: (json['markers'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
           .map(TimeMarker.fromJson)
@@ -499,13 +750,15 @@ class TimeSeriesData {
 
 class SignalSegmentData {
   const SignalSegmentData({
-    required this.channelSamples,
+    this.channelSamples = const <List<double>>[],
     required this.startSeconds,
     required this.stopSeconds,
     this.label = '',
     this.kind = 'segment',
     this.anchorTimeSeconds,
     this.appliedShiftMs = 0.0,
+    this.sourceStartSample,
+    this.sourceStopSampleExclusive,
   });
 
   final List<List<double>> channelSamples;
@@ -515,12 +768,26 @@ class SignalSegmentData {
   final String kind;
   final double? anchorTimeSeconds;
   final double appliedShiftMs;
+  final int? sourceStartSample;
+  final int? sourceStopSampleExclusive;
+
+  bool get isSourceWindow =>
+      channelSamples.isEmpty &&
+      sourceStartSample != null &&
+      sourceStopSampleExclusive != null;
 
   List<double> get primaryChannel =>
       channelSamples.isEmpty ? const <double>[] : channelSamples.first;
 
-  int get sampleCount =>
-      channelSamples.isEmpty ? 0 : channelSamples.first.length;
+  int get sampleCount {
+    if (channelSamples.isNotEmpty) {
+      return channelSamples.first.length;
+    }
+    if (sourceStartSample != null && sourceStopSampleExclusive != null) {
+      return math.max(0, sourceStopSampleExclusive! - sourceStartSample!);
+    }
+    return 0;
+  }
 
   SignalSegmentData copyWith({
     List<List<double>>? channelSamples,
@@ -531,6 +798,9 @@ class SignalSegmentData {
     double? anchorTimeSeconds,
     bool clearAnchorTime = false,
     double? appliedShiftMs,
+    int? sourceStartSample,
+    int? sourceStopSampleExclusive,
+    bool clearSourceWindow = false,
   }) {
     return SignalSegmentData(
       channelSamples: channelSamples ?? this.channelSamples,
@@ -542,6 +812,11 @@ class SignalSegmentData {
           ? null
           : (anchorTimeSeconds ?? this.anchorTimeSeconds),
       appliedShiftMs: appliedShiftMs ?? this.appliedShiftMs,
+      sourceStartSample:
+          clearSourceWindow ? null : (sourceStartSample ?? this.sourceStartSample),
+      sourceStopSampleExclusive: clearSourceWindow
+          ? null
+          : (sourceStopSampleExclusive ?? this.sourceStopSampleExclusive),
     );
   }
 
@@ -554,6 +829,8 @@ class SignalSegmentData {
       'kind': kind,
       'anchorTimeSeconds': anchorTimeSeconds,
       'appliedShiftMs': appliedShiftMs,
+      'sourceStartSample': sourceStartSample,
+      'sourceStopSampleExclusive': sourceStopSampleExclusive,
     };
   }
 
@@ -572,6 +849,9 @@ class SignalSegmentData {
       kind: json['kind']?.toString() ?? 'segment',
       anchorTimeSeconds: (json['anchorTimeSeconds'] as num?)?.toDouble(),
       appliedShiftMs: (json['appliedShiftMs'] as num?)?.toDouble() ?? 0.0,
+      sourceStartSample: (json['sourceStartSample'] as num?)?.toInt(),
+      sourceStopSampleExclusive:
+          (json['sourceStopSampleExclusive'] as num?)?.toInt(),
     );
   }
 }
@@ -582,33 +862,100 @@ class SegmentedTimeSeriesData {
     required this.sampleRate,
     this.channelLabels = const <String>[],
     this.source = '',
+    this.sourceTimeSeries,
   });
 
   final List<SignalSegmentData> segments;
   final double sampleRate;
   final List<String> channelLabels;
   final String source;
+  final TimeSeriesData? sourceTimeSeries;
 
   int get segmentCount => segments.length;
+
+  int channelCountForSegment(SignalSegmentData segment) {
+    if (segment.channelSamples.isNotEmpty) {
+      return segment.channelSamples.length;
+    }
+    return sourceTimeSeries?.channelCount ?? channelLabels.length;
+  }
+
+  int sampleCountForSegment(SignalSegmentData segment) {
+    if (segment.channelSamples.isNotEmpty) {
+      return segment.sampleCount;
+    }
+    final int? start = segment.sourceStartSample;
+    final int? stop = segment.sourceStopSampleExclusive;
+    if (start == null || stop == null) {
+      return 0;
+    }
+    return math.max(0, stop - start);
+  }
+
+  List<List<double>> channelSamplesForSegment(SignalSegmentData segment) {
+    if (segment.channelSamples.isNotEmpty) {
+      return segment.channelSamples;
+    }
+    final TimeSeriesData? sourceSeries = sourceTimeSeries;
+    final int? start = segment.sourceStartSample;
+    final int? stop = segment.sourceStopSampleExclusive;
+    if (sourceSeries == null || start == null || stop == null) {
+      return const <List<double>>[];
+    }
+    final int boundedStart = start.clamp(0, sourceSeries.sampleCount);
+    final int boundedStop = stop.clamp(0, sourceSeries.sampleCount);
+    if (boundedStop <= boundedStart) {
+      return const <List<double>>[];
+    }
+    return sourceSeries.channels
+        .map(
+          (List<double> channel) => channel.sublist(boundedStart, boundedStop),
+        )
+        .toList(growable: false);
+  }
+
+  List<SignalSegmentData> materializedSegments() {
+    return segments
+        .map(
+          (SignalSegmentData segment) => segment.channelSamples.isNotEmpty
+              ? segment
+              : segment.copyWith(
+                  channelSamples: channelSamplesForSegment(segment),
+                ),
+        )
+        .toList(growable: false);
+  }
 
   SegmentedTimeSeriesData copyWith({
     List<SignalSegmentData>? segments,
     double? sampleRate,
     List<String>? channelLabels,
     String? source,
+    TimeSeriesData? sourceTimeSeries,
+    bool clearSourceTimeSeries = false,
   }) {
     return SegmentedTimeSeriesData(
       segments: segments ?? this.segments,
       sampleRate: sampleRate ?? this.sampleRate,
       channelLabels: channelLabels ?? this.channelLabels,
       source: source ?? this.source,
+      sourceTimeSeries: clearSourceTimeSeries
+          ? null
+          : (sourceTimeSeries ?? this.sourceTimeSeries),
     );
   }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'segments': segments
-          .map((SignalSegmentData segment) => segment.toJson())
+          .map(
+            (SignalSegmentData segment) => segment.channelSamples.isEmpty &&
+                    sourceTimeSeries != null
+                ? segment
+                    .copyWith(channelSamples: channelSamplesForSegment(segment))
+                    .toJson()
+                : segment.toJson(),
+          )
           .toList(growable: false),
       'sampleRate': sampleRate,
       'channelLabels': channelLabels,

@@ -3,10 +3,13 @@ import 'node_type.dart';
 import 'import_node.dart';
 import 'bridge_detector_node.dart';
 import 'channel_exclusion_node.dart';
+import 'channel_coordinates_node.dart';
+import 'edit_channels_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
 import 'impedances_node.dart';
 import 'machine_learning_nodes.dart';
+import 'multimodal_nodes.dart';
 import 'interactive_artifact_detection_node.dart';
 import 'psd_node.dart';
 import 'publish_node.dart';
@@ -27,6 +30,7 @@ import 'visualization_node.dart';
 enum NodeGroup {
   import,
   transform,
+  multimodal,
   machineLearning,
   markerFunctions,
   endpoints,
@@ -39,6 +43,8 @@ extension NodeGroupLabel on NodeGroup {
         return 'Data Wrangling';
       case NodeGroup.transform:
         return 'Signal Processing';
+      case NodeGroup.multimodal:
+        return 'Multimodal';
       case NodeGroup.machineLearning:
         return 'Machine Learning';
       case NodeGroup.markerFunctions:
@@ -65,6 +71,7 @@ class NodeRegistry {
   static final List<NodeGroup> groupOrder = [
     NodeGroup.import,
     NodeGroup.transform,
+    NodeGroup.multimodal,
     NodeGroup.machineLearning,
     NodeGroup.markerFunctions,
     NodeGroup.endpoints,
@@ -73,7 +80,9 @@ class NodeRegistry {
   static final List<NodeRegistryEntry> entries = [
     // Input
     NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
+    NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelCoordinatesNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelExclusionNodeType()),
+    NodeRegistryEntry(group: NodeGroup.import, create: () => EditChannelsNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => BridgeDetectorNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => ResampleNodeType()),
 
@@ -93,6 +102,20 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => SourceReconstructionNodeType(),
+    ),
+
+    // Multimodal
+    NodeRegistryEntry(
+      group: NodeGroup.multimodal,
+      create: () => DetectPeaksNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.multimodal,
+      create: () => InterbeatIntervalNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.multimodal,
+      create: () => HeartRateVariabilityNodeType(),
     ),
 
     // Machine learning

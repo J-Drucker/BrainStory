@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/ant_cnt_import.dart';
 import '../platform/file_readers.dart';
 import 'node_type.dart';
 
@@ -77,7 +78,7 @@ class ImportNodeType extends NodeType {
           ),
           const SizedBox(height: 12),
           const Text(
-            'CSV, TSV, whitespace-delimited text, EDF, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
+            'CSV, TSV, whitespace-delimited text, EDF, ANT Neuro .cnt, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. ANT CNT imports use MNE/antio/libeep through BrainStory\'s Python helper. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
           ),
           const SizedBox(height: 12),
           const Text(
@@ -222,6 +223,21 @@ Future<ParsedSignalData> loadDatasetSignal(
   if (lowerPath.endsWith('.edf')) {
     final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);
     return parseEdfBytes(bytes, sourceDescription: normalizedSourceDescription);
+  }
+  if (lowerPath.endsWith('.cnt')) {
+    if (normalizedPath.isEmpty) {
+      throw const FormatException(
+        'ANT CNT import requires a local .cnt file path.',
+      );
+    }
+    final AntCntImportData imported = await readAntCntFromPath(normalizedPath);
+    return ParsedSignalData(
+      channelSamples: imported.channelSamples,
+      sampleRate: imported.sampleRate,
+      channelLabels: imported.channelLabels,
+      sourceDescription: imported.sourceDescription,
+      markers: imported.markers,
+    );
   }
   if (lowerPath.endsWith('.set')) {
     final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);

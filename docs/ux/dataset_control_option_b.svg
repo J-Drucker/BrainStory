@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760">
+  <rect width="1180" height="760" fill="#f3f5f7"/>
+  <text x="70" y="70" font-family="Verdana, Arial, sans-serif" font-size="34" font-weight="700" fill="#1f2937">Option B: Current vs Target</text>
+  <text x="70" y="104" font-family="Verdana, Arial, sans-serif" font-size="17" fill="#4b5563">Best for future background processing. Every row clearly separates what is true now from what BrainStory should aim for next.</text>
+
+  <rect x="70" y="140" width="1040" height="560" rx="22" fill="#ffffff" stroke="#d5dbe3"/>
+  <rect x="94" y="174" width="992" height="56" rx="14" fill="#0f172a"/>
+  <text x="122" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Dataset</text>
+  <text x="474" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Current</text>
+  <text x="724" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Target</text>
+  <text x="948" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Do now</text>
+
+  <rect x="94" y="248" width="992" height="112" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <text x="122" y="282" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Zhao_Alex_01</text>
+  <text x="122" y="307" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">#3 Segmentation • 64 segments • source from #1 Import</text>
+  <rect x="122" y="322" width="16" height="16" rx="4" fill="#14b8a6"/>
+  <text x="148" y="335" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#111827">Included in this node</text>
+  <rect x="474" y="268" width="92" height="28" rx="14" fill="#dcfce7"/>
+  <text x="499" y="287" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#166534">Available</text>
+  <rect x="572" y="268" width="70" height="28" rx="14" fill="#dbeafe"/>
+  <text x="592" y="287" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#1d4ed8">Done</text>
+  <rect x="648" y="268" width="60" height="28" rx="14" fill="#fef3c7"/>
+  <text x="666" y="287" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#b45309">RAM</text>
+  <rect x="724" y="258" width="186" height="44" rx="22" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="728" y="262" width="80" height="36" rx="18" fill="#0f172a"/>
+  <text x="748" y="285" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">Use + RAM</text>
+  <text x="828" y="285" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Use + Disk</text>
+  <text x="894" y="285" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Skip</text>
+  <rect x="724" y="314" width="186" height="24" rx="12" fill="#eef6ff"/>
+  <text x="740" y="330" font-family="Verdana, Arial, sans-serif" font-size="12" fill="#1e3a8a">Intent text: keep hot in memory for visual inspection</text>
+  <rect x="948" y="262" width="58" height="34" rx="17" fill="#111827"/>
+  <text x="964" y="284" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f9fafb">Load</text>
+  <rect x="1014" y="262" width="72" height="34" rx="17" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1033" y="284" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#111827">Release</text>
+
+  <rect x="94" y="378" width="992" height="112" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <text x="122" y="412" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Zhao_Alex_01 (filtered)</text>
+  <text x="122" y="437" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">#6 Realign • 64 segments • source from #5 Bandpass Filter</text>
+  <rect x="122" y="452" width="16" height="16" rx="4" fill="#14b8a6"/>
+  <text x="148" y="465" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#111827">Included in this node</text>
+  <rect x="474" y="398" width="86" height="28" rx="14" fill="#fee2e2"/>
+  <text x="498" y="417" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#b91c1c">Stale</text>
+  <rect x="566" y="398" width="76" height="28" rx="14" fill="#e9d5ff"/>
+  <text x="586" y="417" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#7e22ce">On disk</text>
+  <rect x="648" y="398" width="90" height="28" rx="14" fill="#f3f4f6"/>
+  <text x="666" y="417" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#4b5563">Not in RAM</text>
+  <rect x="724" y="388" width="186" height="44" rx="22" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="812" y="392" width="82" height="36" rx="18" fill="#0f172a"/>
+  <text x="744" y="415" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Use + RAM</text>
+  <text x="832" y="415" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">Use + Disk</text>
+  <text x="898" y="415" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Skip</text>
+  <rect x="724" y="444" width="186" height="24" rx="12" fill="#eef6ff"/>
+  <text x="741" y="460" font-family="Verdana, Arial, sans-serif" font-size="12" fill="#1e3a8a">Intent text: materialize only when needed</text>
+  <rect x="948" y="392" width="58" height="34" rx="17" fill="#111827"/>
+  <text x="964" y="414" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f9fafb">Load</text>
+  <rect x="1014" y="392" width="72" height="34" rx="17" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1037" y="414" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#111827">Save</text>
+
+  <rect x="94" y="508" width="992" height="112" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <text x="122" y="542" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Scanner_Run_07</text>
+  <text x="122" y="567" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">#3 Segmentation • unavailable until upstream processing completes</text>
+  <rect x="122" y="582" width="16" height="16" rx="4" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="148" y="595" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#111827">Excluded from this node</text>
+  <rect x="474" y="528" width="102" height="28" rx="14" fill="#e5e7eb"/>
+  <text x="495" y="547" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#374151">Unavailable</text>
+  <rect x="724" y="518" width="186" height="44" rx="22" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="879" y="522" width="27" height="36" rx="18" fill="#0f172a"/>
+  <text x="744" y="545" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Use + RAM</text>
+  <text x="828" y="545" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Use + Disk</text>
+  <text x="886" y="545" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">Skip</text>
+  <rect x="724" y="574" width="186" height="24" rx="12" fill="#f3f4f6"/>
+  <text x="742" y="590" font-family="Verdana, Arial, sans-serif" font-size="12" fill="#4b5563">Intent text: do not spend resources here</text>
+  <rect x="94" y="638" width="992" height="36" rx="18" fill="#dcfce7"/>
+  <text x="118" y="661" font-family="Verdana, Arial, sans-serif" font-size="14" font-weight="700" fill="#166534">Recommended: cleanest mental model when we later add queued runs, background execution, and smarter memory policy.</text>
+</svg>

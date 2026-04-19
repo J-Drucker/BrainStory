@@ -15,7 +15,9 @@ import '../nodes/amplitude_features_node.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/bridge_detector_node.dart';
 import '../nodes/channel_exclusion_node.dart';
+import '../nodes/channel_coordinates_node.dart';
 import '../nodes/debug_output_node.dart';
+import '../nodes/edit_channels_node.dart';
 import '../nodes/eye_blinks_node.dart';
 import '../nodes/export_edf_node.dart';
 import '../nodes/fooof_node.dart';
@@ -24,6 +26,7 @@ import '../nodes/import_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/machine_learning_nodes.dart';
+import '../nodes/multimodal_nodes.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/publish_node.dart';
@@ -70,13 +73,251 @@ class RunActivity {
   }
 }
 
+class _DatasetUndoSnapshot {
+  const _DatasetUndoSnapshot({
+    required this.mapKey,
+    required this.id,
+    required this.label,
+    required this.path,
+    required this.sourceBytes,
+    required this.loaded,
+    required this.sourceFilename,
+    required this.artifactSnapshot,
+  });
+
+  final String mapKey;
+  final String id;
+  final String label;
+  final String path;
+  final Uint8List? sourceBytes;
+  final bool loaded;
+  final String? sourceFilename;
+  final DatasetArtifactSnapshot? artifactSnapshot;
+
+  factory _DatasetUndoSnapshot.capture(
+    MapEntry<String, Dataset> entry, {
+    required bool captureArtifacts,
+  }) {
+    final Dataset dataset = entry.value;
+    final String? sourceFilename = dataset.ram['source.filename']?.toString();
+    return _DatasetUndoSnapshot(
+      mapKey: entry.key,
+      id: dataset.id,
+      label: dataset.label,
+      path: dataset.path,
+      sourceBytes: dataset.sourceBytes,
+      loaded: dataset.loaded,
+      sourceFilename: sourceFilename?.isEmpty == true ? null : sourceFilename,
+      artifactSnapshot:
+          captureArtifacts ? DatasetArtifactSnapshot.fromDataset(dataset) : null,
+    );
+  }
+
+  Dataset restore(Map<String, Dataset> currentDatasetsById) {
+    final Dataset dataset = currentDatasetsById[id] ??
+        Dataset(
+          id,
+          label: label,
+          path: path,
+          sourceBytes: sourceBytes,
+        );
+    dataset.label = label;
+    dataset.path = path;
+    dataset.sourceBytes = sourceBytes;
+    dataset.loaded = loaded;
+    if (sourceFilename == null) {
+      dataset.ram.remove('source.filename');
+    } else {
+      dataset.ram['source.filename'] = sourceFilename;
+    }
+    artifactSnapshot?.applyToDataset(dataset);
+    return dataset;
+  }
+}
+
+class _NodeUndoSnapshot {
+  const _NodeUndoSnapshot({
+    required this.id,
+    required this.type,
+    required this.position,
+    required this.params,
+    required this.markerChange,
+    required this.datasetStates,
+  });
+
+  final String id;
+  final NodeType type;
+  final Offset position;
+  final Map<String, dynamic> params;
+  final MarkerChange markerChange;
+  final Map<dynamic, DatasetState> datasetStates;
+
+  factory _NodeUndoSnapshot.capture(NodeModel node) {
+    return _NodeUndoSnapshot(
+      id: node.id,
+      type: node.type,
+      position: node.position,
+      params: _deepCloneJsonMap(node.params),
+      markerChange: MarkerChange.fromJson(node.markerChange.toJson()),
+      datasetStates: Map<dynamic, DatasetState>.from(node.datasetStates),
+    );
+  }
+
+  NodeModel restore() {
+    final NodeModel node = NodeModel(
+      id: id,
+      type: type,
+      position: position,
+      params: _deepCloneJsonMap(params),
+      markerChange: MarkerChange.fromJson(markerChange.toJson()),
+    );
+    node.datasetStates.addAll(datasetStates);
+    return node;
+  }
+}
+
+class _CanvasUndoSnapshot {
+  const _CanvasUndoSnapshot({
+    required this.label,
+    required this.nodes,
+    required this.datasets,
+    required this.connections,
+    required this.nodeRamSnapshots,
+    required this.nodeDiskSnapshotIds,
+    required this.selectedNodeId,
+    required this.selectedNodeIds,
+    required this.selectedConnectionIndex,
+    required this.pendingFromNodeId,
+    required this.pendingFromPortIndex,
+  });
+
+  final String label;
+  final List<_NodeUndoSnapshot> nodes;
+  final List<_DatasetUndoSnapshot> datasets;
+  final List<Map<String, dynamic>> connections;
+  final Map<String, Map<String, DatasetArtifactSnapshot>> nodeRamSnapshots;
+  final Map<String, Set<String>> nodeDiskSnapshotIds;
+  final String? selectedNodeId;
+  final Set<String> selectedNodeIds;
+  final int? selectedConnectionIndex;
+  final String? pendingFromNodeId;
+  final int? pendingFromPortIndex;
+
+  factory _CanvasUndoSnapshot.capture(
+    CanvasLogic logic,
+    String label, {
+    Set<String> datasetArtifactIds = const <String>{},
+  }) {
+    return _CanvasUndoSnapshot(
+      label: label,
+      nodes: logic.nodes.map(_NodeUndoSnapshot.capture).toList(growable: false),
+      datasets: logic.datasets.entries
+          .map(
+            (MapEntry<String, Dataset> entry) => _DatasetUndoSnapshot.capture(
+              entry,
+              captureArtifacts: datasetArtifactIds.contains(entry.value.id),
+            ),
+          )
+          .toList(growable: false),
+      connections: logic.connections
+          .map((Map<String, dynamic> connection) => _deepCloneJsonMap(connection))
+          .toList(growable: false),
+      nodeRamSnapshots: <String, Map<String, DatasetArtifactSnapshot>>{
+        for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
+            in logic._nodeRamSnapshots.entries)
+          entry.key: Map<String, DatasetArtifactSnapshot>.from(entry.value),
+      },
+      nodeDiskSnapshotIds: <String, Set<String>>{
+        for (final MapEntry<String, Set<String>> entry
+            in logic._nodeDiskSnapshotIds.entries)
+          entry.key: Set<String>.from(entry.value),
+      },
+      selectedNodeId: logic.selectedNodeId,
+      selectedNodeIds: Set<String>.from(logic.selectedNodeIds),
+      selectedConnectionIndex: logic.selectedConnectionIndex,
+      pendingFromNodeId: logic._pendingFromNodeId,
+      pendingFromPortIndex: logic._pendingFromPortIndex,
+    );
+  }
+
+  void restore(CanvasLogic logic) {
+    final Map<String, Dataset> currentDatasetsById = <String, Dataset>{
+      for (final Dataset dataset in logic.datasets.values) dataset.id: dataset,
+    };
+
+    logic.nodes
+      ..clear()
+      ..addAll(nodes.map((_NodeUndoSnapshot node) => node.restore()));
+
+    logic.datasets.clear();
+    for (final _DatasetUndoSnapshot datasetSnapshot in datasets) {
+      logic.datasets[datasetSnapshot.mapKey] =
+          datasetSnapshot.restore(currentDatasetsById);
+    }
+
+    logic.connections
+      ..clear()
+      ..addAll(
+        connections.map(
+          (Map<String, dynamic> connection) => _deepCloneJsonMap(connection),
+        ),
+      );
+
+    logic._nodeRamSnapshots
+      ..clear()
+      ..addAll(
+        <String, Map<String, DatasetArtifactSnapshot>>{
+          for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
+              in nodeRamSnapshots.entries)
+            entry.key: Map<String, DatasetArtifactSnapshot>.from(entry.value),
+        },
+      );
+    logic._nodeDiskSnapshotIds
+      ..clear()
+      ..addAll(
+        <String, Set<String>>{
+          for (final MapEntry<String, Set<String>> entry
+              in nodeDiskSnapshotIds.entries)
+            entry.key: Set<String>.from(entry.value),
+        },
+      );
+
+    logic.selectedNodeId = selectedNodeId;
+    logic.selectedNodeIds
+      ..clear()
+      ..addAll(selectedNodeIds);
+    logic.selectedConnectionIndex = selectedConnectionIndex;
+    logic._pendingFromNodeId = pendingFromNodeId;
+    logic._pendingFromPortIndex = pendingFromPortIndex;
+  }
+}
+
+Map<String, dynamic> _deepCloneJsonMap(Map<dynamic, dynamic> source) {
+  return <String, dynamic>{
+    for (final MapEntry<dynamic, dynamic> entry in source.entries)
+      entry.key.toString(): _deepCloneJsonValue(entry.value),
+  };
+}
+
+dynamic _deepCloneJsonValue(dynamic value) {
+  if (value is Map) {
+    return _deepCloneJsonMap(value);
+  }
+  if (value is List) {
+    return value.map(_deepCloneJsonValue).toList(growable: false);
+  }
+  return value;
+}
+
 class CanvasLogic {
   CanvasLogic();
 
   /// Registry of available node types in the sidebar.
   final List<NodeType> availableNodes = <NodeType>[
     ImportNodeType(),
+    ChannelCoordinatesNodeType(),
     ChannelExclusionNodeType(),
+    EditChannelsNodeType(),
     BridgeDetectorNodeType(),
     ResampleNodeType(),
     BandpassNodeType(),
@@ -89,6 +330,9 @@ class CanvasLogic {
     ICANodeType(),
     EigenvalueDecompositionNodeType(),
     SourceReconstructionNodeType(),
+    DetectPeaksNodeType(),
+    InterbeatIntervalNodeType(),
+    HeartRateVariabilityNodeType(),
     KMeansNodeType(),
     CNNNodeType(),
     AddRemoveMarkersNodeType(),
@@ -122,10 +366,13 @@ class CanvasLogic {
   final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
 
   String? selectedNodeId;
+  final Set<String> selectedNodeIds = <String>{};
   int? selectedConnectionIndex;
+  String? keyboardFocusedNodeId;
 
   String? _pendingFromNodeId;
   int? _pendingFromPortIndex;
+  int _lastGeneratedNodeIdMicros = 0;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
   final Map<String, bool> _collapsedSubcategories = <String, bool>{};
 
@@ -135,8 +382,39 @@ class CanvasLogic {
   static const double _canvasPadding = 120;
   static const double _gridWidth = _cardWidth * 0.625;
   static const double _gridHeight = _cardHeight * 0.625;
+  static const int _maxUndoDepth = 60;
+
+  final List<_CanvasUndoSnapshot> _undoStack = <_CanvasUndoSnapshot>[];
+
+  bool get canUndo => _undoStack.isNotEmpty;
+
+  String? undoLast() {
+    if (_undoStack.isEmpty) {
+      return null;
+    }
+    final _CanvasUndoSnapshot snapshot = _undoStack.removeLast();
+    snapshot.restore(this);
+    return snapshot.label;
+  }
+
+  void _recordUndo(
+    String label, {
+    Set<String> datasetArtifactIds = const <String>{},
+  }) {
+    _undoStack.add(
+      _CanvasUndoSnapshot.capture(
+        this,
+        label,
+        datasetArtifactIds: datasetArtifactIds,
+      ),
+    );
+    if (_undoStack.length > _maxUndoDepth) {
+      _undoStack.removeAt(0);
+    }
+  }
 
   void addNode(NodeType type) {
+    _recordUndo('add ${type.title}');
     final Offset spawnPosition = _nearestAvailablePosition(_nextSpawnPosition());
     nodes.add(_buildNode(type: type, position: spawnPosition));
   }
@@ -157,11 +435,20 @@ class CanvasLogic {
     );
 
     return NodeModel(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      id: _nextNodeId(),
       type: type,
       position: position,
       params: initialParams,
     );
+  }
+
+  String _nextNodeId() {
+    final int nowMicros = DateTime.now().microsecondsSinceEpoch;
+    final int nextMicros = nowMicros <= _lastGeneratedNodeIdMicros
+        ? _lastGeneratedNodeIdMicros + 1
+        : nowMicros;
+    _lastGeneratedNodeIdMicros = nextMicros;
+    return nextMicros.toString();
   }
 
   Offset snapToGrid(Offset offset) {
@@ -187,13 +474,26 @@ class CanvasLogic {
     return Size(width, height);
   }
 
-  void clearAll() {
+  void clearAll({bool recordUndo = true}) {
+    if (recordUndo &&
+        (nodes.isNotEmpty ||
+            connections.isNotEmpty ||
+            _nodeRamSnapshots.isNotEmpty ||
+            _nodeDiskSnapshotIds.isNotEmpty)) {
+      _recordUndo('clear all');
+    }
+    _clearAll();
+  }
+
+  void _clearAll() {
     nodes.clear();
     connections.clear();
     _nodeRamSnapshots.clear();
     _nodeDiskSnapshotIds.clear();
     selectedNodeId = null;
+    selectedNodeIds.clear();
     selectedConnectionIndex = null;
+    keyboardFocusedNodeId = null;
     _clearPendingConnection();
   }
 
@@ -202,10 +502,14 @@ class CanvasLogic {
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
           label: 'BrainStory Signals',
-          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'set', 'fdt', 'vhdr'],
+          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'cnt', 'set', 'fdt', 'vhdr'],
         ),
       ],
     );
+
+    if (files.isNotEmpty) {
+      _recordUndo('import files');
+    }
 
     for (final XFile file in files) {
       final String normalizedPath = brainVisionHeaderPathForSelection(
@@ -214,8 +518,11 @@ class CanvasLogic {
       final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
       final bool selectedBrainVisionSidecar = file.name.toLowerCase().endsWith('.eeg') ||
           file.name.toLowerCase().endsWith('.vmrk');
+      final bool selectedAntCnt = file.name.toLowerCase().endsWith('.cnt');
       final Uint8List? bytes =
-          (selectedFdt || selectedBrainVisionSidecar) ? null : await file.readAsBytes();
+          (selectedFdt || selectedBrainVisionSidecar || selectedAntCnt)
+              ? null
+              : await file.readAsBytes();
       final String sourceName = selectedFdt
           ? '${file.name.substring(0, file.name.length - 4)}.set'
           : selectedBrainVisionSidecar
@@ -240,17 +547,25 @@ class CanvasLogic {
   }
 
   void deleteSelected() {
-    final targetId = selectedNodeId;
-    if (targetId == null) return;
+    final Set<String> targetIds = selectedNodeIds.isNotEmpty
+        ? Set<String>.from(selectedNodeIds)
+        : <String>{if (selectedNodeId != null) selectedNodeId!};
+    if (targetIds.isEmpty) return;
 
-    nodes.removeWhere((node) => node.id == targetId);
+    _recordUndo(targetIds.length == 1 ? 'delete node' : 'delete nodes');
+    nodes.removeWhere((node) => targetIds.contains(node.id));
     connections.removeWhere(
           (connection) =>
-      connection['fromNode'] == targetId || connection['toNode'] == targetId,
+      targetIds.contains(connection['fromNode']) ||
+          targetIds.contains(connection['toNode']),
     );
 
     selectedNodeId = null;
+    selectedNodeIds.clear();
     selectedConnectionIndex = null;
+    if (targetIds.contains(keyboardFocusedNodeId)) {
+      keyboardFocusedNodeId = null;
+    }
     _clearPendingConnection();
   }
 
@@ -259,8 +574,29 @@ class CanvasLogic {
     if (index == null || index < 0 || index >= connections.length) {
       return;
     }
+    _recordUndo('delete wire');
     connections.removeAt(index);
     selectedConnectionIndex = null;
+  }
+
+  void selectNodesInRect(Rect selectionRect) {
+    selectedNodeIds.clear();
+    for (final NodeModel node in nodes) {
+      final Rect nodeRect = Rect.fromLTWH(
+        node.position.dx,
+        node.position.dy,
+        _cardWidth,
+        _cardHeight,
+      );
+      if (selectionRect.overlaps(nodeRect)) {
+        selectedNodeIds.add(node.id);
+      }
+    }
+    selectedNodeId = selectedNodeIds.isEmpty ? null : selectedNodeIds.first;
+    selectedConnectionIndex = null;
+    if (selectedNodeIds.isNotEmpty) {
+      _clearPendingConnection();
+    }
   }
 
   bool selectConnectionAt(Offset canvasOffset) {
@@ -269,6 +605,7 @@ class CanvasLogic {
       return false;
     }
     selectedNodeId = null;
+    selectedNodeIds.clear();
     selectedConnectionIndex = index;
     _clearPendingConnection();
     return true;
@@ -279,6 +616,7 @@ class CanvasLogic {
     if (index == null) {
       return false;
     }
+    _recordUndo('delete wire');
     connections.removeAt(index);
     selectedConnectionIndex = null;
     return true;
@@ -286,6 +624,38 @@ class CanvasLogic {
 
   void clearConnectionDraft() {
     _clearPendingConnection();
+  }
+
+  NodeModel? get keyboardFocusedNode {
+    final String? focusedId = keyboardFocusedNodeId;
+    return focusedId == null ? null : _findNode(focusedId);
+  }
+
+  void setKeyboardFocusedNode(NodeModel? node) {
+    keyboardFocusedNodeId = node?.id;
+  }
+
+  void activateNodeFromKeyboard(NodeModel node) {
+    keyboardFocusedNodeId = node.id;
+    _handleNodeTap(node);
+  }
+
+  void openNodeEditorFromKeyboard({
+    required BuildContext context,
+    required NodeModel node,
+    required VoidCallback update,
+  }) {
+    keyboardFocusedNodeId = node.id;
+    selectedNodeId = node.id;
+    selectedNodeIds
+      ..clear()
+      ..add(node.id);
+    selectedConnectionIndex = null;
+    _openNodeEditor(
+      context: context,
+      node: node,
+      update: update,
+    );
   }
 
   void _clearPendingConnection() {
@@ -313,6 +683,9 @@ class CanvasLogic {
     final String path = dataset.path.toLowerCase();
     if (path.endsWith('.edf')) {
       return 'EDF';
+    }
+    if (path.endsWith('.cnt')) {
+      return 'ANT CNT';
     }
     if (path.endsWith('.set') || path.endsWith('.fdt')) {
       return 'EEGLAB';
@@ -544,6 +917,7 @@ class CanvasLogic {
       final String jsonPayload = await file.readAsString();
       final Map<String, dynamic> jsonMap =
           Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+      _recordUndo('load BrainStory');
       importProjectJson(jsonMap);
       await _refreshDiskSnapshotFlagsForLoadedProject();
       _normalizeNodeStatesAfterProjectLoad();
@@ -739,7 +1113,7 @@ class CanvasLogic {
   }
 
   void importProjectJson(Map<String, dynamic> jsonMap) {
-    clearAll();
+    clearAll(recordUndo: false);
     datasets.clear();
 
     final List<dynamic> datasetEntries =
@@ -1108,13 +1482,10 @@ class CanvasLogic {
         highlighted: _isHighlighted(node),
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
-        outputHandles: _outputHandlesForNode(node),
-        selectedOutputPortIndex:
-            _pendingFromNodeId == node.id ? _pendingFromPortIndex : null,
         onDragEnd: (Offset globalOffset) {
-          node.position = _nearestAvailablePosition(
+          moveNodeOrSelection(
+            node,
             translateDropOffset(globalOffset),
-            movingNodeId: node.id,
           );
           update();
         },
@@ -1122,12 +1493,15 @@ class CanvasLogic {
           _handleNodeTap(node);
           update();
         },
-        onOutputTap: (int portIndex) {
-          _handleOutputTap(node, portIndex);
-          update();
-        },
         onDoubleTap: () {
           selectedNodeId = node.id;
+          selectedNodeIds
+            ..clear()
+            ..add(node.id);
+          if (canVisualizeNode(node)) {
+            openVisualizationWindow(node);
+            return;
+          }
           _openNodeEditor(
             context: context,
             node: node,
@@ -1136,6 +1510,9 @@ class CanvasLogic {
         },
         onDelete: () {
           selectedNodeId = node.id;
+          selectedNodeIds
+            ..clear()
+            ..add(node.id);
           deleteSelected();
           update();
         },
@@ -1244,44 +1621,50 @@ class CanvasLogic {
   }
 
   void _handleNodeTap(NodeModel node) {
-    if (_pendingFromNodeId == null || _pendingFromPortIndex == null) {
+    final bool canUseSelectionAsConnectionSource =
+        selectedNodeId != null &&
+            selectedNodeId != node.id &&
+            selectedNodeIds.length <= 1;
+    if (!canUseSelectionAsConnectionSource) {
       selectedNodeId = node.id;
+      selectedNodeIds
+        ..clear()
+        ..add(node.id);
       selectedConnectionIndex = null;
       return;
     }
 
-    if (_pendingFromNodeId == node.id) {
-      selectedNodeId = node.id;
-      selectedConnectionIndex = null;
-      _clearPendingConnection();
-      return;
-    }
-
-    final NodeModel? fromNode = _findNode(_pendingFromNodeId!);
+    final NodeModel? fromNode = _findNode(selectedNodeId!);
     if (fromNode == null) {
       selectedNodeId = node.id;
+      selectedNodeIds
+        ..clear()
+        ..add(node.id);
       selectedConnectionIndex = null;
       _clearPendingConnection();
       return;
     }
 
-    final int fromPortIndex = _pendingFromPortIndex!;
-    final int? toPortIndex = _matchingInputPortForOutputPort(fromNode, fromPortIndex, node);
+    final _PortConnection? portConnection =
+        _firstMatchingPortConnection(fromNode, node);
     final bool validDirection = _isValidDownstreamPlacement(fromNode, node);
     final bool introducesCycle =
         _collectDescendantsInclusive(node.id).contains(fromNode.id);
 
-    if (toPortIndex == null || !validDirection || introducesCycle) {
+    if (portConnection == null || !validDirection || introducesCycle) {
       selectedNodeId = node.id;
+      selectedNodeIds
+        ..clear()
+        ..add(node.id);
       selectedConnectionIndex = null;
       return;
     }
 
     final Map<String, dynamic> nextConnection = <String, dynamic>{
       'fromNode': fromNode.id,
-      'fromPort': fromPortIndex,
+      'fromPort': portConnection.fromPortIndex,
       'toNode': node.id,
-      'toPort': toPortIndex,
+      'toPort': portConnection.toPortIndex,
     };
 
     final bool duplicate = connections.any(
@@ -1293,23 +1676,16 @@ class CanvasLogic {
     );
 
     if (!duplicate) {
+      _recordUndo('connect nodes');
       connections.add(nextConnection);
     }
 
     selectedNodeId = node.id;
+    selectedNodeIds
+      ..clear()
+      ..add(node.id);
     selectedConnectionIndex = null;
     _clearPendingConnection();
-  }
-
-  void _handleOutputTap(NodeModel node, int portIndex) {
-    selectedNodeId = node.id;
-    selectedConnectionIndex = null;
-    if (_pendingFromNodeId == node.id && _pendingFromPortIndex == portIndex) {
-      _clearPendingConnection();
-      return;
-    }
-    _pendingFromNodeId = node.id;
-    _pendingFromPortIndex = portIndex;
   }
 
   NodeModel? _findNode(String id) {
@@ -1377,6 +1753,7 @@ class CanvasLogic {
     required Map<String, dynamic> params,
     required VoidCallback update,
   }) {
+    _recordUndo('edit ${node.title} parameters');
     node.params = params;
     if (node.type is ImportNodeType) {
       ImportNodeType.applyDatasetAliases(params, datasets.values);
@@ -1445,22 +1822,62 @@ class CanvasLogic {
   }
 
   Future<Dataset> materializedDatasetViewForNode(String nodeId, Dataset source) async {
-    final Dataset view = Dataset(
+    final Dataset view = _datasetShell(source);
+    final Set<String> ancestorIds = _collectAncestorsInclusive(nodeId);
+    final List<NodeModel> orderedAncestors = _orderedNodes(ancestorIds);
+    bool appliedAnySnapshot = false;
+
+    for (final NodeModel ancestor in orderedAncestors) {
+      if (ancestor.datasetStates[source.id] != DatasetState.done) {
+        continue;
+      }
+      final DatasetArtifactSnapshot? snapshot =
+          await _loadSnapshotForNodeDataset(ancestor.id, source.id);
+      if (snapshot != null && !snapshot.isEmpty) {
+        _snapshotScopedToNodeOutputs(ancestor, snapshot).applyToDataset(view);
+        appliedAnySnapshot = true;
+        continue;
+      }
+      if (ancestor.type is ImportNodeType && !appliedAnySnapshot) {
+        _applyLiveSourceArtifacts(view, source);
+      }
+    }
+
+    if (!appliedAnySnapshot && view.timeSeries == null) {
+      _applyLiveSourceArtifacts(view, source);
+    }
+    return view;
+  }
+
+  Dataset _datasetShell(Dataset source) {
+    final Dataset shell = Dataset(
       source.id,
       label: source.label,
       path: source.path,
       sourceBytes: source.sourceBytes,
     );
-    view.loaded = source.loaded;
-    view.ram.addAll(source.ram);
-    final DatasetArtifactSnapshot? snapshot = await _loadSnapshotForNodeDataset(
-      nodeId,
-      source.id,
-    );
-    if (snapshot != null && !snapshot.isEmpty) {
-      snapshot.applyToDataset(view);
+    shell.loaded = source.loaded;
+    final Object? sourceFilename = source.ram['source.filename'];
+    if (sourceFilename != null) {
+      shell.ram['source.filename'] = sourceFilename;
     }
-    return view;
+    return shell;
+  }
+
+  void _applyLiveSourceArtifacts(Dataset target, Dataset source) {
+    target.timeSeries = source.timeSeries == null
+        ? null
+        : TimeSeriesData.fromJson(source.timeSeries!.toJson());
+    final Map<BrainStoryArtifactKind, ArtifactIdentity> sourceIdentities =
+        source.artifactIdentities;
+    target.artifactIdentities =
+        Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
+      sourceIdentities.entries.where(
+        (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+            entry.key == BrainStoryArtifactKind.timeSeries ||
+            entry.key == BrainStoryArtifactKind.markers,
+      ),
+    );
   }
 
   bool isVisualizationNode(NodeModel? node) => node?.type is VisualizationNodeType;
@@ -1683,12 +2100,23 @@ class CanvasLogic {
 
         node.datasetStates[dataset.id] = DatasetState.ready;
         try {
+          dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
+          final List<String> sourceArtifactIds =
+              _sourceArtifactIdsForDataset(dataset);
           await setRunDetail('Running ${node.title} on ${dataset.label}...');
           await node.type.run(dataset, node.params);
           node.datasetStates[dataset.id] = DatasetState.done;
-          await _materializeNodeOutput(node, dataset);
-          _markImmediateChildrenStale(node.id, dataset.id);
+          await _materializeNodeOutput(
+            node,
+            dataset,
+            sourceArtifactIds: sourceArtifactIds,
+          );
+          _markImmediateChildrenStale(
+            node.id,
+            dataset.id,
+            changeSet: _takeLastChangeSet(dataset),
+          );
         } catch (_) {
           node.datasetStates[dataset.id] = _availableDatasetIdsForNode(node)
                   .contains(dataset.id)
@@ -1994,16 +2422,79 @@ class CanvasLogic {
     }
   }
 
-  void _markImmediateChildrenStale(String nodeId, String datasetId) {
+  ArtifactChangeSet? _takeLastChangeSet(Dataset dataset) {
+    final Object? rawValue = dataset.ram.remove('artifact.lastChangeSet');
+    if (rawValue is ArtifactChangeSet) {
+      return rawValue;
+    }
+    if (rawValue is Map) {
+      return ArtifactChangeSet.fromJson(
+        Map<String, dynamic>.from(rawValue),
+      );
+    }
+    return null;
+  }
+
+  void _markImmediateChildrenStale(
+    String nodeId,
+    String datasetId, {
+    ArtifactChangeSet? changeSet,
+  }) {
     for (final Map<String, dynamic> connection in connections) {
       if (connection['fromNode'] != nodeId) {
         continue;
       }
       final NodeModel? child = _findNode(connection['toNode'] as String);
-      if (child?.datasetStates[datasetId] == DatasetState.done) {
-        child!.datasetStates[datasetId] = DatasetState.stale;
+      if (child == null) {
+        continue;
+      }
+      if (child.datasetStates[datasetId] == DatasetState.done &&
+          _nodeInvalidatedByChangeSet(child, changeSet)) {
+        child.datasetStates[datasetId] = DatasetState.stale;
       }
     }
+  }
+
+  bool _nodeInvalidatedByChangeSet(
+    NodeModel node,
+    ArtifactChangeSet? changeSet,
+  ) {
+    if (changeSet == null) {
+      return true;
+    }
+    if (changeSet.changeTypes.isEmpty) {
+      return false;
+    }
+
+    final bool usesSignal = node.inputPorts.any(
+      (PortSpec port) => port.type == PortType.signal,
+    );
+    final bool usesMarkers = node.inputPorts.any(
+      (PortSpec port) => port.type == PortType.markers,
+    );
+    final bool usesMetadata = node.inputPorts.any(
+      (PortSpec port) => port.type == PortType.metadata,
+    );
+    final bool signalChanged = changeSet.touchesSamples ||
+        changeSet.touchesChannelLabels ||
+        changeSet.touchesChannelTopology ||
+        changeSet.touchesChannelCoordinates;
+    final bool markerOrSegmentChanged =
+        changeSet.touchesMarkers || changeSet.touchesSegmentWindows;
+
+    if (changeSet.touchesParams) {
+      return true;
+    }
+    if (signalChanged && usesSignal) {
+      return true;
+    }
+    if (markerOrSegmentChanged && (usesMarkers || usesMetadata)) {
+      return true;
+    }
+    if (!signalChanged && !markerOrSegmentChanged) {
+      return true;
+    }
+    return false;
   }
 
   void applyMarkersFromVisualization({
@@ -2016,22 +2507,107 @@ class CanvasLogic {
       return;
     }
 
+    _recordUndo(
+      'save marker edits',
+      datasetArtifactIds: <String>{dataset.id},
+    );
     final NodeModel markerNode = _ensureMarkerNode(sourceNode);
     markerNode.params['markers'] = rawMarkers;
 
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries != null) {
+      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
       dataset.timeSeries = timeSeries.copyWith(
         markers: AddRemoveMarkersNodeType.markersForDataset(
           dataset.id,
           rawMarkers,
         ),
       );
+      dataset.ram['artifact.lastChangeSet'] = ArtifactChangeSet(
+        datasetId: dataset.id,
+        sourceNodeId: markerNode.id,
+        changeTypes: const <ArtifactChangeType>{
+          ArtifactChangeType.markers,
+        },
+        description: 'Marker edits',
+      );
+      _cacheVisualizationEditOutput(
+        markerNode,
+        dataset,
+        sourceArtifactIds: sourceArtifactIds,
+      );
     }
 
     markerNode.datasetStates[dataset.id] = DatasetState.done;
-    _markImmediateChildrenStale(markerNode.id, dataset.id);
+    _markImmediateChildrenStale(
+      markerNode.id,
+      dataset.id,
+      changeSet: _takeLastChangeSet(dataset),
+    );
     selectedNodeId = markerNode.id;
+    selectedNodeIds
+      ..clear()
+      ..add(markerNode.id);
+    selectedConnectionIndex = null;
+    _clearPendingConnection();
+  }
+
+  void applyChannelEditsFromVisualization({
+    required String nodeId,
+    required Dataset dataset,
+    required Map<String, dynamic> datasetConfig,
+  }) {
+    final NodeModel? sourceNode = _channelEditSourceNode(nodeId);
+    if (sourceNode == null) {
+      return;
+    }
+
+    _recordUndo(
+      'save channel edits',
+      datasetArtifactIds: <String>{dataset.id},
+    );
+    final NodeModel channelNode = _ensureChannelEditNode(sourceNode);
+    EditChannelsNodeType.setConfigForDataset(
+      channelNode.params,
+      dataset.id,
+      datasetConfig,
+    );
+
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries != null) {
+      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
+      final ArtifactChangeSet changeSet =
+          EditChannelsNodeType.changeSetForConfig(
+        datasetId: dataset.id,
+        timeSeries: timeSeries,
+        config: datasetConfig,
+        sourceNodeId: channelNode.id,
+      );
+      dataset.timeSeries = EditChannelsNodeType.applyChannelEdits(
+        timeSeries,
+        datasetConfig,
+        warningSink: (String warning) {
+          dataset.ram['editChannels.lastWarning'] = warning;
+        },
+      );
+      dataset.ram['artifact.lastChangeSet'] = changeSet;
+      _cacheVisualizationEditOutput(
+        channelNode,
+        dataset,
+        sourceArtifactIds: sourceArtifactIds,
+      );
+    }
+
+    channelNode.datasetStates[dataset.id] = DatasetState.done;
+    _markImmediateChildrenStale(
+      channelNode.id,
+      dataset.id,
+      changeSet: _takeLastChangeSet(dataset),
+    );
+    selectedNodeId = channelNode.id;
+    selectedNodeIds
+      ..clear()
+      ..add(channelNode.id);
     selectedConnectionIndex = null;
     _clearPendingConnection();
   }
@@ -2045,8 +2621,13 @@ class CanvasLogic {
       return;
     }
 
+    _recordUndo(
+      'save artifact edits',
+      datasetArtifactIds: <String>{dataset.id},
+    );
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries != null) {
+      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
       dataset.timeSeries = timeSeries.copyWith(
         markers: InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
           dataset.id,
@@ -2054,13 +2635,47 @@ class CanvasLogic {
           baseMarkers: timeSeries.markers,
         ),
       );
+      _cacheVisualizationEditOutput(
+        sourceNode,
+        dataset,
+        sourceArtifactIds: sourceArtifactIds,
+      );
     }
 
     sourceNode.datasetStates[dataset.id] = DatasetState.done;
     _markImmediateChildrenStale(sourceNode.id, dataset.id);
     selectedNodeId = sourceNode.id;
+    selectedNodeIds
+      ..clear()
+      ..add(sourceNode.id);
     selectedConnectionIndex = null;
     _clearPendingConnection();
+  }
+
+  void _cacheVisualizationEditOutput(
+    NodeModel node,
+    Dataset dataset, {
+    List<String> sourceArtifactIds = const <String>[],
+  }) {
+    _stampArtifactIdentities(
+      node: node,
+      dataset: dataset,
+      sourceArtifactIds: sourceArtifactIds,
+    );
+    final Set<BrainStoryArtifactKind> outputKinds =
+        _artifactKindsForNodeOutputs(node, dataset);
+    final DatasetArtifactSnapshot snapshot =
+        DatasetArtifactSnapshot.fromDataset(
+      dataset,
+      includedKinds: outputKinds,
+    );
+    if (snapshot.isEmpty) {
+      _nodeRamSnapshots[node.id]?.remove(dataset.id);
+      return;
+    }
+    _nodeRamSnapshots
+        .putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
+        snapshot;
   }
 
   void _showStatusSnackBar(BuildContext context, String message) {
@@ -2129,10 +2744,24 @@ class CanvasLogic {
     );
   }
 
-  Future<void> _materializeNodeOutput(NodeModel node, Dataset dataset) async {
+  Future<void> _materializeNodeOutput(
+    NodeModel node,
+    Dataset dataset, {
+    List<String> sourceArtifactIds = const <String>[],
+  }) async {
     await setRunDetail('Materializing ${node.title} for ${dataset.label}...');
+    _stampArtifactIdentities(
+      node: node,
+      dataset: dataset,
+      sourceArtifactIds: sourceArtifactIds,
+    );
+    final Set<BrainStoryArtifactKind> outputKinds =
+        _artifactKindsForNodeOutputs(node, dataset);
     final DatasetArtifactSnapshot snapshot =
-        DatasetArtifactSnapshot.fromDataset(dataset);
+        DatasetArtifactSnapshot.fromDataset(
+      dataset,
+      includedKinds: outputKinds,
+    );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
       return;
@@ -2161,6 +2790,144 @@ class CanvasLogic {
         _nodeRamSnapshots[node.id]?.remove(dataset.id);
       }
     }
+  }
+
+  List<String> _sourceArtifactIdsForDataset(Dataset dataset) {
+    return dataset.artifactIdentities.values
+        .map((ArtifactIdentity identity) => identity.artifactId)
+        .where((String id) => id.trim().isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+  }
+
+  void _stampArtifactIdentities({
+    required NodeModel node,
+    required Dataset dataset,
+    List<String> sourceArtifactIds = const <String>[],
+  }) {
+    for (final BrainStoryArtifactKind kind in _artifactKindsForNodeOutputs(
+      node,
+      dataset,
+    )) {
+      final String artifactId = _artifactIdForNodeDatasetKind(
+        node: node,
+        dataset: dataset,
+        kind: kind,
+      );
+      final ArtifactIdentity? previous = dataset.artifactIdentityFor(kind);
+      dataset.setArtifactIdentity(
+        ArtifactIdentity(
+          artifactId: artifactId,
+          datasetId: dataset.id,
+          kind: kind,
+          producerNodeId: node.id,
+          sourceArtifactIds: sourceArtifactIds,
+          revision: previous?.artifactId == artifactId
+              ? previous!.revision + 1
+              : 0,
+        ),
+      );
+    }
+  }
+
+  String _artifactIdForNodeDatasetKind({
+    required NodeModel node,
+    required Dataset dataset,
+    required BrainStoryArtifactKind kind,
+  }) {
+    return '${node.id}:${dataset.id}:${kind.name}';
+  }
+
+  Set<BrainStoryArtifactKind> _artifactKindsForNodeOutputs(
+    NodeModel node,
+    Dataset dataset,
+  ) {
+    final Set<BrainStoryArtifactKind> kinds = <BrainStoryArtifactKind>{};
+    for (final PortSpec output in node.outputPorts) {
+      final String outputName = output.name.toLowerCase();
+      switch (output.type) {
+        case PortType.signal:
+          if ((outputName.contains('psd') ||
+                  outputName.contains('spectrum')) &&
+              dataset.spectrum != null) {
+            kinds.add(BrainStoryArtifactKind.spectrum);
+          } else if (dataset.timeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.timeSeries);
+          }
+          break;
+        case PortType.markers:
+          if (dataset.timeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.markers);
+          }
+          break;
+        case PortType.metadata:
+          if (outputName.contains('segment') &&
+              dataset.segmentedTimeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.segmentedTimeSeries);
+          } else if (dataset.fooofResult != null) {
+            kinds.add(BrainStoryArtifactKind.fooofResult);
+          } else if (dataset.featureTable != null) {
+            kinds.add(BrainStoryArtifactKind.featureTable);
+          } else if (dataset.bridgeDetection != null) {
+            kinds.add(BrainStoryArtifactKind.bridgeDetection);
+          } else if (dataset.timeFrequency != null) {
+            kinds.add(BrainStoryArtifactKind.timeFrequency);
+          }
+          break;
+        case PortType.matrixTransformation:
+          if (dataset.matrixTransformation != null) {
+            kinds.add(BrainStoryArtifactKind.matrixTransformation);
+          }
+          break;
+      }
+    }
+    return kinds;
+  }
+
+  Set<BrainStoryArtifactKind> _artifactKindsForSnapshotOutputs(
+    NodeModel node,
+    DatasetArtifactSnapshot snapshot,
+  ) {
+    final Set<BrainStoryArtifactKind> kinds = <BrainStoryArtifactKind>{};
+    for (final PortSpec output in node.outputPorts) {
+      final String outputName = output.name.toLowerCase();
+      switch (output.type) {
+        case PortType.signal:
+          if ((outputName.contains('psd') ||
+                  outputName.contains('spectrum')) &&
+              snapshot.spectrum != null) {
+            kinds.add(BrainStoryArtifactKind.spectrum);
+          } else if (snapshot.timeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.timeSeries);
+          }
+          break;
+        case PortType.markers:
+          if (snapshot.markers != null || snapshot.timeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.markers);
+          }
+          break;
+        case PortType.metadata:
+          if (outputName.contains('segment') &&
+              snapshot.segmentedTimeSeries != null) {
+            kinds.add(BrainStoryArtifactKind.segmentedTimeSeries);
+          } else if (snapshot.fooofResult != null) {
+            kinds.add(BrainStoryArtifactKind.fooofResult);
+          } else if (snapshot.featureTable != null) {
+            kinds.add(BrainStoryArtifactKind.featureTable);
+          } else if (snapshot.bridgeDetection != null) {
+            kinds.add(BrainStoryArtifactKind.bridgeDetection);
+          } else if (snapshot.timeFrequency != null) {
+            kinds.add(BrainStoryArtifactKind.timeFrequency);
+          }
+          break;
+        case PortType.matrixTransformation:
+          if (snapshot.matrixTransformation != null) {
+            kinds.add(BrainStoryArtifactKind.matrixTransformation);
+          }
+          break;
+      }
+    }
+    return kinds;
   }
 
   Future<NodeDatasetStatusSnapshot> _datasetStatusSnapshotForNode({
@@ -2467,12 +3234,8 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) async {
-    final DatasetArtifactSnapshot? snapshot =
-        await _loadSnapshotForNodeDataset(node.id, dataset.id);
-    if (snapshot == null || snapshot.isEmpty) {
-      return;
-    }
-    snapshot.applyToDataset(dataset);
+    final Dataset view = await materializedDatasetViewForNode(node.id, dataset);
+    _replaceDatasetRam(dataset, view);
   }
 
   Future<bool> promptLoadFromDiskInsteadOfRun({
@@ -2536,18 +3299,90 @@ class CanvasLogic {
       return;
     }
 
-    for (final NodeModel parent in parents) {
-      if (parent.datasetStates[dataset.id] != DatasetState.done) {
+    final Set<String> upstreamIds = _collectAncestorsInclusive(node.id)
+      ..remove(node.id);
+    final Dataset view = _datasetShell(dataset);
+    bool appliedAnySnapshot = false;
+    for (final NodeModel upstreamNode in _orderedNodes(upstreamIds)) {
+      if (upstreamNode.datasetStates[dataset.id] != DatasetState.done) {
         continue;
       }
       final DatasetArtifactSnapshot? snapshot =
-          await _loadSnapshotForNodeDataset(parent.id, dataset.id);
-      if (snapshot == null || snapshot.isEmpty) {
+          await _loadSnapshotForNodeDataset(upstreamNode.id, dataset.id);
+      if (snapshot != null && !snapshot.isEmpty) {
+        _snapshotScopedToNodeOutputs(upstreamNode, snapshot).applyToDataset(view);
+        appliedAnySnapshot = true;
         continue;
       }
-      snapshot.applyToDataset(dataset);
-      return;
+      if (upstreamNode.type is ImportNodeType && !appliedAnySnapshot) {
+        _applyLiveSourceArtifacts(view, dataset);
+      }
     }
+    if (appliedAnySnapshot || view.timeSeries != null) {
+      _replaceDatasetRam(dataset, view);
+    }
+  }
+
+  void _replaceDatasetRam(Dataset target, Dataset source) {
+    target.ram
+      ..clear()
+      ..addAll(source.ram);
+  }
+
+  DatasetArtifactSnapshot _snapshotScopedToNodeOutputs(
+    NodeModel node,
+    DatasetArtifactSnapshot snapshot,
+  ) {
+    if (snapshot.includedKinds != null) {
+      return snapshot;
+    }
+    final Set<BrainStoryArtifactKind> kinds =
+        _artifactKindsForSnapshotOutputs(node, snapshot);
+    if (kinds.isEmpty) {
+      return snapshot;
+    }
+    return DatasetArtifactSnapshot(
+      timeSeries: kinds.contains(BrainStoryArtifactKind.timeSeries)
+          ? snapshot.timeSeries
+          : null,
+      segmentedTimeSeries:
+          kinds.contains(BrainStoryArtifactKind.segmentedTimeSeries)
+              ? snapshot.segmentedTimeSeries
+              : null,
+      spectrum: kinds.contains(BrainStoryArtifactKind.spectrum)
+          ? snapshot.spectrum
+          : null,
+      fooofResult: kinds.contains(BrainStoryArtifactKind.fooofResult)
+          ? snapshot.fooofResult
+          : null,
+      featureTable: kinds.contains(BrainStoryArtifactKind.featureTable)
+          ? snapshot.featureTable
+          : null,
+      bridgeDetection: kinds.contains(BrainStoryArtifactKind.bridgeDetection)
+          ? snapshot.bridgeDetection
+          : null,
+      timeFrequency: kinds.contains(BrainStoryArtifactKind.timeFrequency)
+          ? snapshot.timeFrequency
+          : null,
+      matrixTransformation:
+          kinds.contains(BrainStoryArtifactKind.matrixTransformation)
+              ? snapshot.matrixTransformation
+              : null,
+      markers: kinds.contains(BrainStoryArtifactKind.markers)
+          ? snapshot.markers ??
+              snapshot.timeSeries?.markers
+                  .map((TimeMarker marker) => TimeMarker.fromJson(marker.toJson()))
+                  .toList(growable: false)
+          : null,
+      artifactIdentities:
+          Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
+        snapshot.artifactIdentities.entries.where(
+          (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+              kinds.contains(entry.key),
+        ),
+      ),
+      includedKinds: kinds,
+    );
   }
 
   Future<DatasetArtifactSnapshot?> _loadSnapshotForNodeDataset(
@@ -2689,10 +3524,20 @@ class CanvasLogic {
   }
 
   bool _isHighlighted(NodeModel node) {
-    return node.id == selectedNodeId;
+    return node.id == selectedNodeId ||
+        selectedNodeIds.contains(node.id) ||
+        node.id == keyboardFocusedNodeId;
   }
 
   Color _nodeHighlightColor(NodeModel node) {
+    if (selectedNodeIds.length > 1 && selectedNodeIds.contains(node.id)) {
+      return const Color(0xFF6DD3FF);
+    }
+    if (node.id == keyboardFocusedNodeId &&
+        node.id != selectedNodeId &&
+        !selectedNodeIds.contains(node.id)) {
+      return const Color(0xFF24D6A7);
+    }
     return const Color(0xFF958A52);
   }
 
@@ -2767,6 +3612,26 @@ class CanvasLogic {
     return null;
   }
 
+  NodeModel? _channelEditSourceNode(String nodeId) {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null) {
+      return null;
+    }
+    if (node.type is EditChannelsNodeType) {
+      return node;
+    }
+    if (node.type is VisualizationNodeType) {
+      final List<NodeModel> parents = _immediateParents(node.id)
+          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
+          .toList(growable: false);
+      if (parents.isNotEmpty) {
+        return parents.first;
+      }
+      return null;
+    }
+    return node;
+  }
+
   NodeModel _ensureMarkerNode(NodeModel sourceNode) {
     if (sourceNode.type is AddRemoveMarkersNodeType) {
       return sourceNode;
@@ -2826,6 +3691,68 @@ class CanvasLogic {
     return markerNode;
   }
 
+  NodeModel _ensureChannelEditNode(NodeModel sourceNode) {
+    if (sourceNode.type is EditChannelsNodeType) {
+      return sourceNode;
+    }
+
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['fromNode'] != sourceNode.id) {
+        continue;
+      }
+      final NodeModel? child = _findNode(connection['toNode'] as String);
+      if (child?.type is EditChannelsNodeType) {
+        return child!;
+      }
+    }
+
+    final NodeType channelType = EditChannelsNodeType();
+    final NodeModel channelNode = _buildNode(
+      type: channelType,
+      position: _nearestAvailablePosition(
+        Offset(
+          sourceNode.position.dx,
+          sourceNode.position.dy + _cardHeight + _spawnGap,
+        ),
+      ),
+      params: <String, dynamic>{
+        ...channelType.defaultParams,
+        if (sourceNode.params['selectedDatasetIds'] != null)
+          'selectedDatasetIds': List<dynamic>.from(
+            sourceNode.params['selectedDatasetIds'] as List<dynamic>,
+          ),
+      },
+    );
+    nodes.add(channelNode);
+
+    int? fromPortIndex;
+    int? toPortIndex;
+    for (int candidateFromPort = 0;
+        candidateFromPort < sourceNode.outputPorts.length;
+        candidateFromPort++) {
+      final int? candidateToPort = _matchingInputPortForOutputPort(
+        sourceNode,
+        candidateFromPort,
+        channelNode,
+      );
+      if (candidateToPort != null) {
+        fromPortIndex = candidateFromPort;
+        toPortIndex = candidateToPort;
+        break;
+      }
+    }
+    if (fromPortIndex != null && toPortIndex != null) {
+      connections.add(<String, dynamic>{
+        'fromNode': sourceNode.id,
+        'fromPort': fromPortIndex,
+        'toNode': channelNode.id,
+        'toPort': toPortIndex,
+      });
+    }
+
+    return channelNode;
+  }
+
   double _snapCoordinate(double value, double gridSize) {
     return math.max(
       0,
@@ -2865,6 +3792,84 @@ class CanvasLogic {
     return candidate;
   }
 
+  void moveNodeOrSelection(NodeModel draggedNode, Offset targetPosition) {
+    if (!selectedNodeIds.contains(draggedNode.id) || selectedNodeIds.length <= 1) {
+      final Offset nextPosition = _nearestAvailablePosition(
+        targetPosition,
+        movingNodeId: draggedNode.id,
+      );
+      if (nextPosition != draggedNode.position) {
+        _recordUndo('move node');
+        draggedNode.position = nextPosition;
+      }
+      selectedNodeId = draggedNode.id;
+      selectedNodeIds
+        ..clear()
+        ..add(draggedNode.id);
+      return;
+    }
+
+    final Set<String> movingIds = Set<String>.from(selectedNodeIds);
+    final Offset snappedTarget = snapToGrid(targetPosition);
+    final Offset delta = snappedTarget - draggedNode.position;
+    if (delta == Offset.zero) {
+      return;
+    }
+
+    final Map<String, Offset> nextPositions = <String, Offset>{};
+    for (final NodeModel node in nodes) {
+      if (!movingIds.contains(node.id)) {
+        continue;
+      }
+      nextPositions[node.id] = Offset(
+        math.max(0, node.position.dx + delta.dx),
+        math.max(0, node.position.dy + delta.dy),
+      );
+    }
+
+    if (_groupMoveOverlapsAnyNode(nextPositions, movingIds)) {
+      return;
+    }
+
+    _recordUndo('move nodes');
+    for (final NodeModel node in nodes) {
+      final Offset? nextPosition = nextPositions[node.id];
+      if (nextPosition != null) {
+        node.position = nextPosition;
+      }
+    }
+    selectedNodeId = draggedNode.id;
+  }
+
+  bool _groupMoveOverlapsAnyNode(
+    Map<String, Offset> nextPositions,
+    Set<String> movingIds,
+  ) {
+    for (final MapEntry<String, Offset> entry in nextPositions.entries) {
+      final Rect probe = Rect.fromLTWH(
+        entry.value.dx,
+        entry.value.dy,
+        _cardWidth,
+        _cardHeight,
+      );
+      for (final NodeModel node in nodes) {
+        if (movingIds.contains(node.id)) {
+          continue;
+        }
+        final Rect occupied = Rect.fromLTWH(
+          node.position.dx,
+          node.position.dy,
+          _cardWidth,
+          _cardHeight,
+        );
+        if (probe.overlaps(occupied)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   bool _positionOverlapsAnyNode(
     Offset position, {
     String? movingNodeId,
@@ -2902,15 +3907,41 @@ class CanvasLogic {
     int fromPortIndex,
     NodeModel toNode,
   ) {
-    if (fromPortIndex < 0 || fromPortIndex >= fromNode.outputPorts.length) {
+    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(fromNode);
+    final _EffectiveOutputPort? effectivePort = effectivePorts.cast<_EffectiveOutputPort?>().firstWhere(
+      (_EffectiveOutputPort? port) => port?.portIndex == fromPortIndex,
+      orElse: () => null,
+    );
+    if (effectivePort == null) {
       return null;
     }
-    final PortType outputType = fromNode.outputPorts[fromPortIndex].type;
+    final PortType outputType = effectivePort.port.type;
     for (int toPortIndex = 0;
         toPortIndex < toNode.inputPorts.length;
         toPortIndex++) {
       if (toNode.inputPorts[toPortIndex].type == outputType) {
         return toPortIndex;
+      }
+    }
+    return null;
+  }
+
+  _PortConnection? _firstMatchingPortConnection(
+    NodeModel fromNode,
+    NodeModel toNode,
+  ) {
+    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(fromNode);
+    for (final _EffectiveOutputPort outputPort in effectivePorts) {
+      final int? toPortIndex = _matchingInputPortForOutputPort(
+        fromNode,
+        outputPort.portIndex,
+        toNode,
+      );
+      if (toPortIndex != null) {
+        return _PortConnection(
+          fromPortIndex: outputPort.portIndex,
+          toPortIndex: toPortIndex,
+        );
       }
     }
     return null;
@@ -2927,33 +3958,38 @@ class CanvasLogic {
     NodeModel toNode, {
     required int fromPortIndex,
   }) {
-    final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
-    final Rect? outputRect = _outputRectForPort(fromNode, fromPortIndex);
-    if (preferVertical) {
-      return Offset(
-        outputRect?.center.dx ?? (fromNode.position.dx + (_cardWidth / 2)),
-        outputRect?.bottom ?? (fromNode.position.dy + _cardHeight),
-      );
-    }
-
-    return Offset(
-      outputRect?.right ?? (fromNode.position.dx + _cardWidth),
-      outputRect?.center.dy ?? (fromNode.position.dy + (_cardHeight / 2)),
-    );
+    return _nodeEdgeAnchorFacing(fromNode, toNode);
   }
 
   Offset _inputAnchor(NodeModel fromNode, NodeModel toNode) {
-    final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
-    if (preferVertical) {
+    return _nodeEdgeAnchorFacing(toNode, fromNode);
+  }
+
+  Offset _nodeEdgeAnchorFacing(NodeModel node, NodeModel target) {
+    final Offset nodeCenter = Offset(
+      node.position.dx + (_cardWidth / 2),
+      node.position.dy + (_cardHeight / 2),
+    );
+    final Offset targetCenter = Offset(
+      target.position.dx + (_cardWidth / 2),
+      target.position.dy + (_cardHeight / 2),
+    );
+    final Offset delta = targetCenter - nodeCenter;
+    if (delta.dx.abs() > delta.dy.abs()) {
       return Offset(
-        toNode.position.dx + (_cardWidth / 2),
-        toNode.position.dy,
+        delta.dx >= 0 ? node.position.dx + _cardWidth : node.position.dx,
+        nodeCenter.dy,
       );
     }
-
+    if (delta.dy >= 0) {
+      return Offset(
+        nodeCenter.dx,
+        node.position.dy + _cardHeight,
+      );
+    }
     return Offset(
-      toNode.position.dx,
-      toNode.position.dy + (_cardHeight / 2),
+      nodeCenter.dx,
+      node.position.dy,
     );
   }
 
@@ -3045,34 +4081,29 @@ class CanvasLogic {
         .toList(growable: false);
   }
 
-  List<NodeOutputHandleViewData> _outputHandlesForNode(NodeModel node) {
-    final DatasetArtifactSnapshot? snapshot = _primarySnapshotForNode(node);
-    if (snapshot == null && !_hasAnyDiskSnapshot(node.id)) {
-      return const <NodeOutputHandleViewData>[];
-    }
-
-    final List<NodeOutputHandleViewData> handles = <NodeOutputHandleViewData>[];
-    for (int portIndex = 0; portIndex < node.outputPorts.length; portIndex++) {
-      final PortSpec port = node.outputPorts[portIndex];
-      final _OutputHandleDescriptor? descriptor = _outputDescriptorForPort(
-        node: node,
-        portIndex: portIndex,
-        port: port,
-        snapshot: snapshot,
-      );
-      if (descriptor == null) {
-        continue;
-      }
-      handles.add(
-        NodeOutputHandleViewData(
-          portIndex: portIndex,
-          color: _outputHandleColor(descriptor.kind),
-          badgeText: descriptor.badgeText,
-          tooltip: descriptor.tooltip,
+  List<_EffectiveOutputPort> _effectiveOutputPorts(NodeModel node) {
+    final List<_EffectiveOutputPort> ports = <_EffectiveOutputPort>[
+      for (int index = 0; index < node.outputPorts.length; index++)
+        _EffectiveOutputPort(portIndex: index, port: node.outputPorts[index]),
+    ];
+    final bool hasSignalLikeOutput = node.outputPorts.any(
+      (PortSpec port) =>
+          port.type == PortType.signal ||
+          (port.type == PortType.metadata &&
+              port.name.toLowerCase().contains('segments')),
+    );
+    final bool hasMarkerOutput = node.outputPorts.any(
+      (PortSpec port) => port.type == PortType.markers,
+    );
+    if (hasSignalLikeOutput && !hasMarkerOutput) {
+      ports.add(
+        _EffectiveOutputPort(
+          portIndex: node.outputPorts.length,
+          port: const PortSpec(name: 'markers', type: PortType.markers),
         ),
       );
     }
-    return handles;
+    return ports;
   }
 
   bool _hasAnyDiskSnapshot(String nodeId) =>
@@ -3114,6 +4145,7 @@ class CanvasLogic {
           final int segmentCount = snapshot!.spectrum!.segmentCount;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.spectrum,
+            hasOutput: true,
             badgeText: segmentCount == 1 ? '' : '$segmentCount',
             tooltip: '${port.name} output',
           );
@@ -3121,34 +4153,33 @@ class CanvasLogic {
         if (snapshot?.timeSeries != null) {
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.timeSeries,
+            hasOutput: true,
             badgeText: '',
             tooltip: '${port.name} output',
           );
         }
-        return _hasAnyDiskSnapshot(node.id)
-            ? _OutputHandleDescriptor(
-                kind: portName.contains('psd')
-                    ? _OutputHandleKind.spectrum
-                    : _OutputHandleKind.timeSeries,
-                badgeText: '',
-                tooltip: '${port.name} output',
-              )
-            : null;
+        return _OutputHandleDescriptor(
+          kind: portName.contains('psd')
+              ? _OutputHandleKind.spectrum
+              : _OutputHandleKind.timeSeries,
+          hasOutput: _hasAnyDiskSnapshot(node.id),
+          badgeText: '',
+          tooltip: '${port.name} output',
+        );
       case PortType.markers:
         final int markerCount = snapshot?.timeSeries?.markers.length ?? 0;
-        if (snapshot?.timeSeries != null || _hasAnyDiskSnapshot(node.id)) {
-          return _OutputHandleDescriptor(
-            kind: _OutputHandleKind.markers,
-            badgeText: markerCount == 1 ? '' : '$markerCount',
-            tooltip: '${port.name} output',
-          );
-        }
-        return null;
+        return _OutputHandleDescriptor(
+          kind: _OutputHandleKind.markers,
+          hasOutput: snapshot?.timeSeries != null || _hasAnyDiskSnapshot(node.id),
+          badgeText: markerCount == 1 ? '' : '$markerCount',
+          tooltip: '${port.name} output',
+        );
       case PortType.metadata:
         if (portName.contains('segments') && snapshot?.segmentedTimeSeries != null) {
           final int segmentCount = snapshot!.segmentedTimeSeries!.segmentCount;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.segments,
+            hasOutput: true,
             badgeText: segmentCount == 1 ? '' : '$segmentCount',
             tooltip: '${port.name} output',
           );
@@ -3157,6 +4188,7 @@ class CanvasLogic {
             (portName.contains('time_frequency') || portName.contains('time-frequency'))) {
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.timeFrequency,
+            hasOutput: true,
             badgeText: '',
             tooltip: '${port.name} output',
           );
@@ -3165,6 +4197,7 @@ class CanvasLogic {
           final int rowCount = snapshot!.featureTable!.rows.length;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.table,
+            hasOutput: true,
             badgeText: rowCount == 1 ? '' : '$rowCount',
             tooltip: '${port.name} output',
           );
@@ -3173,6 +4206,7 @@ class CanvasLogic {
           final int frameCount = snapshot!.bridgeDetection!.frameCount;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.table,
+            hasOutput: true,
             badgeText: frameCount == 1 ? '' : '$frameCount',
             tooltip: '${port.name} output',
           );
@@ -3181,20 +4215,19 @@ class CanvasLogic {
           final int peakCount = snapshot!.fooofResult!.peaks.length;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.table,
+            hasOutput: true,
             badgeText: peakCount == 1 ? '' : '$peakCount',
             tooltip: '${port.name} output',
           );
         }
-        if (_hasAnyDiskSnapshot(node.id)) {
-          return _OutputHandleDescriptor(
-            kind: portName.contains('segments')
-                ? _OutputHandleKind.segments
-                : _OutputHandleKind.table,
-            badgeText: '',
-            tooltip: '${port.name} output',
-          );
-        }
-        return null;
+        return _OutputHandleDescriptor(
+          kind: portName.contains('segments')
+              ? _OutputHandleKind.segments
+              : _OutputHandleKind.table,
+          hasOutput: _hasAnyDiskSnapshot(node.id),
+          badgeText: '',
+          tooltip: '${port.name} output',
+        );
       case PortType.matrixTransformation:
         if (snapshot?.matrixTransformation != null) {
           final int count = snapshot!.matrixTransformation!.componentLabels.isNotEmpty
@@ -3202,55 +4235,24 @@ class CanvasLogic {
               : snapshot.matrixTransformation!.matrix.length;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.matrix,
+            hasOutput: true,
             badgeText: count == 1 ? '' : '$count',
             tooltip: '${port.name} output',
           );
         }
-        return _hasAnyDiskSnapshot(node.id)
-            ? _OutputHandleDescriptor(
-                kind: _OutputHandleKind.matrix,
-                badgeText: '',
-                tooltip: '${port.name} output',
-              )
-            : null;
-    }
-  }
-
-  Rect? _outputRectForPort(NodeModel node, int portIndex) {
-    final List<NodeOutputHandleViewData> visibleHandles = _outputHandlesForNode(node);
-    const double handleSize = 18;
-    const double handleGap = 6;
-
-    if (visibleHandles.isNotEmpty) {
-      final int visibleIndex =
-          visibleHandles.indexWhere((NodeOutputHandleViewData handle) => handle.portIndex == portIndex);
-      if (visibleIndex >= 0) {
-        final double totalWidth =
-            (visibleHandles.length * handleSize) + ((visibleHandles.length - 1) * handleGap);
-        final double startLeft = (node.position.dx + (_cardWidth - totalWidth) / 2);
-        return Rect.fromLTWH(
-          startLeft + (visibleIndex * (handleSize + handleGap)),
-          node.position.dy + _cardHeight - handleSize - 6,
-          handleSize,
-          handleSize,
+        return _OutputHandleDescriptor(
+          kind: _OutputHandleKind.matrix,
+          hasOutput: _hasAnyDiskSnapshot(node.id),
+          badgeText: '',
+          tooltip: '${port.name} output',
         );
-      }
     }
-
-    final int outputCount = math.max(1, node.outputPorts.length);
-    final double totalWidth =
-        (outputCount * handleSize) + ((outputCount - 1) * handleGap);
-    final double startLeft = node.position.dx + (_cardWidth - totalWidth) / 2;
-    return Rect.fromLTWH(
-      startLeft + (portIndex * (handleSize + handleGap)),
-      node.position.dy + _cardHeight - handleSize - 6,
-      handleSize,
-      handleSize,
-    );
   }
 
   Color _outputColorForPort(NodeModel node, int portIndex) {
-    final PortSpec port = node.outputPorts[portIndex];
+    final PortSpec port = _effectiveOutputPorts(node)
+        .firstWhere(( _EffectiveOutputPort item) => item.portIndex == portIndex)
+        .port;
     final _OutputHandleDescriptor? descriptor = _outputDescriptorForPort(
       node: node,
       portIndex: portIndex,
@@ -3280,16 +4282,39 @@ class CanvasLogic {
         return Colors.white70;
     }
   }
+
 }
 
 class _OutputHandleDescriptor {
   const _OutputHandleDescriptor({
     required this.kind,
+    required this.hasOutput,
     required this.badgeText,
     required this.tooltip,
   });
 
   final _OutputHandleKind kind;
+  final bool hasOutput;
   final String badgeText;
   final String tooltip;
+}
+
+class _EffectiveOutputPort {
+  const _EffectiveOutputPort({
+    required this.portIndex,
+    required this.port,
+  });
+
+  final int portIndex;
+  final PortSpec port;
+}
+
+class _PortConnection {
+  const _PortConnection({
+    required this.fromPortIndex,
+    required this.toPortIndex,
+  });
+
+  final int fromPortIndex;
+  final int toPortIndex;
 }

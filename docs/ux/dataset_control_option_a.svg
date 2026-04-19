@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="760" viewBox="0 0 1180 760">
+  <rect width="1180" height="760" fill="#f3f5f7"/>
+  <text x="70" y="70" font-family="Verdana, Arial, sans-serif" font-size="34" font-weight="700" fill="#1f2937">Option A: Unified Table</text>
+  <text x="70" y="104" font-family="Verdana, Arial, sans-serif" font-size="17" fill="#4b5563">Best for scanning many datasets quickly. One row per dataset, with current state and controls in the same line.</text>
+
+  <rect x="70" y="140" width="1040" height="560" rx="22" fill="#ffffff" stroke="#d5dbe3"/>
+  <rect x="94" y="174" width="992" height="56" rx="14" fill="#111827"/>
+  <text x="122" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Use</text>
+  <text x="206" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Dataset</text>
+  <text x="520" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Current State</text>
+  <text x="758" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Storage Intent</text>
+  <text x="954" y="209" font-family="Verdana, Arial, sans-serif" font-size="16" font-weight="700" fill="#f9fafb">Actions</text>
+
+  <rect x="94" y="246" width="992" height="94" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <rect x="120" y="279" width="22" height="22" rx="5" fill="#14b8a6"/>
+  <text x="206" y="280" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Zhao_Alex_01</text>
+  <text x="206" y="304" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">from #1 Import and #3 Segmentation</text>
+  <rect x="520" y="264" width="92" height="28" rx="14" fill="#dcfce7"/>
+  <text x="546" y="283" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#166534">Available</text>
+  <rect x="618" y="264" width="76" height="28" rx="14" fill="#dbeafe"/>
+  <text x="639" y="283" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#1d4ed8">Done</text>
+  <rect x="700" y="264" width="62" height="28" rx="14" fill="#fef3c7"/>
+  <text x="718" y="283" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#b45309">RAM</text>
+  <rect x="758" y="258" width="170" height="40" rx="20" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="762" y="262" width="50" height="32" rx="16" fill="#0f172a"/>
+  <text x="776" y="283" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">RAM</text>
+  <text x="828" y="283" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Disk</text>
+  <text x="873" y="283" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Both</text>
+  <text x="918" y="283" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">None</text>
+  <rect x="954" y="258" width="60" height="36" rx="18" fill="#111827"/>
+  <text x="969" y="281" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f9fafb">Load</text>
+  <rect x="1022" y="258" width="64" height="36" rx="18" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1038" y="281" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#111827">Save</text>
+
+  <rect x="94" y="356" width="992" height="94" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <rect x="120" y="389" width="22" height="22" rx="5" fill="#14b8a6"/>
+  <text x="206" y="390" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Zhao_Alex_01 (filtered)</text>
+  <text x="206" y="414" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">from #4 Bandpass Filter and #5 Segmentation</text>
+  <rect x="520" y="374" width="92" height="28" rx="14" fill="#fee2e2"/>
+  <text x="545" y="393" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#b91c1c">Stale</text>
+  <rect x="618" y="374" width="76" height="28" rx="14" fill="#e9d5ff"/>
+  <text x="636" y="393" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#7e22ce">Disk</text>
+  <rect x="700" y="374" width="78" height="28" rx="14" fill="#f3f4f6"/>
+  <text x="719" y="393" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#4b5563">No RAM</text>
+  <rect x="758" y="368" width="170" height="40" rx="20" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="849" y="372" width="38" height="32" rx="16" fill="#0f172a"/>
+  <text x="776" y="393" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">RAM</text>
+  <text x="826" y="393" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Disk</text>
+  <text x="855" y="393" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">Both</text>
+  <text x="914" y="393" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">None</text>
+  <rect x="954" y="368" width="60" height="36" rx="18" fill="#111827"/>
+  <text x="970" y="391" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f9fafb">Load</text>
+  <rect x="1022" y="368" width="64" height="36" rx="18" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1034" y="391" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#111827">Release</text>
+
+  <rect x="94" y="466" width="992" height="94" rx="18" fill="#fbfcfd" stroke="#e5e7eb"/>
+  <rect x="120" y="499" width="22" height="22" rx="5" fill="#ffffff" stroke="#9ca3af"/>
+  <text x="206" y="500" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#111827">Scanner_Run_07</text>
+  <text x="206" y="524" font-family="Verdana, Arial, sans-serif" font-size="13" fill="#6b7280">from #1 Import only</text>
+  <rect x="520" y="484" width="110" height="28" rx="14" fill="#e5e7eb"/>
+  <text x="546" y="503" font-family="Verdana, Arial, sans-serif" font-size="13" font-weight="700" fill="#374151">Not available</text>
+  <rect x="758" y="478" width="170" height="40" rx="20" fill="#eef2f7" stroke="#cbd5e1"/>
+  <rect x="891" y="482" width="33" height="32" rx="16" fill="#0f172a"/>
+  <text x="776" y="503" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">RAM</text>
+  <text x="828" y="503" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Disk</text>
+  <text x="873" y="503" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#475569">Both</text>
+  <text x="900" y="503" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#f8fafc">None</text>
+  <rect x="954" y="478" width="60" height="36" rx="18" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="969" y="501" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#9ca3af">Load</text>
+  <rect x="1022" y="478" width="64" height="36" rx="18" fill="#ffffff" stroke="#d1d5db"/>
+  <text x="1040" y="501" font-family="Verdana, Arial, sans-serif" font-size="12" font-weight="700" fill="#9ca3af">Save</text>
+
+  <rect x="94" y="590" width="992" height="84" rx="18" fill="#eef6ff" stroke="#93c5fd"/>
+  <text x="122" y="626" font-family="Verdana, Arial, sans-serif" font-size="18" font-weight="700" fill="#1e3a8a">Why it works</text>
+  <text x="122" y="652" font-family="Verdana, Arial, sans-serif" font-size="15" fill="#1f2937">Strong for large projects. Weakness: the status meaning and the storage intent can blur together unless the labels are very disciplined.</text>
+</svg>

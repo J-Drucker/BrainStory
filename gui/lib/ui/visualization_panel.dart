@@ -187,20 +187,47 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
           children: <Widget>[
-            Expanded(
-              child: Text(
-                node.title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-                overflow: TextOverflow.ellipsis,
+            Text(
+              sourceDatasets.isEmpty
+                  ? (comparisonNode
+                      ? 'Connect this visualization node to an Import-backed path and choose datasets to compare.'
+                      : 'Run an Import-backed path into this node so there is output available to inspect.')
+                  : (comparisonNode
+                      ? 'Select one or more datasets to compare.'
+                      : 'Select one or more datasets to inspect.'),
+              style: const TextStyle(
+                color: Colors.white70,
+                height: 1.2,
               ),
             ),
-            const SizedBox(width: 8),
+            if (sourceDatasets.isNotEmpty)
+              ...sourceDatasets.map((Dataset dataset) {
+                final bool selected = _selectedDatasetIds.contains(dataset.id);
+                return FilterChip(
+                  label: Text(dataset.label),
+                  selected: selected,
+                  onSelected: (bool nextValue) {
+                    setState(() {
+                      if (nextValue) {
+                        _selectedDatasetIds.add(dataset.id);
+                        _activeDatasetId ??= dataset.id;
+                      } else {
+                        _selectedDatasetIds.remove(dataset.id);
+                        if (_activeDatasetId == dataset.id) {
+                          _activeDatasetId = _selectedDatasetIds.isEmpty
+                              ? null
+                              : _selectedDatasetIds.first;
+                        }
+                      }
+                    });
+                  },
+                );
+              }),
             TextButton.icon(
               onPressed: widget.onOpenWindow == null
                   ? null
@@ -213,7 +240,6 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
         if (sourceDatasets.isEmpty)
           _emptyState(
             'No dataset',
@@ -222,39 +248,6 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                 : 'Run an Import-backed path into this node so there is output available to inspect.',
           )
         else ...<Widget>[
-          Text(
-            comparisonNode
-                ? 'Select one or more datasets to compare'
-                : 'Select one or more datasets to inspect',
-            style: const TextStyle(color: Colors.white70),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: sourceDatasets.map((Dataset dataset) {
-              final bool selected = _selectedDatasetIds.contains(dataset.id);
-              return FilterChip(
-                label: Text(dataset.label),
-                selected: selected,
-                onSelected: (bool nextValue) {
-                  setState(() {
-                    if (nextValue) {
-                      _selectedDatasetIds.add(dataset.id);
-                      _activeDatasetId ??= dataset.id;
-                    } else {
-                      _selectedDatasetIds.remove(dataset.id);
-                      if (_activeDatasetId == dataset.id) {
-                        _activeDatasetId = _selectedDatasetIds.isEmpty
-                            ? null
-                            : _selectedDatasetIds.first;
-                      }
-                    }
-                  });
-                },
-              );
-            }).toList(),
-          ),
           const SizedBox(height: 12),
           Expanded(
             child: FutureBuilder<List<Dataset>>(
@@ -511,6 +504,13 @@ class _VisualizationChart extends StatelessWidget {
           rawMarkers: rawMarkers,
         );
       },
+      onChannelEditsSaved: (Map<String, dynamic> config) {
+        logic.applyChannelEditsFromVisualization(
+          nodeId: nodeId,
+          dataset: activeDataset,
+          datasetConfig: config,
+        );
+      },
       onInteractiveArtifactDetectionSaved: () {
         logic.applyInteractiveArtifactDetectionFromVisualization(
           nodeId: nodeId,
@@ -560,7 +560,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     params.putIfAbsent('segmented_aggregate_by', () => 'segments');
     params.putIfAbsent('segmented_individual_count', () => 4);
     params.putIfAbsent('segmented_include_bad', () => false);
-    params.putIfAbsent('segmented_show_mean', () => true);
+    params.putIfAbsent('segmented_show_mean', () => false);
     params.putIfAbsent('segmented_show_traces', () => true);
     params.putIfAbsent('segmented_show_spread', () => false);
     params.putIfAbsent('segmented_focus_channel_index', () => 0);
@@ -599,7 +599,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
           ? visibleSegments.length
           : math.max(
               1,
-              visibleSegments[focusSegmentIndex].channelSamples.length,
+              segmented.channelCountForSegment(visibleSegments[focusSegmentIndex]),
             ),
       pageSize,
     );
@@ -674,7 +674,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                 valueLabel: _segmentChannelLabel(segmented, focusChannelIndex),
                 options: List<int>.generate(
                   segmented.channelLabels.isEmpty
-                      ? math.max(1, visibleSegments.first.channelSamples.length)
+                      ? math.max(1, segmented.channelCountForSegment(visibleSegments.first))
                       : segmented.channelLabels.length,
                   (int index) => index,
                   growable: false,
@@ -711,7 +711,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                   ? visibleSegments.length
                   : math.max(
                       1,
-                      visibleSegments[focusSegmentIndex].channelSamples.length,
+                      segmented.channelCountForSegment(visibleSegments[focusSegmentIndex]),
                     ),
               onPrevious: pageStart > 0
                   ? () {
@@ -726,7 +726,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                           ? visibleSegments.length
                           : math.max(
                               1,
-                              visibleSegments[focusSegmentIndex].channelSamples.length,
+                              segmented.channelCountForSegment(visibleSegments[focusSegmentIndex]),
                             ))
                   ? () {
                       setState(() {
@@ -768,7 +768,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
               ),
             FilterChip(
               label: const Text('Show mean'),
-              selected: params['segmented_show_mean'] as bool? ?? true,
+              selected: params['segmented_show_mean'] as bool? ?? false,
               onSelected: (bool value) {
                 setState(() {
                   params['segmented_show_mean'] = value;
@@ -812,7 +812,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
               aggregateBy: aggregateBy,
               focusChannelIndex: focusChannelIndex,
               focusSegmentIndex: focusSegmentIndex,
-              showMean: params['segmented_show_mean'] as bool? ?? true,
+              showMean: params['segmented_show_mean'] as bool? ?? false,
               showTraces: params['segmented_show_traces'] as bool? ?? true,
               showSpread: params['segmented_show_spread'] as bool? ?? false,
             ),
@@ -854,6 +854,7 @@ class _SegmentIndividualView extends StatelessWidget {
               return _MiniTraceData(
                 title: _segmentDisplayLabel(segment, absoluteIndex),
                 points: _segmentChannelSpots(
+                  segmented,
                   segment,
                   segmented.sampleRate,
                   focusChannelIndex,
@@ -863,7 +864,11 @@ class _SegmentIndividualView extends StatelessWidget {
             })
             .toList(growable: false)
         : List<int>.generate(
-            math.max(0, visibleSegments[focusSegmentIndex].channelSamples.length - pageStart),
+            math.max(
+              0,
+              segmented.channelCountForSegment(visibleSegments[focusSegmentIndex]) -
+                  pageStart,
+            ),
             (int index) => pageStart + index,
             growable: false,
           )
@@ -871,6 +876,7 @@ class _SegmentIndividualView extends StatelessWidget {
             .map((int channelIndex) => _MiniTraceData(
                   title: _segmentChannelLabel(segmented, channelIndex),
                   points: _segmentChannelSpots(
+                    segmented,
                     visibleSegments[focusSegmentIndex],
                     segmented.sampleRate,
                     channelIndex,
@@ -1109,7 +1115,7 @@ class _SegmentAggregateMontageView extends StatelessWidget {
   Widget build(BuildContext context) {
     final int channelCount = segmented.channelLabels.isNotEmpty
         ? segmented.channelLabels.length
-        : math.max(1, visibleSegments.first.channelSamples.length);
+        : math.max(1, segmented.channelCountForSegment(visibleSegments.first));
     return ListView.separated(
       itemCount: channelCount,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -2053,14 +2059,17 @@ String _segmentChannelLabel(SegmentedTimeSeriesData segmented, int index) {
 }
 
 List<FlSpot> _segmentChannelSpots(
+  SegmentedTimeSeriesData segmented,
   SignalSegmentData segment,
   double sampleRate,
   int channelIndex,
 ) {
-  if (channelIndex < 0 || channelIndex >= segment.channelSamples.length) {
+  final List<List<double>> channelSamples =
+      segmented.channelSamplesForSegment(segment);
+  if (channelIndex < 0 || channelIndex >= channelSamples.length) {
     return const <FlSpot>[];
   }
-  final List<double> values = segment.channelSamples[channelIndex];
+  final List<double> values = channelSamples[channelIndex];
   final double startMs = _relativeSegmentStartMs(segment);
   final double stepMs = sampleRate <= 0 ? 1.0 : 1000.0 / sampleRate;
   return List<FlSpot>.generate(
@@ -2083,6 +2092,7 @@ List<_AlignedTrace> _alignedSegmentTracesForChannel({
   final List<_AlignedTrace> traces = <_AlignedTrace>[];
   for (final SignalSegmentData segment in segments) {
     final List<FlSpot> spots = _segmentChannelSpots(
+      segmented,
       segment,
       segmented.sampleRate,
       channelIndex,
@@ -2105,8 +2115,11 @@ List<_AlignedTrace> _alignedChannelTracesForSegment({
   required SignalSegmentData segment,
 }) {
   final List<_AlignedTrace> traces = <_AlignedTrace>[];
-  for (int channelIndex = 0; channelIndex < segment.channelSamples.length; channelIndex++) {
+  for (int channelIndex = 0;
+      channelIndex < segmented.channelCountForSegment(segment);
+      channelIndex++) {
     final List<FlSpot> spots = _segmentChannelSpots(
+      segmented,
       segment,
       segmented.sampleRate,
       channelIndex,
@@ -2157,38 +2170,53 @@ _AggregatePlotData? _buildAggregatePlotData(
   }
 
   final List<double> xValues = traces.first.xValues.take(minLength).toList(growable: false);
-  final AggregateSeriesStats? aggregateStats = computeAggregateSeriesStatsWithFallback(
-    traces
-        .map(
-          (_AlignedTrace trace) => trace.values.take(minLength).toList(growable: false),
+  final bool needsAggregateStats = showMean || showSpread;
+  final AggregateSeriesStats? aggregateStats = needsAggregateStats
+      ? computeAggregateSeriesStatsWithFallback(
+          traces
+              .map(
+                (_AlignedTrace trace) =>
+                    trace.values.take(minLength).toList(growable: false),
+              )
+              .toList(growable: false),
         )
-        .toList(growable: false),
-  );
-  if (aggregateStats == null) {
+      : null;
+  if (needsAggregateStats && aggregateStats == null) {
     return null;
   }
 
-  final List<FlSpot> meanSpots = List<FlSpot>.generate(
-    minLength,
-    (int sampleIndex) => FlSpot(xValues[sampleIndex], aggregateStats.mean[sampleIndex]),
-    growable: false,
-  );
-  final List<FlSpot> upperSpots = List<FlSpot>.generate(
-    minLength,
-    (int sampleIndex) => FlSpot(
-      xValues[sampleIndex],
-      aggregateStats.mean[sampleIndex] + aggregateStats.standardDeviation[sampleIndex],
-    ),
-    growable: false,
-  );
-  final List<FlSpot> lowerSpots = List<FlSpot>.generate(
-    minLength,
-    (int sampleIndex) => FlSpot(
-      xValues[sampleIndex],
-      aggregateStats.mean[sampleIndex] - aggregateStats.standardDeviation[sampleIndex],
-    ),
-    growable: false,
-  );
+  final List<FlSpot> meanSpots = aggregateStats == null
+      ? const <FlSpot>[]
+      : List<FlSpot>.generate(
+          minLength,
+          (int sampleIndex) => FlSpot(
+            xValues[sampleIndex],
+            aggregateStats.mean[sampleIndex],
+          ),
+          growable: false,
+        );
+  final List<FlSpot> upperSpots = aggregateStats == null
+      ? const <FlSpot>[]
+      : List<FlSpot>.generate(
+          minLength,
+          (int sampleIndex) => FlSpot(
+            xValues[sampleIndex],
+            aggregateStats.mean[sampleIndex] +
+                aggregateStats.standardDeviation[sampleIndex],
+          ),
+          growable: false,
+        );
+  final List<FlSpot> lowerSpots = aggregateStats == null
+      ? const <FlSpot>[]
+      : List<FlSpot>.generate(
+          minLength,
+          (int sampleIndex) => FlSpot(
+            xValues[sampleIndex],
+            aggregateStats.mean[sampleIndex] -
+                aggregateStats.standardDeviation[sampleIndex],
+          ),
+          growable: false,
+        );
 
   final List<double> allY = <double>[
     if (showTraces)

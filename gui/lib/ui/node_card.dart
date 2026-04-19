@@ -4,12 +4,16 @@ class NodeOutputHandleViewData {
   const NodeOutputHandleViewData({
     required this.portIndex,
     required this.color,
+    required this.filled,
+    required this.label,
     this.badgeText = '',
     this.tooltip = '',
   });
 
   final int portIndex;
   final Color color;
+  final bool filled;
+  final String label;
   final String badgeText;
   final String tooltip;
 }
@@ -67,36 +71,49 @@ class NodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    bool hovering = false;
     return Positioned(
       left: position.dx,
       top: position.dy,
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            GestureDetector(
-              onTap: onTap,
-              onDoubleTap: onDoubleTap,
-              onSecondaryTapDown: (details) {
-                _showContextMenu(context, details.globalPosition);
-              },
-              child: Draggable(
-                dragAnchorStrategy: childDragAnchorStrategy,
-                feedback: _buildCard(),
-                childWhenDragging: Opacity(
-                  opacity: 0.5,
-                  child: _buildCard(),
-                ),
-                onDragEnd: (details) => onDragEnd(details.offset),
-                child: _buildCard(),
+      child: StatefulBuilder(
+        builder: (BuildContext context, StateSetter setHoverState) {
+          final bool showOutputHandles =
+              hovering || selectedOutputPortIndex != null;
+          final bool hasVisibleOutputHandles =
+              showOutputHandles && outputHandles.isNotEmpty && onOutputTap != null;
+          return MouseRegion(
+            onEnter: (_) => setHoverState(() => hovering = true),
+            onExit: (_) => setHoverState(() => hovering = false),
+            child: SizedBox(
+              width: width,
+              height: hasVisibleOutputHandles ? height + 28 : height,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: <Widget>[
+                  GestureDetector(
+                    onTap: onTap,
+                    onDoubleTap: onDoubleTap,
+                    onSecondaryTapDown: (details) {
+                      _showContextMenu(context, details.globalPosition);
+                    },
+                    child: Draggable(
+                      dragAnchorStrategy: childDragAnchorStrategy,
+                      feedback: _buildCard(),
+                      childWhenDragging: Opacity(
+                        opacity: 0.5,
+                        child: _buildCard(),
+                      ),
+                      onDragEnd: (details) => onDragEnd(details.offset),
+                      child: _buildCard(),
+                    ),
+                  ),
+                  ..._buildOutputHandles(showOutputHandles: hasVisibleOutputHandles),
+                ],
               ),
             ),
-            ..._buildOutputHandles(),
-          ],
+          );
+        },
         ),
-      ),
     );
   }
 
@@ -200,26 +217,37 @@ class NodeCard extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildOutputHandles() {
-    if (outputHandles.isEmpty || onOutputTap == null) {
+  List<Widget> _buildOutputHandles({required bool showOutputHandles}) {
+    if (!showOutputHandles || outputHandles.isEmpty || onOutputTap == null) {
       return const <Widget>[];
     }
 
-    const double handleSize = 18;
-    const double handleGap = 6;
+    const double handleWidth = 58;
+    const double handleHeight = 22;
+    const double handleGap = 8;
+    final int visualSlotCount =
+        outputHandles.length.isOdd ? outputHandles.length + 1 : outputHandles.length;
     final double totalWidth =
-        (outputHandles.length * handleSize) + ((outputHandles.length - 1) * handleGap);
+        (visualSlotCount * handleWidth) + ((visualSlotCount - 1) * handleGap);
     final double startLeft = (width - totalWidth) / 2;
+    final List<int> visualSlots = outputHandles.length.isOdd
+        ? List<int>.generate(
+            outputHandles.length,
+            (int index) => index >= (outputHandles.length / 2).floor() ? index + 1 : index,
+            growable: false,
+          )
+        : List<int>.generate(outputHandles.length, (int index) => index, growable: false);
 
     return outputHandles.asMap().entries.map((MapEntry<int, NodeOutputHandleViewData> entry) {
       final int visualIndex = entry.key;
       final NodeOutputHandleViewData handle = entry.value;
-      final double left = startLeft + (visualIndex * (handleSize + handleGap));
+      final double left = startLeft + (visualSlots[visualIndex] * (handleWidth + handleGap));
       return Positioned(
         left: left,
-        top: height - handleSize - 6,
+        top: height - 4,
         child: _NodeOutputHandle(
-          size: handleSize,
+          width: handleWidth,
+          height: handleHeight,
           data: handle,
           selected: selectedOutputPortIndex == handle.portIndex,
           onTap: () => onOutputTap?.call(handle.portIndex),
@@ -272,13 +300,15 @@ class NodeCard extends StatelessWidget {
 
 class _NodeOutputHandle extends StatefulWidget {
   const _NodeOutputHandle({
-    required this.size,
+    required this.width,
+    required this.height,
     required this.data,
     required this.selected,
     required this.onTap,
   });
 
-  final double size;
+  final double width;
+  final double height;
   final NodeOutputHandleViewData data;
   final bool selected;
   final VoidCallback onTap;
@@ -293,16 +323,22 @@ class _NodeOutputHandleState extends State<_NodeOutputHandle> {
   @override
   Widget build(BuildContext context) {
     final bool emphasized = _hovered || widget.selected;
-    final Widget square = AnimatedContainer(
+    final Widget handle = AnimatedContainer(
       duration: const Duration(milliseconds: 120),
-      width: widget.size,
-      height: widget.size,
+      width: widget.width,
+      height: widget.height,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: widget.data.color,
-        borderRadius: BorderRadius.circular(4),
+        color: widget.data.filled
+            ? widget.data.color
+            : widget.data.color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: emphasized ? Colors.white : Colors.black.withValues(alpha: 0.18),
+          color: emphasized
+              ? Colors.white
+              : widget.data.filled
+                  ? Colors.black.withValues(alpha: 0.18)
+                  : widget.data.color.withValues(alpha: 0.8),
           width: emphasized ? 2 : 1,
         ),
         boxShadow: emphasized
@@ -321,16 +357,22 @@ class _NodeOutputHandleState extends State<_NodeOutputHandle> {
                 ),
               ],
       ),
-      child: Text(
-        widget.data.badgeText,
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.96),
-          fontSize: widget.data.badgeText.length > 2 ? 7 : 8,
-          fontWeight: FontWeight.w800,
-          height: 1.0,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Text(
+          widget.data.label,
+          style: TextStyle(
+            color: widget.data.filled
+                ? Colors.white.withValues(alpha: 0.96)
+                : widget.data.color.withValues(alpha: 0.96),
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+            height: 1.0,
+            letterSpacing: -0.2,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        maxLines: 1,
-        overflow: TextOverflow.visible,
       ),
     );
 
@@ -344,7 +386,7 @@ class _NodeOutputHandleState extends State<_NodeOutputHandle> {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          child: square,
+          child: handle,
         ),
       ),
     );

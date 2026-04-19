@@ -196,6 +196,7 @@ class SegmentationNodeType extends NodeType {
       sampleRate: timeSeries.sampleRate,
       channelLabels: timeSeries.channelLabels,
       source: timeSeries.source,
+      sourceTimeSeries: timeSeries,
     );
     dataset.ram['segmentation.config'] = Map<String, dynamic>.from(params);
   }
@@ -414,19 +415,13 @@ SignalSegmentData? _extractSegment({
   }
 
   return SignalSegmentData(
-    channelSamples: timeSeries.channels
-        .map(
-          (List<double> channel) => channel.sublist(
-            interval.startIndex,
-            interval.stopIndex,
-          ),
-        )
-        .toList(growable: false),
     startSeconds: interval.startIndex / timeSeries.sampleRate,
     stopSeconds: interval.stopIndex / timeSeries.sampleRate,
     label: label,
     kind: kind,
     anchorTimeSeconds: anchorTimeSeconds,
+    sourceStartSample: interval.startIndex,
+    sourceStopSampleExclusive: interval.stopIndex,
   );
 }
 

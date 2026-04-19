@@ -13,6 +13,7 @@ enum PortType { signal, metadata, markers, matrixTransformation }
 enum NodeCategory {
   import,
   transform,
+  multimodal,
   machineLearning,
   markerFunctions,
   endpoints,
@@ -28,6 +29,8 @@ extension NodeCategoryPresentation on NodeCategory {
         return 'Data Wrangling';
       case NodeCategory.transform:
         return 'Signal Processing';
+      case NodeCategory.multimodal:
+        return 'Multimodal';
       case NodeCategory.machineLearning:
         return 'Machine Learning';
       case NodeCategory.markerFunctions:
@@ -45,6 +48,8 @@ extension NodeCategoryPresentation on NodeCategory {
         return Colors.green;
       case NodeCategory.transform:
         return Colors.indigo;
+      case NodeCategory.multimodal:
+        return Colors.blueGrey;
       case NodeCategory.machineLearning:
         return Colors.redAccent;
       case NodeCategory.markerFunctions:
@@ -243,6 +248,7 @@ abstract class NodeType {
       case NodeCategory.endpoints:
         return NodeStoragePolicy.preferRam;
       case NodeCategory.transform:
+      case NodeCategory.multimodal:
       case NodeCategory.machineLearning:
       case NodeCategory.markerFunctions:
         return NodeStoragePolicy.automatic;

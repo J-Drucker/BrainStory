@@ -142,7 +142,9 @@ class RealignNodeType extends NodeType {
     );
 
     final List<SignalSegmentData> segments = segmented.segments;
-    final List<List<double>> referenceUpsampled = segments.first.channelSamples
+    final List<List<double>> referenceChannels =
+        segmented.channelSamplesForSegment(segments.first);
+    final List<List<double>> referenceUpsampled = referenceChannels
         .map(
           (List<double> channel) => resampleSignal(
             channel,
@@ -156,7 +158,9 @@ class RealignNodeType extends NodeType {
 
     final List<SignalSegmentData> alignedSegments = <SignalSegmentData>[];
     for (final SignalSegmentData segment in segments) {
-      final List<List<double>> upsampledChannels = segment.channelSamples
+      final List<List<double>> segmentChannels =
+          segmented.channelSamplesForSegment(segment);
+      final List<List<double>> upsampledChannels = segmentChannels
           .map(
             (List<double> channel) => resampleSignal(
               channel,
@@ -184,7 +188,7 @@ class RealignNodeType extends NodeType {
                 targetSampleRate: segmented.sampleRate,
                 method: method,
               ),
-              segment.sampleCount,
+              segmented.sampleCountForSegment(segment),
             ),
           )
           .toList(growable: false);
@@ -192,6 +196,7 @@ class RealignNodeType extends NodeType {
       alignedSegments.add(
         segment.copyWith(
           channelSamples: shiftedChannels,
+          clearSourceWindow: true,
           appliedShiftMs: shiftSamples / targetSampleRate * 1000.0,
         ),
       );

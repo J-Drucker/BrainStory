@@ -21,6 +21,63 @@ class Dataset {
         this.sourceBytes,
       });
 
+  Map<BrainStoryArtifactKind, ArtifactIdentity> get artifactIdentities {
+    final Object? rawValue = ram['artifact.identities'];
+    if (rawValue is Map<BrainStoryArtifactKind, ArtifactIdentity>) {
+      return Map<BrainStoryArtifactKind, ArtifactIdentity>.from(rawValue);
+    }
+    if (rawValue is Map) {
+      return rawValue.map<BrainStoryArtifactKind, ArtifactIdentity>(
+        (dynamic key, dynamic value) {
+          final BrainStoryArtifactKind kind = key is BrainStoryArtifactKind
+              ? key
+              : artifactKindFromWireValue(key.toString());
+          final ArtifactIdentity identity = value is ArtifactIdentity
+              ? value
+              : ArtifactIdentity.fromJson(
+                  Map<String, dynamic>.from(
+                    value as Map? ?? const <String, dynamic>{},
+                  ),
+                );
+          return MapEntry<BrainStoryArtifactKind, ArtifactIdentity>(
+            kind,
+            identity,
+          );
+        },
+      );
+    }
+    return const <BrainStoryArtifactKind, ArtifactIdentity>{};
+  }
+
+  set artifactIdentities(
+    Map<BrainStoryArtifactKind, ArtifactIdentity> value,
+  ) {
+    if (value.isEmpty) {
+      ram.remove('artifact.identities');
+      return;
+    }
+    ram['artifact.identities'] =
+        Map<BrainStoryArtifactKind, ArtifactIdentity>.from(value);
+  }
+
+  ArtifactIdentity? artifactIdentityFor(BrainStoryArtifactKind kind) {
+    return artifactIdentities[kind];
+  }
+
+  void setArtifactIdentity(ArtifactIdentity identity) {
+    artifactIdentities = <BrainStoryArtifactKind, ArtifactIdentity>{
+      ...artifactIdentities,
+      identity.kind: identity,
+    };
+  }
+
+  void clearArtifactIdentity(BrainStoryArtifactKind kind) {
+    final Map<BrainStoryArtifactKind, ArtifactIdentity> identities =
+        Map<BrainStoryArtifactKind, ArtifactIdentity>.from(artifactIdentities);
+    identities.remove(kind);
+    artifactIdentities = identities;
+  }
+
   TimeSeriesData? get timeSeries =>
       ram['artifact.timeSeries'] as TimeSeriesData?;
   set timeSeries(TimeSeriesData? value) {
@@ -30,9 +87,11 @@ class Dataset {
       ram.remove('signal.channels');
       ram.remove('signal.fs');
       ram.remove('signal.channelLabels');
+      ram.remove('signal.channelCoordinates');
       ram.remove('signal.markers');
       ram.remove('signal.factors');
       ram.remove('signal.source');
+      clearArtifactIdentity(BrainStoryArtifactKind.timeSeries);
       return;
     }
     ram['artifact.timeSeries'] = value;
@@ -40,6 +99,10 @@ class Dataset {
     ram['signal.channels'] = value.channels;
     ram['signal.fs'] = value.sampleRate;
     ram['signal.channelLabels'] = value.channelLabels;
+    ram['signal.channelCoordinates'] = value.channelCoordinates.map(
+      (String key, ChannelCoordinate coordinate) =>
+          MapEntry<String, dynamic>(key, coordinate.toJson()),
+    );
     ram['signal.markers'] = value.markers.map((TimeMarker marker) => marker.toJson()).toList();
     ram['signal.factors'] =
         value.factors.map((Factor factor) => factor.toJson()).toList();
@@ -54,6 +117,7 @@ class Dataset {
       ram.remove('psd.freqs');
       ram.remove('psd.power');
       ram.remove('psd.segmentCount');
+      clearArtifactIdentity(BrainStoryArtifactKind.spectrum);
       return;
     }
     ram['artifact.spectrum'] = value;
@@ -70,6 +134,7 @@ class Dataset {
       ram.remove('fooof.intercept');
       ram.remove('fooof.exponent');
       ram.remove('fooof.peaks');
+      clearArtifactIdentity(BrainStoryArtifactKind.fooofResult);
       return;
     }
     ram['artifact.fooofResult'] = value;
@@ -87,6 +152,7 @@ class Dataset {
       ram.remove('featureTable.columns');
       ram.remove('featureTable.rows');
       ram.remove('featureTable.csv');
+      clearArtifactIdentity(BrainStoryArtifactKind.featureTable);
       return;
     }
     ram['artifact.featureTable'] = value;
@@ -103,6 +169,7 @@ class Dataset {
       ram.remove('bridgeDetection.windowSampleCount');
       ram.remove('bridgeDetection.frameCount');
       ram.remove('bridgeDetection.valueCount');
+      clearArtifactIdentity(BrainStoryArtifactKind.bridgeDetection);
       return;
     }
     ram['artifact.bridgeDetection'] = value;
@@ -120,6 +187,7 @@ class Dataset {
       ram.remove('segments.sampleRate');
       ram.remove('segments.channelLabels');
       ram.remove('segments.source');
+      clearArtifactIdentity(BrainStoryArtifactKind.segmentedTimeSeries);
       return;
     }
     ram['artifact.segmentedTimeSeries'] = value;
@@ -134,6 +202,7 @@ class Dataset {
   set timeFrequency(TimeFrequencyData? value) {
     if (value == null) {
       ram.remove('artifact.timeFrequency');
+      clearArtifactIdentity(BrainStoryArtifactKind.timeFrequency);
       return;
     }
     ram['artifact.timeFrequency'] = value;
@@ -144,6 +213,7 @@ class Dataset {
   set matrixTransformation(MatrixTransformationData? value) {
     if (value == null) {
       ram.remove('artifact.matrixTransformation');
+      clearArtifactIdentity(BrainStoryArtifactKind.matrixTransformation);
       return;
     }
     ram['artifact.matrixTransformation'] = value;

@@ -242,7 +242,9 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
           exemplarCount: entry.value.length,
           sampleCount: template.sampleCount,
           durationMicros: template.durationMicros,
-          previewSamples: _decimateTemplatePreview(template.samples),
+          previewSamples: _decimateTemplatePreview(
+            _summarizeTemplateChannels(template.channelSamples),
+          ),
           previewChannels: _decimateTemplateChannelsPreview(template.channelSamples),
         ),
       );
@@ -287,6 +289,36 @@ List<double> _decimateTemplatePreview(
     preview.add(samples[sampleIndex]);
   }
   return preview;
+}
+
+List<double> _summarizeTemplateChannels(List<List<double>> channels) {
+  if (channels.isEmpty) {
+    return const <double>[];
+  }
+  final int sampleCount = channels
+      .map((List<double> channel) => channel.length)
+      .fold<int>(channels.first.length, math.min);
+  if (sampleCount == 0) {
+    return const <double>[];
+  }
+
+  final List<double> channelMins = channels
+      .map(
+        (List<double> channel) => channel.isEmpty
+            ? 0.0
+            : channel.reduce((double a, double b) => a < b ? a : b),
+      )
+      .toList(growable: false);
+
+  return List<double>.generate(sampleCount, (int sampleIndex) {
+    double sumSquares = 0.0;
+    for (int channelIndex = 0; channelIndex < channels.length; channelIndex++) {
+      final double shifted =
+          channels[channelIndex][sampleIndex] - channelMins[channelIndex];
+      sumSquares += shifted * shifted;
+    }
+    return sumSquares / channels.length;
+  }, growable: false);
 }
 
 class ArtifactDetectionComputation {
