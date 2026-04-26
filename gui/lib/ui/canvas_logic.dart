@@ -2360,6 +2360,7 @@ class CanvasLogic {
       source.id,
       label: source.label,
       path: source.path,
+      sourceBytes: source.sourceBytes,
     );
     shell.loaded = source.loaded;
     final Object? sourceFilename = source.ram['source.filename'];

@@ -230,6 +230,14 @@ Future<ParsedSignalData> loadDatasetSignal(
   }
 
   final String lowerPath = normalizedSourceDescription.toLowerCase();
+  if (isWeb && fileBytes == null) {
+    throw const FormatException(
+      'This file is not currently loaded into browser memory. '
+      'Please re-open the original file in the web app, or open a BrainStory '
+      'project that includes the source bytes. The web build cannot read '
+      'arbitrary local file paths.',
+    );
+  }
   if (lowerPath.endsWith('.edf')) {
     final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);
     return parseEdfBytes(bytes, sourceDescription: normalizedSourceDescription);

@@ -1195,6 +1195,24 @@ time,Fz,Cz
     );
   });
 
+  test('loadDatasetSignal gives a friendly web message when bytes are missing', () async {
+    expect(
+      () => loadDatasetSignal(
+        'C:\\fake\\demo.edf',
+        fallbackSampleRate: 256.0,
+        sourceDescription: 'demo.edf',
+        isWebOverride: true,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (FormatException error) => error.message,
+          'message',
+          allOf(contains('browser memory'), contains('cannot read arbitrary local file paths')),
+        ),
+      ),
+    );
+  });
+
   test('import node uses source filename when path is unavailable', () async {
     final Dataset dataset = Dataset('dataset-1', label: 'Renamed Dataset');
     dataset.sourceBytes =
