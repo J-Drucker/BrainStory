@@ -730,9 +730,6 @@ class CanvasLogic {
   }
 
   Future<void> pickFiles() async {
-    final Set<String> previousDatasetIds = datasets.values
-        .map((Dataset dataset) => dataset.id)
-        .toSet();
     final List<XFile> files = await openFiles(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
@@ -778,13 +775,8 @@ class CanvasLogic {
       dataset.path = normalizedPath;
       dataset.sourceBytes = bytes;
       dataset.ram['source.filename'] = sourceName;
-      _includeDatasetInImportNodesByDefault(
-        dataset,
-        previousDatasetIds: previousDatasetIds,
-      );
       _markAllNodes(dataset.id, DatasetState.notReady);
       _refreshDatasetAvailability(dataset.id);
-      previousDatasetIds.add(dataset.id);
     }
   }
 
@@ -2949,10 +2941,7 @@ class CanvasLogic {
 
   Set<String> _availableDatasetIdsForNode(NodeModel node) {
     if (node.type is ImportNodeType) {
-      return _selectedDatasetIdsForNode(
-        node,
-        datasets.values.map((Dataset dataset) => dataset.id).toSet(),
-      );
+      return datasets.values.map((Dataset dataset) => dataset.id).toSet();
     }
 
     final List<NodeModel> parents = _immediateParents(node.id);
@@ -2963,9 +2952,7 @@ class CanvasLogic {
     return datasets.values
         .where((Dataset dataset) {
           return parents.every(
-            (NodeModel parent) =>
-                _availableDatasetIdsForNode(parent).contains(dataset.id) &&
-                _nodeHasRunForDataset(parent, dataset.id),
+            (NodeModel parent) => _nodeHasRunForDataset(parent, dataset.id),
           );
         })
         .map((Dataset dataset) => dataset.id)
@@ -3162,49 +3149,6 @@ class CanvasLogic {
   void _markAllNodes(String datasetId, DatasetState state) {
     for (final NodeModel node in nodes) {
       node.datasetStates[datasetId] = state;
-    }
-  }
-
-  void _includeDatasetInImportNodesByDefault(
-    Dataset dataset, {
-    required Set<String> previousDatasetIds,
-  }) {
-    for (final NodeModel node in nodes) {
-      if (node.type is! ImportNodeType) {
-        continue;
-      }
-
-      final List<dynamic> selectedDatasetIds =
-          (node.params['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[])
-              .toList(growable: true);
-      final Set<String> resolvedSelection = <String>{};
-      for (final dynamic value in selectedDatasetIds) {
-        final String token = value.toString();
-        for (final Dataset existing in datasets.values) {
-          if (existing.id == token || existing.path == token) {
-            resolvedSelection.add(existing.id);
-          }
-        }
-      }
-      final bool lookedImplicit =
-          selectedDatasetIds.isEmpty ||
-              resolvedSelection.containsAll(previousDatasetIds);
-      if (!lookedImplicit || resolvedSelection.contains(dataset.id)) {
-        continue;
-      }
-
-      selectedDatasetIds.add(dataset.id);
-      node.params['selectedDatasetIds'] = selectedDatasetIds;
-
-      final List<dynamic> selectedSourceKeys =
-          (node.params['selectedDatasetSourceKeys'] as List<dynamic>? ??
-                  <dynamic>[])
-              .toList(growable: true);
-      final String sourceKey = '${dataset.id}::Source file';
-      if (!selectedSourceKeys.contains(sourceKey)) {
-        selectedSourceKeys.add(sourceKey);
-        node.params['selectedDatasetSourceKeys'] = selectedSourceKeys;
-      }
     }
   }
 

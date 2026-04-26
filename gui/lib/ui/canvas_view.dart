@@ -384,9 +384,6 @@ class _CanvasViewState extends State<CanvasView> {
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    if (_isEditingText()) {
-      return KeyEventResult.ignored;
-    }
 
     final LogicalKeyboardKey key = event.logicalKey;
     if (key == LogicalKeyboardKey.tab) {
@@ -420,15 +417,6 @@ class _CanvasViewState extends State<CanvasView> {
     }
 
     return KeyEventResult.ignored;
-  }
-
-  bool _isEditingText() {
-    final BuildContext? focusContext =
-        FocusManager.instance.primaryFocus?.context;
-    if (focusContext == null) {
-      return false;
-    }
-    return focusContext.widget is EditableText;
   }
 
   void _cycleKeyboardPane({required bool reverse}) {

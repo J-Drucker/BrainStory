@@ -483,44 +483,6 @@ void main() {
     );
   });
 
-  test('downstream visualization respects import dataset selection', () {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset left = Dataset('dataset-1', label: 'Left')
-      ..timeSeries = TimeSeriesData(
-        samples: <double>[0, 1, 0],
-        sampleRate: 100,
-      );
-    final Dataset right = Dataset('dataset-2', label: 'Right')
-      ..timeSeries = TimeSeriesData(
-        samples: <double>[1, 0, 1],
-        sampleRate: 100,
-      );
-    logic.datasets[left.id] = left;
-    logic.datasets[right.id] = right;
-    logic.addNode(ImportNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..params['selectedDatasetIds'] = <String>[left.id]
-      ..datasetStates[left.id] = DatasetState.done
-      ..datasetStates[right.id] = DatasetState.done;
-    final NodeModel visualizationNode = logic.nodes[1];
-    logic.connections.add(
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-    );
-
-    expect(
-      logic.sourceDatasetsForVisualizationNode(visualizationNode.id)
-          .map((Dataset item) => item.id),
-      <String>[left.id],
-    );
-  });
-
   test('node descriptors assign branch letters only within split-rejoin regions', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImportNodeType());
