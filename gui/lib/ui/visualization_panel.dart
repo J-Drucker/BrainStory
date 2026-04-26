@@ -145,6 +145,14 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
   CanvasLogic get logic => widget.logic;
 
   @override
+  void initState() {
+    super.initState();
+    _syncSelectedDatasets(
+      logic.visualizationSourceRefsForNode(widget.nodeId),
+    );
+  }
+
+  @override
   void didUpdateWidget(covariant VisualizationSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.nodeId != widget.nodeId) {
@@ -348,6 +356,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
   void _syncSelectedDatasets(List<VisualizationSourceRef> sources) {
     if (sources.isEmpty) {
       _selectedSourceKeys.clear();
+      _activeSourceKey = null;
       _materializedDatasetsFuture =
           Future<List<_VisualizationSourceView>>.value(const <_VisualizationSourceView>[]);
       _materializedDatasetsKey = '';
@@ -357,6 +366,14 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
     final Set<String> availableKeys =
         sources.map((VisualizationSourceRef source) => source.key).toSet();
     _selectedSourceKeys.removeWhere((String key) => !availableKeys.contains(key));
+    if (_selectedSourceKeys.isEmpty) {
+      _selectedSourceKeys.addAll(
+        sources.map((VisualizationSourceRef source) => source.key),
+      );
+    }
+    if (_activeSourceKey == null || !_selectedSourceKeys.contains(_activeSourceKey)) {
+      _activeSourceKey = _selectedSourceKeys.isEmpty ? null : _selectedSourceKeys.first;
+    }
     if (_activeSourceKey != null && !_selectedSourceKeys.contains(_activeSourceKey)) {
       _activeSourceKey = _selectedSourceKeys.isEmpty ? null : _selectedSourceKeys.first;
     }
