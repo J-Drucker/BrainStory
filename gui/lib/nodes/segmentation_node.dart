@@ -19,6 +19,7 @@ class SegmentationNodeType extends NodeType {
         'includedMarkers': <String, dynamic>{},
         'eventWindowStartMs': -200.0,
         'eventWindowStopMs': 800.0,
+        'eventBaselineEnabled': false,
         'eventBaselineStartMs': -200.0,
         'eventBaselineStopMs': 0.0,
         'blockConcatenate': false,
@@ -48,6 +49,7 @@ class SegmentationNodeType extends NodeType {
     params.putIfAbsent('includedMarkers', () => <String, dynamic>{});
     params.putIfAbsent('eventWindowStartMs', () => -200.0);
     params.putIfAbsent('eventWindowStopMs', () => 800.0);
+    params.putIfAbsent('eventBaselineEnabled', () => false);
     params.putIfAbsent('eventBaselineStartMs', () => -200.0);
     params.putIfAbsent('eventBaselineStopMs', () => 0.0);
     params.putIfAbsent('blockConcatenate', () => false);
@@ -130,6 +132,7 @@ class SegmentationNodeType extends NodeType {
                 _RightPanelSection(
                   title: 'Include / Exclude Markers',
                   child: _MarkerSelectionPanel(
+                    mode: params['mode']?.toString() ?? 'events',
                     dataset: activeDataset,
                     markers: markers,
                     includedMarkers:
@@ -187,6 +190,11 @@ class SegmentationNodeType extends NodeType {
               (params['eventWindowStartMs'] as num?)?.toDouble() ?? -200.0,
           windowStopMs:
               (params['eventWindowStopMs'] as num?)?.toDouble() ?? 800.0,
+          baselineEnabled: params['eventBaselineEnabled'] as bool? ?? false,
+          baselineStartMs:
+              (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0,
+          baselineStopMs:
+              (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0,
         );
         break;
     }
@@ -221,6 +229,9 @@ List<SignalSegmentData> _buildEventSegments({
   required Map<String, dynamic> includedMarkers,
   required double windowStartMs,
   required double windowStopMs,
+  required bool baselineEnabled,
+  required double baselineStartMs,
+  required double baselineStopMs,
 }) {
   final double sampleRate = timeSeries.sampleRate;
   final List<SignalSegmentData> segments = <SignalSegmentData>[];
@@ -228,6 +239,9 @@ List<SignalSegmentData> _buildEventSegments({
   final double stopOffsetSeconds = windowStopMs / 1000.0;
 
   for (final TimeMarker marker in timeSeries.markers) {
+    if (marker.durationMicros != 0) {
+      continue;
+    }
     if (!_markerIncluded(marker, includedMarkers)) {
       continue;
     }
@@ -242,6 +256,9 @@ List<SignalSegmentData> _buildEventSegments({
       label: marker.label,
       kind: marker.kind,
       anchorTimeSeconds: marker.timeSeconds,
+      baselineCorrected: baselineEnabled,
+      baselineStartMs: baselineEnabled ? baselineStartMs : null,
+      baselineStopMs: baselineEnabled ? baselineStopMs : null,
     );
     if (segment != null) {
       segments.add(segment);
@@ -404,6 +421,9 @@ SignalSegmentData? _extractSegment({
   required String label,
   required String kind,
   double? anchorTimeSeconds,
+  bool baselineCorrected = false,
+  double? baselineStartMs,
+  double? baselineStopMs,
 }) {
   final _SampleInterval? interval = _boundedInterval(
     startIndex: startIndex,
@@ -422,6 +442,9 @@ SignalSegmentData? _extractSegment({
     anchorTimeSeconds: anchorTimeSeconds,
     sourceStartSample: interval.startIndex,
     sourceStopSampleExclusive: interval.stopIndex,
+    baselineCorrected: baselineCorrected,
+    baselineStartMs: baselineStartMs,
+    baselineStopMs: baselineStopMs,
   );
 }
 
@@ -563,6 +586,7 @@ List<Widget> _eventOptions({
   required Map<String, dynamic> params,
   required void Function(void Function()) setState,
 }) {
+  final bool baselineEnabled = params['eventBaselineEnabled'] as bool? ?? false;
   return <Widget>[
     Row(
       children: <Widget>[
@@ -588,29 +612,42 @@ List<Widget> _eventOptions({
       ],
     ),
     const SizedBox(height: 10),
-    Row(
-      children: <Widget>[
-        Expanded(
-          child: _NumericOptionField(
-            label: 'Baseline start (ms)',
-            value: (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0,
-            onChanged: (double value) => setState(() {
-              params['eventBaselineStartMs'] = value;
-            }),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _NumericOptionField(
-            label: 'Baseline stop (ms)',
-            value: (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0,
-            onChanged: (double value) => setState(() {
-              params['eventBaselineStopMs'] = value;
-            }),
-          ),
-        ),
-      ],
+    CheckboxListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      value: baselineEnabled,
+      title: const Text('Apply baseline correction'),
+      subtitle: const Text('Subtract each channel\'s baseline mean from every sample.'),
+      onChanged: (bool? value) => setState(() {
+        params['eventBaselineEnabled'] = value ?? false;
+      }),
     ),
+    if (baselineEnabled) ...<Widget>[
+      const SizedBox(height: 10),
+      Row(
+        children: <Widget>[
+          Expanded(
+            child: _NumericOptionField(
+              label: 'Baseline start (ms)',
+              value: (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0,
+              onChanged: (double value) => setState(() {
+                params['eventBaselineStartMs'] = value;
+              }),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _NumericOptionField(
+              label: 'Baseline stop (ms)',
+              value: (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0,
+              onChanged: (double value) => setState(() {
+                params['eventBaselineStopMs'] = value;
+              }),
+            ),
+          ),
+        ],
+      ),
+    ],
   ];
 }
 
@@ -871,12 +908,14 @@ class _MarkerOverviewPainter extends CustomPainter {
 
 class _MarkerSelectionPanel extends StatelessWidget {
   const _MarkerSelectionPanel({
+    required this.mode,
     required this.dataset,
     required this.markers,
     required this.includedMarkers,
     required this.onChanged,
   });
 
+  final String mode;
   final Dataset? dataset;
   final List<TimeMarker> markers;
   final Map<String, dynamic> includedMarkers;
@@ -902,6 +941,7 @@ class _MarkerSelectionPanel extends StatelessWidget {
         final _MarkerLabelSummary group = groups[index];
         final String key = group.key;
         final bool included = (includedMarkers[key] as bool?) ?? true;
+        final bool enabled = _markerGroupEnabledForMode(group, mode);
         return CheckboxListTile(
           dense: true,
           contentPadding: EdgeInsets.zero,
@@ -916,14 +956,26 @@ class _MarkerSelectionPanel extends StatelessWidget {
           ),
           title: Text(
             group.label,
-            style: const TextStyle(fontSize: 13),
+            style: TextStyle(
+              fontSize: 13,
+              color: enabled ? null : Colors.black38,
+            ),
           ),
-          subtitle: Text('${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}'),
-          onChanged: (bool? value) {
+          subtitle: Text(
+            enabled
+                ? '${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}'
+                : '${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'} • unavailable for Events',
+            style: TextStyle(
+              color: enabled ? null : Colors.black38,
+            ),
+          ),
+          onChanged: enabled
+              ? (bool? value) {
             final Map<String, dynamic> nextMap = Map<String, dynamic>.from(includedMarkers);
             nextMap[key] = value ?? true;
             onChanged(nextMap);
-          },
+          }
+              : null,
         );
       },
     );
@@ -993,4 +1045,11 @@ Color _markerColor(int index, TimeMarker marker) {
     Colors.green,
   ];
   return palette[index % palette.length];
+}
+
+bool _markerGroupEnabledForMode(_MarkerLabelSummary group, String mode) {
+  if (mode != 'events') {
+    return true;
+  }
+  return group.sampleMarker.durationMicros == 0;
 }

@@ -1,4 +1,67 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
+
+const int kBrainStoryNumericBytesPerValue = 4;
+const String kBrainStoryNumericPrecisionLabel = 'Float32 (4 B/value)';
+
+List<double> _compactFloat32Vector(List<double> values) {
+  if (values.isEmpty) {
+    return const <double>[];
+  }
+  final Float32List compacted = Float32List(values.length);
+  for (int index = 0; index < values.length; index++) {
+    compacted[index] = values[index];
+  }
+  return compacted;
+}
+
+List<List<double>> _compactFloat32Matrix(List<List<double>> rows) {
+  if (rows.isEmpty) {
+    return const <List<double>>[];
+  }
+  return rows
+      .map((List<double> row) => _compactFloat32Vector(row))
+      .toList(growable: false);
+}
+
+Map<String, List<List<double>>> _compactFloat32NamedMatrices(
+  Map<String, List<List<double>>> matrices,
+) {
+  if (matrices.isEmpty) {
+    return const <String, List<List<double>>>{};
+  }
+  return matrices.map<String, List<List<double>>>(
+    (String key, List<List<double>> value) =>
+        MapEntry<String, List<List<double>>>(key, _compactFloat32Matrix(value)),
+  );
+}
+
+List<double> _jsonFloatVector(List<double> values) =>
+    values.isEmpty ? const <double>[] : values.toList(growable: false);
+
+List<List<double>> _jsonFloatMatrix(List<List<double>> rows) {
+  if (rows.isEmpty) {
+    return const <List<double>>[];
+  }
+  return rows
+      .map((List<double> row) => row.toList(growable: false))
+      .toList(growable: false);
+}
+
+Map<String, List<List<double>>> _jsonFloatNamedMatrices(
+  Map<String, List<List<double>>> matrices,
+) {
+  if (matrices.isEmpty) {
+    return const <String, List<List<double>>>{};
+  }
+  return matrices.map<String, List<List<double>>>(
+    (String key, List<List<double>> value) =>
+        MapEntry<String, List<List<double>>>(key, _jsonFloatMatrix(value)),
+  );
+}
+
+final Expando<List<List<double>>> _segmentMaterializedChannelCache =
+    Expando<List<List<double>>>('segmentMaterializedChannelCache');
 
 class MarkerType {
   static const String event = 'event';
@@ -648,6 +711,16 @@ class TimeSeriesData {
 
   int get sampleCount => channels.isEmpty ? 0 : channels.first.length;
 
+  int get numericValueCount =>
+      samples.length +
+      channelSamples.fold<int>(
+        0,
+        (int total, List<double> row) => total + row.length,
+      );
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
   List<MarkerLabelTrack> get markerLabelTracks {
     final Map<String, List<TimeMarker>> grouped = <String, List<TimeMarker>>{};
     for (final TimeMarker marker in markers) {
@@ -694,10 +767,23 @@ class TimeSeriesData {
     );
   }
 
+  TimeSeriesData compactNumericStorage() {
+    return TimeSeriesData(
+      samples: _compactFloat32Vector(samples),
+      channelSamples: _compactFloat32Matrix(channelSamples),
+      sampleRate: sampleRate,
+      channelLabels: channelLabels,
+      channelCoordinates: channelCoordinates,
+      markers: markers,
+      factors: factors,
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'samples': samples,
-      'channelSamples': channelSamples,
+      'samples': _jsonFloatVector(samples),
+      'channelSamples': _jsonFloatMatrix(channelSamples),
       'sampleRate': sampleRate,
       'channelLabels': channelLabels,
       'channelCoordinates': channelCoordinates.map(
@@ -744,7 +830,7 @@ class TimeSeriesData {
           .map(Factor.fromJson)
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }
 
@@ -759,6 +845,9 @@ class SignalSegmentData {
     this.appliedShiftMs = 0.0,
     this.sourceStartSample,
     this.sourceStopSampleExclusive,
+    this.baselineCorrected = false,
+    this.baselineStartMs,
+    this.baselineStopMs,
   });
 
   final List<List<double>> channelSamples;
@@ -770,6 +859,9 @@ class SignalSegmentData {
   final double appliedShiftMs;
   final int? sourceStartSample;
   final int? sourceStopSampleExclusive;
+  final bool baselineCorrected;
+  final double? baselineStartMs;
+  final double? baselineStopMs;
 
   bool get isSourceWindow =>
       channelSamples.isEmpty &&
@@ -789,6 +881,14 @@ class SignalSegmentData {
     return 0;
   }
 
+  int get numericValueCount => channelSamples.fold<int>(
+        0,
+        (int total, List<double> row) => total + row.length,
+      );
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
   SignalSegmentData copyWith({
     List<List<double>>? channelSamples,
     double? startSeconds,
@@ -801,6 +901,10 @@ class SignalSegmentData {
     int? sourceStartSample,
     int? sourceStopSampleExclusive,
     bool clearSourceWindow = false,
+    bool? baselineCorrected,
+    double? baselineStartMs,
+    double? baselineStopMs,
+    bool clearBaseline = false,
   }) {
     return SignalSegmentData(
       channelSamples: channelSamples ?? this.channelSamples,
@@ -817,12 +921,34 @@ class SignalSegmentData {
       sourceStopSampleExclusive: clearSourceWindow
           ? null
           : (sourceStopSampleExclusive ?? this.sourceStopSampleExclusive),
+      baselineCorrected: baselineCorrected ?? this.baselineCorrected,
+      baselineStartMs:
+          clearBaseline ? null : (baselineStartMs ?? this.baselineStartMs),
+      baselineStopMs:
+          clearBaseline ? null : (baselineStopMs ?? this.baselineStopMs),
+    );
+  }
+
+  SignalSegmentData compactNumericStorage() {
+    return SignalSegmentData(
+      channelSamples: _compactFloat32Matrix(channelSamples),
+      startSeconds: startSeconds,
+      stopSeconds: stopSeconds,
+      label: label,
+      kind: kind,
+      anchorTimeSeconds: anchorTimeSeconds,
+      appliedShiftMs: appliedShiftMs,
+      sourceStartSample: sourceStartSample,
+      sourceStopSampleExclusive: sourceStopSampleExclusive,
+      baselineCorrected: baselineCorrected,
+      baselineStartMs: baselineStartMs,
+      baselineStopMs: baselineStopMs,
     );
   }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'channelSamples': channelSamples,
+      'channelSamples': _jsonFloatMatrix(channelSamples),
       'startSeconds': startSeconds,
       'stopSeconds': stopSeconds,
       'label': label,
@@ -831,6 +957,9 @@ class SignalSegmentData {
       'appliedShiftMs': appliedShiftMs,
       'sourceStartSample': sourceStartSample,
       'sourceStopSampleExclusive': sourceStopSampleExclusive,
+      'baselineCorrected': baselineCorrected,
+      'baselineStartMs': baselineStartMs,
+      'baselineStopMs': baselineStopMs,
     };
   }
 
@@ -852,7 +981,10 @@ class SignalSegmentData {
       sourceStartSample: (json['sourceStartSample'] as num?)?.toInt(),
       sourceStopSampleExclusive:
           (json['sourceStopSampleExclusive'] as num?)?.toInt(),
-    );
+      baselineCorrected: json['baselineCorrected'] as bool? ?? false,
+      baselineStartMs: (json['baselineStartMs'] as num?)?.toDouble(),
+      baselineStopMs: (json['baselineStopMs'] as num?)?.toDouble(),
+    ).compactNumericStorage();
   }
 }
 
@@ -896,6 +1028,10 @@ class SegmentedTimeSeriesData {
     if (segment.channelSamples.isNotEmpty) {
       return segment.channelSamples;
     }
+    final List<List<double>>? cached = _segmentMaterializedChannelCache[segment];
+    if (cached != null) {
+      return cached;
+    }
     final TimeSeriesData? sourceSeries = sourceTimeSeries;
     final int? start = segment.sourceStartSample;
     final int? stop = segment.sourceStopSampleExclusive;
@@ -907,11 +1043,20 @@ class SegmentedTimeSeriesData {
     if (boundedStop <= boundedStart) {
       return const <List<double>>[];
     }
-    return sourceSeries.channels
+    final List<List<double>> samples = sourceSeries.channels
         .map(
           (List<double> channel) => channel.sublist(boundedStart, boundedStop),
         )
         .toList(growable: false);
+    final List<List<double>> resolvedSamples = !segment.baselineCorrected
+        ? samples
+        : _baselineCorrectedSegmentSamples(
+            samples: samples,
+            segment: segment,
+            sampleRate: sampleRate,
+          );
+    _segmentMaterializedChannelCache[segment] = resolvedSamples;
+    return resolvedSamples;
   }
 
   List<SignalSegmentData> materializedSegments() {
@@ -925,6 +1070,21 @@ class SegmentedTimeSeriesData {
         )
         .toList(growable: false);
   }
+
+  int get numericValueCount {
+    int total = 0;
+    for (final SignalSegmentData segment in segments) {
+      if (segment.channelSamples.isNotEmpty) {
+        total += segment.numericValueCount;
+      } else if (sourceTimeSeries != null) {
+        total += channelCountForSegment(segment) * sampleCountForSegment(segment);
+      }
+    }
+    return total;
+  }
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
 
   SegmentedTimeSeriesData copyWith({
     List<SignalSegmentData>? segments,
@@ -942,6 +1102,18 @@ class SegmentedTimeSeriesData {
       sourceTimeSeries: clearSourceTimeSeries
           ? null
           : (sourceTimeSeries ?? this.sourceTimeSeries),
+    );
+  }
+
+  SegmentedTimeSeriesData compactNumericStorage() {
+    return SegmentedTimeSeriesData(
+      segments: segments
+          .map((SignalSegmentData segment) => segment.compactNumericStorage())
+          .toList(growable: false),
+      sampleRate: sampleRate,
+      channelLabels: channelLabels,
+      source: source,
+      sourceTimeSeries: sourceTimeSeries,
     );
   }
 
@@ -974,8 +1146,57 @@ class SegmentedTimeSeriesData {
           .map((dynamic value) => value.toString())
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
+}
+
+List<List<double>> _baselineCorrectedSegmentSamples({
+  required List<List<double>> samples,
+  required SignalSegmentData segment,
+  required double sampleRate,
+}) {
+  final double? baselineStartMs = segment.baselineStartMs;
+  final double? baselineStopMs = segment.baselineStopMs;
+  if (samples.isEmpty ||
+      sampleRate <= 0 ||
+      baselineStartMs == null ||
+      baselineStopMs == null ||
+      baselineStopMs <= baselineStartMs) {
+    return samples;
+  }
+  final double anchorSeconds = segment.anchorTimeSeconds ?? segment.startSeconds;
+  final double baselineStartSeconds = anchorSeconds + baselineStartMs / 1000.0;
+  final double baselineStopSeconds = anchorSeconds + baselineStopMs / 1000.0;
+  final int baselineStartIndex =
+      ((baselineStartSeconds - segment.startSeconds) * sampleRate).round();
+  final int baselineStopIndex =
+      ((baselineStopSeconds - segment.startSeconds) * sampleRate).round();
+  final int sampleCount = samples.first.length;
+  final int boundedStart = baselineStartIndex.clamp(0, sampleCount);
+  final int boundedStop = baselineStopIndex.clamp(0, sampleCount);
+  if (boundedStop <= boundedStart) {
+    return samples;
+  }
+  return samples.map((List<double> channel) {
+    if (channel.isEmpty) {
+      return channel;
+    }
+    final int stop = math.min(boundedStop, channel.length);
+    final int start = math.min(boundedStart, stop);
+    if (stop <= start) {
+      return channel;
+    }
+    double sum = 0;
+    for (int index = start; index < stop; index++) {
+      sum += channel[index];
+    }
+    final double baselineMean = sum / (stop - start);
+    return _compactFloat32Vector(
+      channel
+          .map((double value) => value - baselineMean)
+          .toList(growable: false),
+    );
+  }).toList(growable: false);
 }
 
 class FrequencySpectrumData {
@@ -991,10 +1212,24 @@ class FrequencySpectrumData {
   final int segmentCount;
   final String source;
 
+  int get numericValueCount => frequencies.length + power.length;
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
+  FrequencySpectrumData compactNumericStorage() {
+    return FrequencySpectrumData(
+      frequencies: _compactFloat32Vector(frequencies),
+      power: _compactFloat32Vector(power),
+      segmentCount: segmentCount,
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'frequencies': frequencies,
-      'power': power,
+      'frequencies': _jsonFloatVector(frequencies),
+      'power': _jsonFloatVector(power),
       'segmentCount': segmentCount,
       'source': source,
     };
@@ -1010,7 +1245,7 @@ class FrequencySpectrumData {
           .toList(growable: false),
       segmentCount: (json['segmentCount'] as num?)?.toInt() ?? 1,
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }
 
@@ -1061,14 +1296,36 @@ class FooofResultData {
   final List<double> residual;
   final String source;
 
+  int get numericValueCount =>
+      2 +
+      (peaks.length * 3) +
+      fitFrequencies.length +
+      aperiodicFit.length +
+      residual.length;
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
+  FooofResultData compactNumericStorage() {
+    return FooofResultData(
+      intercept: intercept,
+      exponent: exponent,
+      peaks: peaks,
+      fitFrequencies: _compactFloat32Vector(fitFrequencies),
+      aperiodicFit: _compactFloat32Vector(aperiodicFit),
+      residual: _compactFloat32Vector(residual),
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'intercept': intercept,
       'exponent': exponent,
       'peaks': peaks.map((FooofPeakData peak) => peak.toJson()).toList(growable: false),
-      'fitFrequencies': fitFrequencies,
-      'aperiodicFit': aperiodicFit,
-      'residual': residual,
+      'fitFrequencies': _jsonFloatVector(fitFrequencies),
+      'aperiodicFit': _jsonFloatVector(aperiodicFit),
+      'residual': _jsonFloatVector(residual),
       'source': source,
     };
   }
@@ -1091,7 +1348,7 @@ class FooofResultData {
           .map((dynamic value) => (value as num).toDouble())
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }
 
@@ -1158,12 +1415,29 @@ class BridgeCorrelationFrameData {
   final int endSampleExclusive;
   final List<List<double>> correlationMatrix;
 
+  int get numericValueCount => correlationMatrix.fold<int>(
+        0,
+        (int total, List<double> row) => total + row.length,
+      );
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
+  BridgeCorrelationFrameData compactNumericStorage() {
+    return BridgeCorrelationFrameData(
+      minuteIndex: minuteIndex,
+      startSample: startSample,
+      endSampleExclusive: endSampleExclusive,
+      correlationMatrix: _compactFloat32Matrix(correlationMatrix),
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'minuteIndex': minuteIndex,
       'startSample': startSample,
       'endSampleExclusive': endSampleExclusive,
-      'correlationMatrix': correlationMatrix,
+      'correlationMatrix': _jsonFloatMatrix(correlationMatrix),
     };
   }
 
@@ -1180,7 +1454,7 @@ class BridgeCorrelationFrameData {
                     .toList(growable: false),
               )
               .toList(growable: false),
-    );
+    ).compactNumericStorage();
   }
 }
 
@@ -1211,6 +1485,21 @@ class BridgeDetectionData {
             ),
       );
 
+  int get estimatedNumericBytes =>
+      valueCount * kBrainStoryNumericBytesPerValue;
+
+  BridgeDetectionData compactNumericStorage() {
+    return BridgeDetectionData(
+      channelLabels: channelLabels,
+      windowSampleCount: windowSampleCount,
+      sampleRate: sampleRate,
+      frames: frames
+          .map((BridgeCorrelationFrameData frame) => frame.compactNumericStorage())
+          .toList(growable: false),
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'channelLabels': channelLabels,
@@ -1235,7 +1524,7 @@ class BridgeDetectionData {
           .map(BridgeCorrelationFrameData.fromJson)
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }
 
@@ -1259,11 +1548,31 @@ class TimeFrequencyData {
   final List<List<double>> powerMatrix;
   final String source;
 
+  int get numericValueCount =>
+      times.length +
+      frequencies.length +
+      powerMatrix.fold<int>(
+        0,
+        (int total, List<double> row) => total + row.length,
+      );
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
+  TimeFrequencyData compactNumericStorage() {
+    return TimeFrequencyData(
+      times: _compactFloat32Vector(times),
+      frequencies: _compactFloat32Vector(frequencies),
+      powerMatrix: _compactFloat32Matrix(powerMatrix),
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'times': times,
-      'frequencies': frequencies,
-      'powerMatrix': powerMatrix,
+      'times': _jsonFloatVector(times),
+      'frequencies': _jsonFloatVector(frequencies),
+      'powerMatrix': _jsonFloatMatrix(powerMatrix),
       'source': source,
     };
   }
@@ -1284,24 +1593,52 @@ class TimeFrequencyData {
           )
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }
 
 class MatrixTransformationData {
   const MatrixTransformationData({
     required this.matrix,
+    this.namedMatrices = const <String, List<List<double>>>{},
+    this.metadata = const <String, dynamic>{},
     this.componentLabels = const <String>[],
     this.source = '',
   });
 
   final List<List<double>> matrix;
+  final Map<String, List<List<double>>> namedMatrices;
+  final Map<String, dynamic> metadata;
   final List<String> componentLabels;
   final String source;
 
+  int get numericValueCount =>
+      matrix.fold<int>(0, (int total, List<double> row) => total + row.length) +
+      namedMatrices.values.fold<int>(
+        0,
+        (int total, List<List<double>> value) =>
+            total +
+            value.fold<int>(0, (int sum, List<double> row) => sum + row.length),
+      );
+
+  int get estimatedNumericBytes =>
+      numericValueCount * kBrainStoryNumericBytesPerValue;
+
+  MatrixTransformationData compactNumericStorage() {
+    return MatrixTransformationData(
+      matrix: _compactFloat32Matrix(matrix),
+      namedMatrices: _compactFloat32NamedMatrices(namedMatrices),
+      metadata: metadata,
+      componentLabels: componentLabels,
+      source: source,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'matrix': matrix,
+      'matrix': _jsonFloatMatrix(matrix),
+      'namedMatrices': _jsonFloatNamedMatrices(namedMatrices),
+      'metadata': metadata,
       'componentLabels': componentLabels,
       'source': source,
     };
@@ -1316,10 +1653,26 @@ class MatrixTransformationData {
                 .toList(growable: false),
           )
           .toList(growable: false),
+      namedMatrices:
+          (json['namedMatrices'] as Map? ?? const <String, dynamic>{})
+              .map<String, List<List<double>>>(
+        (dynamic key, dynamic value) => MapEntry<String, List<List<double>>>(
+          key.toString(),
+          (value as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic row) => (row as List<dynamic>)
+                    .map((dynamic cell) => (cell as num).toDouble())
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
+        ),
+      ),
+      metadata:
+          Map<String, dynamic>.from(json['metadata'] as Map? ?? const <String, dynamic>{}),
       componentLabels: (json['componentLabels'] as List<dynamic>? ?? const <dynamic>[])
           .map((dynamic value) => value.toString())
           .toList(growable: false),
       source: json['source']?.toString() ?? '',
-    );
+    ).compactNumericStorage();
   }
 }

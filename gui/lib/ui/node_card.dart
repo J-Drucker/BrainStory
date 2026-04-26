@@ -18,16 +18,28 @@ class NodeOutputHandleViewData {
   final String tooltip;
 }
 
+class NodeProcessViewData {
+  const NodeProcessViewData({
+    required this.label,
+    required this.color,
+    this.active = false,
+  });
+
+  final String label;
+  final Color color;
+  final bool active;
+}
+
 class NodeCard extends StatelessWidget {
   final double width;
   final double height;
   final String title;
   final int nodeNumber;
   final Offset position;
-  final String? statusLabel;
   final bool highlighted;
   final Color? highlightColor;
   final bool done;
+  final NodeProcessViewData? processIndicator;
   final List<NodeOutputHandleViewData> outputHandles;
   final int? selectedOutputPortIndex;
 
@@ -53,10 +65,10 @@ class NodeCard extends StatelessWidget {
     required this.position,
     required this.onDragEnd,
     required this.color,
-    this.statusLabel,
     this.highlighted = false,
     this.highlightColor,
     this.done = false,
+    this.processIndicator,
     this.outputHandles = const <NodeOutputHandleViewData>[],
     this.selectedOutputPortIndex,
     this.onTap,
@@ -107,6 +119,12 @@ class NodeCard extends StatelessWidget {
                       child: _buildCard(),
                     ),
                   ),
+                  if (processIndicator != null)
+                    Positioned(
+                      left: 0,
+                      top: -18,
+                      child: _NodeProcessIndicator(data: processIndicator!),
+                    ),
                   ..._buildOutputHandles(showOutputHandles: hasVisibleOutputHandles),
                 ],
               ),
@@ -125,13 +143,23 @@ class NodeCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
           boxShadow: done
-              ? const <BoxShadow>[
+              ? <BoxShadow>[
                   BoxShadow(
-                    color: Color(0x663FD37A),
+                    color: processIndicator?.active == true
+                        ? processIndicator!.color.withValues(alpha: 0.62)
+                        : const Color(0x663FD37A),
                     blurRadius: 12,
                     spreadRadius: 1.5,
                   ),
                 ]
+              : processIndicator?.active == true
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: processIndicator!.color.withValues(alpha: 0.58),
+                        blurRadius: 14,
+                        spreadRadius: 2,
+                      ),
+                    ]
               : const <BoxShadow>[],
         ),
         child: Card(
@@ -176,7 +204,7 @@ class NodeCard extends StatelessWidget {
             ),
               Positioned.fill(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 22),
+                  padding: const EdgeInsets.fromLTRB(12, 16, 12, 18),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
@@ -193,19 +221,6 @@ class NodeCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (statusLabel != null) ...<Widget>[
-                        const SizedBox(height: 3),
-                        Text(
-                          statusLabel!,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 10,
-                            height: 1.0,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -295,6 +310,74 @@ class NodeCard extends StatelessWidget {
         onDelete?.call();
         break;
     }
+  }
+}
+
+class _NodeProcessIndicator extends StatelessWidget {
+  const _NodeProcessIndicator({required this.data});
+
+  final NodeProcessViewData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 18,
+      constraints: const BoxConstraints(minWidth: 78),
+      padding: const EdgeInsets.only(left: 8, right: 10),
+      alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: data.color.withValues(alpha: data.active ? 0.30 : 0.18),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(7),
+        ),
+        border: Border.all(
+          color: data.color.withValues(alpha: data.active ? 0.70 : 0.42),
+          width: 1,
+        ),
+        boxShadow: data.active
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: data.color.withValues(alpha: 0.28),
+                  blurRadius: 8,
+                  spreadRadius: 0.5,
+                ),
+              ]
+            : const <BoxShadow>[],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: data.color,
+              shape: BoxShape.circle,
+              boxShadow: data.active
+                  ? <BoxShadow>[
+                      BoxShadow(
+                        color: data.color.withValues(alpha: 0.76),
+                        blurRadius: 6,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : const <BoxShadow>[],
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            data.label,
+            style: TextStyle(
+              color: data.color,
+              fontSize: 10,
+              height: 1,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

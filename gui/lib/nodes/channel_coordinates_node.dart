@@ -10,7 +10,7 @@ class ChannelCoordinatesNodeType extends NodeType {
       'assets/channel_coordinates/standard_1020_coordinates.csv';
 
   @override
-  String get title => 'Channel Coordinates';
+  String get title => 'Channel Positions';
 
   @override
   NodeCategory get category => NodeCategory.import;
@@ -58,7 +58,7 @@ class ChannelCoordinatesNodeType extends NodeType {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Text(
-          'Attach electrode spatial coordinates to the channel labels in this dataset.',
+          'Attach electrode spatial positions to the channel labels in this dataset.',
         ),
         const SizedBox(height: 12),
         NodeParamDropdownField<String>(
@@ -129,8 +129,8 @@ class ChannelCoordinatesNodeType extends NodeType {
         ...attached,
       },
       source: timeSeries.source.isEmpty
-          ? 'Channel coordinates'
-          : '${timeSeries.source} -> Channel coordinates',
+          ? 'Channel positions'
+          : '${timeSeries.source} -> Channel positions',
     );
     dataset.ram['channelCoordinates.params'] = <String, dynamic>{
       'mode': mode,

@@ -41,6 +41,17 @@ Future<void> deleteNodeSnapshotFromDisk({
   }
 }
 
+Future<int?> nodeSnapshotDiskBytes({
+  required String nodeId,
+  required String datasetId,
+}) async {
+  final File file = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  if (!await file.exists()) {
+    return null;
+  }
+  return file.length();
+}
+
 File _snapshotFile({
   required String nodeId,
   required String datasetId,

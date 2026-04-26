@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -32,6 +33,9 @@ class ResampleNodeType extends NodeType {
   List<PortSpec> get outputs => const <PortSpec>[
         PortSpec(name: 'signal', type: PortType.signal),
       ];
+
+  @override
+  bool get supportsBackgroundRun => true;
 
   @override
   Widget buildBody(
@@ -113,9 +117,8 @@ class ResampleNodeType extends NodeType {
 
     dataset.timeSeries = TimeSeriesData(
       channelSamples: timeSeries.channels.map((List<double> channel) {
-        final List<double> preparedSamples = omitSpikes
-            ? suppressSpikes(channel)
-            : List<double>.from(channel);
+        final List<double> preparedSamples =
+            omitSpikes ? suppressSpikes(channel) : channel;
         return resampleSignal(
           preparedSamples,
           sourceSampleRate: timeSeries.sampleRate,
@@ -125,9 +128,11 @@ class ResampleNodeType extends NodeType {
       }).toList(growable: false),
       sampleRate: targetSampleRate,
       channelLabels: timeSeries.channelLabels,
+      channelCoordinates: timeSeries.channelCoordinates,
       markers: timeSeries.markers
           .map((TimeMarker marker) => marker.copyWith())
           .toList(growable: false),
+      factors: timeSeries.factors,
       source: timeSeries.source,
     );
   }
@@ -171,19 +176,29 @@ List<double> resampleSignal(
 
   final double durationSeconds = input.length / sourceSampleRate;
   final int outputLength = math.max(1, (durationSeconds * targetSampleRate).round());
+  final double sourceStep = sourceSampleRate / targetSampleRate;
 
-  return List<double>.generate(outputLength, (int index) {
-    final double sourceIndex = index * sourceSampleRate / targetSampleRate;
-    switch (method) {
-      case 'nearest':
-        return _nearestSample(input, sourceIndex);
-      case 'linear':
-        return _linearSample(input, sourceIndex);
-      case 'cubic_spline':
-      default:
-        return _cubicSample(input, sourceIndex);
-    }
-  });
+  switch (method) {
+    case 'nearest':
+      return _resampleNearest(
+        input,
+        outputLength: outputLength,
+        sourceStep: sourceStep,
+      );
+    case 'linear':
+      return _resampleLinear(
+        input,
+        outputLength: outputLength,
+        sourceStep: sourceStep,
+      );
+    case 'cubic_spline':
+    default:
+      return _resampleCubic(
+        input,
+        outputLength: outputLength,
+        sourceStep: sourceStep,
+      );
+  }
 }
 
 List<double> suppressSpikes(List<double> input) {
@@ -213,33 +228,63 @@ List<double> suppressSpikes(List<double> input) {
   return output;
 }
 
-double _nearestSample(List<double> samples, double sourceIndex) {
-  final int index = sourceIndex.round().clamp(0, samples.length - 1);
-  return samples[index];
+List<double> _resampleNearest(
+  List<double> samples, {
+  required int outputLength,
+  required double sourceStep,
+}) {
+  final int maxIndex = samples.length - 1;
+  final Float32List output = Float32List(outputLength);
+  double sourceIndex = 0.0;
+  for (int index = 0; index < outputLength; index++, sourceIndex += sourceStep) {
+    output[index] = samples[sourceIndex.round().clamp(0, maxIndex)];
+  }
+  return output;
 }
 
-double _linearSample(List<double> samples, double sourceIndex) {
-  final int leftIndex = sourceIndex.floor().clamp(0, samples.length - 1);
-  final int rightIndex = math.min(leftIndex + 1, samples.length - 1);
-  final double fraction = sourceIndex - leftIndex;
-  return samples[leftIndex] * (1.0 - fraction) + samples[rightIndex] * fraction;
+List<double> _resampleLinear(
+  List<double> samples, {
+  required int outputLength,
+  required double sourceStep,
+}) {
+  final int maxIndex = samples.length - 1;
+  final Float32List output = Float32List(outputLength);
+  double sourceIndex = 0.0;
+  for (int index = 0; index < outputLength; index++, sourceIndex += sourceStep) {
+    final int leftIndex = sourceIndex.floor().clamp(0, maxIndex);
+    final int rightIndex = math.min(leftIndex + 1, maxIndex);
+    final double fraction = sourceIndex - leftIndex;
+    output[index] =
+        samples[leftIndex] * (1.0 - fraction) + samples[rightIndex] * fraction;
+  }
+  return output;
 }
 
-double _cubicSample(List<double> samples, double sourceIndex) {
-  final int index1 = sourceIndex.floor();
-  final double t = sourceIndex - index1;
+List<double> _resampleCubic(
+  List<double> samples, {
+  required int outputLength,
+  required double sourceStep,
+}) {
+  final int length = samples.length;
+  final Float32List output = Float32List(outputLength);
+  double sourceIndex = 0.0;
+  for (int index = 0; index < outputLength; index++, sourceIndex += sourceStep) {
+    final int index1 = sourceIndex.floor();
+    final double t = sourceIndex - index1;
 
-  final double p0 = samples[_clampIndex(index1 - 1, samples.length)];
-  final double p1 = samples[_clampIndex(index1, samples.length)];
-  final double p2 = samples[_clampIndex(index1 + 1, samples.length)];
-  final double p3 = samples[_clampIndex(index1 + 2, samples.length)];
+    final double p0 = samples[_clampIndex(index1 - 1, length)];
+    final double p1 = samples[_clampIndex(index1, length)];
+    final double p2 = samples[_clampIndex(index1 + 1, length)];
+    final double p3 = samples[_clampIndex(index1 + 2, length)];
 
-  final double a = (-0.5 * p0) + (1.5 * p1) - (1.5 * p2) + (0.5 * p3);
-  final double b = p0 - (2.5 * p1) + (2.0 * p2) - (0.5 * p3);
-  final double c = (-0.5 * p0) + (0.5 * p2);
-  final double d = p1;
+    final double a = (-0.5 * p0) + (1.5 * p1) - (1.5 * p2) + (0.5 * p3);
+    final double b = p0 - (2.5 * p1) + (2.0 * p2) - (0.5 * p3);
+    final double c = (-0.5 * p0) + (0.5 * p2);
+    final double d = p1;
 
-  return ((a * t + b) * t + c) * t + d;
+    output[index] = ((a * t + b) * t + c) * t + d;
+  }
+  return output;
 }
 
 int _clampIndex(int index, int length) {

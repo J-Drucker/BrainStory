@@ -48,15 +48,42 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
   void initState() {
     super.initState();
     localParams = Map<String, dynamic>.from(widget.params);
+    final List<_DatasetSourceRow> datasetRows = _datasetSourceRows(
+      widget.datasets.entries.toList(),
+      widget.datasetSourceLabels,
+    );
     final Set<String> selectedDatasetIds = Set<String>.from(
       localParams['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[],
     ).where(widget.datasets.containsKey).toSet();
+    final Set<String> selectedDatasetSourceKeys = Set<String>.from(
+      localParams['selectedDatasetSourceKeys'] as List<dynamic>? ?? <dynamic>[],
+    ).where((String key) {
+      return datasetRows.any((_DatasetSourceRow row) => row.key == key);
+    }).toSet();
 
-    if (selectedDatasetIds.isEmpty) {
+    if (selectedDatasetIds.isEmpty && selectedDatasetSourceKeys.isEmpty) {
       selectedDatasetIds.addAll(widget.availableDatasetIds);
+      selectedDatasetSourceKeys.addAll(
+        datasetRows
+            .where((_DatasetSourceRow row) => widget.availableDatasetIds.contains(row.dataset.id))
+            .map((_DatasetSourceRow row) => row.key),
+      );
+    } else if (selectedDatasetSourceKeys.isEmpty) {
+      selectedDatasetSourceKeys.addAll(
+        datasetRows
+            .where((_DatasetSourceRow row) => selectedDatasetIds.contains(row.dataset.id))
+            .map((_DatasetSourceRow row) => row.key),
+      );
+    } else if (selectedDatasetIds.isEmpty) {
+      selectedDatasetIds.addAll(
+        datasetRows
+            .where((_DatasetSourceRow row) => selectedDatasetSourceKeys.contains(row.key))
+            .map((_DatasetSourceRow row) => row.dataset.id),
+      );
     }
 
     localParams['selectedDatasetIds'] = selectedDatasetIds.toList();
+    localParams['selectedDatasetSourceKeys'] = selectedDatasetSourceKeys.toList();
     localParams.putIfAbsent(
       'storagePolicy',
       () => widget.defaultStoragePolicy.wireValue,
@@ -176,6 +203,10 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
               _DatasetControlSection(
                 datasets: datasetEntries,
                 selectedDatasetIds: selectedDatasetIds,
+                selectedDatasetSourceKeys: Set<String>.from(
+                  localParams['selectedDatasetSourceKeys'] as List<dynamic>? ??
+                      <dynamic>[],
+                ),
                 statusSnapshot: statusSnapshot,
                 datasetSourceLabels: widget.datasetSourceLabels,
                 busy: _runningDatasetAction,
@@ -193,14 +224,26 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
                 onChanged: (Set<String> nextSelection) {
                   setState(() {
                     localParams['selectedDatasetIds'] = nextSelection.toList();
+                    localParams['selectedDatasetSourceKeys'] = _datasetSourceRows(
+                      datasetEntries,
+                      widget.datasetSourceLabels,
+                    )
+                        .where((_DatasetSourceRow row) => nextSelection.contains(row.dataset.id))
+                        .map((_DatasetSourceRow row) => row.key)
+                        .toList(growable: false);
                   });
                 },
-                onRunAllPrevious: (Set<String> datasetIds) => _runDatasetAction(
-                  promptToLoadFromDisk: true,
-                  widget.datasetActions?.runAllPrevious,
-                  datasetIds,
-                  label: 'Running all previous...',
-                ),
+                onSourceSelectionChanged: (Set<String> nextSourceSelection) {
+                  setState(() {
+                    localParams['selectedDatasetSourceKeys'] =
+                        nextSourceSelection.toList();
+                    localParams['selectedDatasetIds'] = _datasetIdsForSourceKeys(
+                      datasetEntries,
+                      widget.datasetSourceLabels,
+                      nextSourceSelection,
+                    ).toList();
+                  });
+                },
                 onRunThisNode: (Set<String> datasetIds) => _runDatasetAction(
                   promptToLoadFromDisk: true,
                   widget.datasetActions?.runThisNode,
@@ -591,6 +634,60 @@ class _MetadataDialog extends StatelessWidget {
   }
 }
 
+class _DatasetSourceRow {
+  const _DatasetSourceRow({
+    required this.dataset,
+    required this.sourceLabel,
+  });
+
+  final Dataset dataset;
+  final String sourceLabel;
+
+  String get key => '${dataset.id}::$sourceLabel';
+}
+
+List<_DatasetSourceRow> _datasetSourceRows(
+  List<MapEntry<String, Dataset>> datasets,
+  Map<String, List<String>> datasetSourceLabels,
+) {
+  final List<_DatasetSourceRow> rows = <_DatasetSourceRow>[];
+  for (final MapEntry<String, Dataset> entry in datasets) {
+    final Dataset dataset = entry.value;
+    final List<String> sourceLabels =
+        datasetSourceLabels[dataset.id] ?? const <String>[];
+    final List<String> resolvedLabels = sourceLabels.isEmpty
+        ? const <String>['Source file']
+        : sourceLabels;
+    for (final String sourceLabel in resolvedLabels) {
+      rows.add(
+        _DatasetSourceRow(
+          dataset: dataset,
+          sourceLabel: sourceLabel,
+        ),
+      );
+    }
+  }
+  rows.sort((_DatasetSourceRow a, _DatasetSourceRow b) {
+    final int datasetCompare = a.dataset.label.compareTo(b.dataset.label);
+    if (datasetCompare != 0) {
+      return datasetCompare;
+    }
+    return a.sourceLabel.compareTo(b.sourceLabel);
+  });
+  return rows;
+}
+
+Set<String> _datasetIdsForSourceKeys(
+  List<MapEntry<String, Dataset>> datasets,
+  Map<String, List<String>> datasetSourceLabels,
+  Set<String> sourceKeys,
+) {
+  return _datasetSourceRows(datasets, datasetSourceLabels)
+      .where((_DatasetSourceRow row) => sourceKeys.contains(row.key))
+      .map((_DatasetSourceRow row) => row.dataset.id)
+      .toSet();
+}
+
 class _DatasetControlHeader extends StatelessWidget {
   const _DatasetControlHeader();
 
@@ -650,7 +747,7 @@ class _DatasetControlRow extends StatelessWidget {
   const _DatasetControlRow({
     required this.dataset,
     required this.selected,
-    required this.sourceLabels,
+    required this.sourceLabel,
     required this.processingState,
     required this.ramLoaded,
     required this.diskSaved,
@@ -661,7 +758,7 @@ class _DatasetControlRow extends StatelessWidget {
 
   final Dataset dataset;
   final bool selected;
-  final List<String> sourceLabels;
+  final String sourceLabel;
   final DatasetState processingState;
   final bool ramLoaded;
   final bool diskSaved;
@@ -710,9 +807,9 @@ class _DatasetControlRow extends StatelessWidget {
         Expanded(
           flex: 18,
           child: Text(
-            sourceLabels.isEmpty ? 'Source file' : sourceLabels.join(', '),
+            sourceLabel,
             style: const TextStyle(
-              color: Colors.black54,
+              color: Colors.white70,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
@@ -782,13 +879,14 @@ class _DatasetControlSection extends StatelessWidget {
   const _DatasetControlSection({
     required this.datasets,
     required this.selectedDatasetIds,
+    required this.selectedDatasetSourceKeys,
     required this.statusSnapshot,
     required this.datasetSourceLabels,
     required this.busy,
     required this.supportsDisk,
     required this.onDatasetNamePressed,
     required this.onChanged,
-    required this.onRunAllPrevious,
+    required this.onSourceSelectionChanged,
     required this.onRunThisNode,
     required this.onClearResults,
     required this.onLoadFromDisk,
@@ -799,13 +897,14 @@ class _DatasetControlSection extends StatelessWidget {
 
   final List<MapEntry<String, Dataset>> datasets;
   final Set<String> selectedDatasetIds;
+  final Set<String> selectedDatasetSourceKeys;
   final NodeDatasetStatusSnapshot statusSnapshot;
   final Map<String, List<String>> datasetSourceLabels;
   final bool busy;
   final bool supportsDisk;
   final ValueChanged<String> onDatasetNamePressed;
   final ValueChanged<Set<String>> onChanged;
-  final Future<void> Function(Set<String> datasetIds) onRunAllPrevious;
+  final ValueChanged<Set<String>> onSourceSelectionChanged;
   final Future<void> Function(Set<String> datasetIds) onRunThisNode;
   final Future<void> Function(Set<String> datasetIds) onClearResults;
   final Future<void> Function(Set<String> datasetIds) onLoadFromDisk;
@@ -870,18 +969,31 @@ class _DatasetControlSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (datasets.isEmpty) {
-      return const Text('No datasets opened yet.');
+    final List<_DatasetSourceRow> rows = _datasetSourceRows(
+      datasets,
+      datasetSourceLabels,
+    ).where((_DatasetSourceRow row) {
+      return statusSnapshot.availableDatasetIds.contains(row.dataset.id);
+    }).toList(growable: false);
+
+    if (rows.isEmpty) {
+      return Text(
+        datasets.isEmpty
+            ? 'No datasets opened yet.'
+            : 'No upstream dataset outputs are available yet. Run the parent node first.',
+      );
     }
 
-    final bool allChecked = datasets.isNotEmpty &&
-        datasets.every((MapEntry<String, Dataset> entry) {
-          return selectedDatasetIds.contains(entry.value.id);
-        });
+    final bool allChecked = rows.isNotEmpty &&
+        rows.every(
+          (_DatasetSourceRow row) => selectedDatasetSourceKeys.contains(row.key),
+        );
     final Set<String> checkedDatasetIds = Set<String>.from(selectedDatasetIds);
-    final List<Dataset> checkedDatasets = datasets
-        .map((MapEntry<String, Dataset> entry) => entry.value)
+    final Set<String> checkedSourceKeys = Set<String>.from(selectedDatasetSourceKeys);
+    final List<Dataset> checkedDatasets = rows
+        .map((_DatasetSourceRow row) => row.dataset)
         .where((Dataset dataset) => checkedDatasetIds.contains(dataset.id))
+        .toSet()
         .toList(growable: false);
 
     return DecoratedBox(
@@ -904,6 +1016,8 @@ class _DatasetControlSection extends StatelessWidget {
               'Checked datasets are included when this node runs. Use the status controls below to manage processing, active memory, and disk cache.',
             ),
             const SizedBox(height: 8),
+            const _DatasetControlHeader(),
+            const SizedBox(height: 6),
             Row(
               children: <Widget>[
                 Checkbox(
@@ -912,35 +1026,56 @@ class _DatasetControlSection extends StatelessWidget {
                       ? null
                       : (bool? value) {
                           if (value == true) {
-                            onChanged(
-                              datasets
-                                  .map((MapEntry<String, Dataset> entry) => entry.value.id)
-                                  .toSet(),
+                            onSourceSelectionChanged(
+                              rows.map((_DatasetSourceRow row) => row.key).toSet(),
                             );
                           } else {
-                            onChanged(<String>{});
+                            onSourceSelectionChanged(<String>{});
                           }
                         },
                 ),
                 const SizedBox(width: 4),
                 const Expanded(
                   child: Text(
-                    'Apply actions to checked datasets',
+                    'Select all',
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 6),
+            for (int index = 0; index < rows.length; index++) ...<Widget>[
+              if (index > 0) const Divider(height: 14),
+              _DatasetControlRow(
+                dataset: rows[index].dataset,
+                selected: selectedDatasetSourceKeys.contains(rows[index].key),
+                sourceLabel: rows[index].sourceLabel,
+                processingState: statusSnapshot.processedDatasetStates[
+                        rows[index].dataset.id] ??
+                    DatasetState.notReady,
+                ramLoaded: statusSnapshot.ramLoadedDatasetIds
+                    .contains(rows[index].dataset.id),
+                diskSaved: statusSnapshot.diskSavedDatasetIds
+                    .contains(rows[index].dataset.id),
+                busy: busy,
+                onDatasetNamePressed: () =>
+                    onDatasetNamePressed(rows[index].dataset.id),
+                onCheckedChanged: (bool checked) {
+                  final Set<String> nextSourceSelection = Set<String>.from(checkedSourceKeys);
+                  if (checked) {
+                    nextSourceSelection.add(rows[index].key);
+                  } else {
+                    nextSourceSelection.remove(rows[index].key);
+                  }
+                  onSourceSelectionChanged(nextSourceSelection);
+                },
+              ),
+            ],
+            const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: <Widget>[
-                _bulkActionButton(
-                  label: 'Run all previous',
-                  enabled: !busy && checkedDatasets.isNotEmpty,
-                  onPressed: () => onRunAllPrevious(checkedDatasetIds),
-                ),
                 _bulkActionButton(
                   label: 'Run this node',
                   enabled: !busy && _anyCanRunThisNode(checkedDatasets),
@@ -980,37 +1115,6 @@ class _DatasetControlSection extends StatelessWidget {
               const Text(
                 'Disk actions are not available on this platform yet.',
                 style: TextStyle(color: Colors.black54),
-              ),
-            ],
-            const SizedBox(height: 10),
-            const _DatasetControlHeader(),
-            const SizedBox(height: 6),
-            for (int index = 0; index < datasets.length; index++) ...<Widget>[
-              if (index > 0) const Divider(height: 14),
-              _DatasetControlRow(
-                dataset: datasets[index].value,
-                selected: selectedDatasetIds.contains(datasets[index].value.id),
-                sourceLabels:
-                    datasetSourceLabels[datasets[index].value.id] ?? const <String>[],
-                processingState: statusSnapshot.processedDatasetStates[
-                        datasets[index].value.id] ??
-                    DatasetState.notReady,
-                ramLoaded: statusSnapshot.ramLoadedDatasetIds
-                    .contains(datasets[index].value.id),
-                diskSaved: statusSnapshot.diskSavedDatasetIds
-                    .contains(datasets[index].value.id),
-                busy: busy,
-                onDatasetNamePressed: () =>
-                    onDatasetNamePressed(datasets[index].value.id),
-                onCheckedChanged: (bool checked) {
-                  final Set<String> nextSelection = Set<String>.from(selectedDatasetIds);
-                  if (checked) {
-                    nextSelection.add(datasets[index].value.id);
-                  } else {
-                    nextSelection.remove(datasets[index].value.id);
-                  }
-                  onChanged(nextSelection);
-                },
               ),
             ],
           ],

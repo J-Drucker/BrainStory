@@ -1,0 +1,12 @@
+# Rust build output
+engine/target/
+
+# BrainStory runtime/cache artifacts
+gui/.brainstory_cache/
+
+# IDE/workspace state
+.idea/
+.vs/
+
+# Local saved project scratch files
+tests/*.bst

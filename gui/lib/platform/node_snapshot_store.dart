@@ -44,3 +44,13 @@ Future<void> deleteNodeSnapshotFromDisk({
     datasetId: datasetId,
   );
 }
+
+Future<int?> nodeSnapshotDiskBytes({
+  required String nodeId,
+  required String datasetId,
+}) {
+  return impl.nodeSnapshotDiskBytes(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
+}
