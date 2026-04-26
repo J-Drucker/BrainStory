@@ -235,8 +235,6 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
       if (template == null) {
         continue;
       }
-      final _DecimatedTemplateChannelsPreview preview =
-          _decimateTemplateChannelsPreview(template.channelSamples);
       templates.add(
         ArtifactTemplateSummary(
           datasetId: datasetId,
@@ -247,8 +245,7 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
           previewSamples: _decimateTemplatePreview(
             _summarizeTemplateChannels(template.channelSamples),
           ),
-          previewChannels: preview.channels,
-          peakGfpPreviewIndex: preview.peakIndex,
+          previewChannels: _decimateTemplateChannelsPreview(template.channelSamples),
         ),
       );
       nextCandidates.addAll(
@@ -488,7 +485,6 @@ class ArtifactTemplateSummary {
     this.durationMicros = 0,
     this.previewSamples = const <double>[],
     this.previewChannels = const <List<double>>[],
-    this.peakGfpPreviewIndex = 0,
   });
 
   final String datasetId;
@@ -498,7 +494,6 @@ class ArtifactTemplateSummary {
   final int durationMicros;
   final List<double> previewSamples;
   final List<List<double>> previewChannels;
-  final int peakGfpPreviewIndex;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -509,7 +504,6 @@ class ArtifactTemplateSummary {
       'durationMicros': durationMicros,
       'previewSamples': previewSamples,
       'previewChannels': previewChannels,
-      'peakGfpPreviewIndex': peakGfpPreviewIndex,
     };
   }
 
@@ -530,8 +524,6 @@ class ArtifactTemplateSummary {
                 .toList(growable: false),
           )
           .toList(growable: false),
-      peakGfpPreviewIndex:
-          (json['peakGfpPreviewIndex'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -676,137 +668,18 @@ _ComputedTemplate? _buildTemplateForLabel({
   );
 }
 
-class _DecimatedTemplateChannelsPreview {
-  const _DecimatedTemplateChannelsPreview({
-    required this.channels,
-    required this.peakIndex,
-  });
-
-  final List<List<double>> channels;
-  final int peakIndex;
-}
-
-_DecimatedTemplateChannelsPreview _decimateTemplateChannelsPreview(
+List<List<double>> _decimateTemplateChannelsPreview(
   List<List<double>> channels, {
   int targetPoints = 160,
 }) {
-  if (channels.isEmpty) {
-    return const _DecimatedTemplateChannelsPreview(
-      channels: <List<double>>[],
-      peakIndex: 0,
-    );
-  }
-  final int sampleCount = channels
-      .map((List<double> channel) => channel.length)
-      .fold<int>(channels.first.length, math.min);
-  if (sampleCount <= 0) {
-    return const _DecimatedTemplateChannelsPreview(
-      channels: <List<double>>[],
-      peakIndex: 0,
-    );
-  }
-  final int peakSampleIndex = _peakGfpSampleIndex(channels);
-  final List<int> indices = _decimatedSampleIndices(
-    sampleCount,
-    targetPoints,
-    includeIndex: peakSampleIndex,
-  );
-  final List<List<double>> previewChannels = channels
+  return channels
       .map(
-        (List<double> channel) => indices
-            .map((int index) => channel[index])
-            .toList(growable: false),
+        (List<double> channel) => _decimateTemplatePreview(
+          channel,
+          targetPoints: targetPoints,
+        ),
       )
       .toList(growable: false);
-  final int peakIndex = indices.indexOf(peakSampleIndex);
-  return _DecimatedTemplateChannelsPreview(
-    channels: previewChannels,
-    peakIndex: peakIndex < 0 ? 0 : peakIndex,
-  );
-}
-
-List<int> _decimatedSampleIndices(
-  int sampleCount,
-  int targetPoints, {
-  int? includeIndex,
-}) {
-  if (sampleCount <= targetPoints) {
-    return List<int>.generate(sampleCount, (int index) => index, growable: false);
-  }
-  final double stride = sampleCount / targetPoints;
-  final List<int> indices = List<int>.generate(
-    targetPoints,
-    (int index) => math.min(sampleCount - 1, (index * stride).round()),
-    growable: true,
-  ).toSet().toList(growable: true)
-    ..sort();
-  if (includeIndex == null ||
-      includeIndex < 0 ||
-      includeIndex >= sampleCount ||
-      indices.contains(includeIndex)) {
-    return indices;
-  }
-  if (indices.length < targetPoints) {
-    indices.add(includeIndex);
-    indices.sort();
-    return indices;
-  }
-  int replacementIndex = 0;
-  int replacementDistance = 1 << 30;
-  for (int index = 0; index < indices.length; index++) {
-    final int distance = (indices[index] - includeIndex).abs();
-    if (distance < replacementDistance) {
-      replacementDistance = distance;
-      replacementIndex = index;
-    }
-  }
-  indices[replacementIndex] = includeIndex;
-  final List<int> normalized = indices.toSet().toList(growable: true)..sort();
-  return normalized;
-}
-
-int _peakGfpSampleIndex(List<List<double>> channels) {
-  if (channels.isEmpty) {
-    return 0;
-  }
-  final int sampleCount = channels
-      .map((List<double> channel) => channel.length)
-      .fold<int>(channels.first.length, math.min);
-  if (sampleCount <= 0) {
-    return 0;
-  }
-  if (channels.length == 1) {
-    double best = 0.0;
-    int bestIndex = 0;
-    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-      final double value = channels.first[sampleIndex].abs();
-      if (value > best) {
-        best = value;
-        bestIndex = sampleIndex;
-      }
-    }
-    return bestIndex;
-  }
-  double bestGfp = -1.0;
-  int bestIndex = 0;
-  for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-    double mean = 0.0;
-    for (final List<double> channel in channels) {
-      mean += channel[sampleIndex];
-    }
-    mean /= channels.length;
-    double sumSquares = 0.0;
-    for (final List<double> channel in channels) {
-      final double centered = channel[sampleIndex] - mean;
-      sumSquares += centered * centered;
-    }
-    final double gfp = math.sqrt(sumSquares / channels.length);
-    if (gfp > bestGfp) {
-      bestGfp = gfp;
-      bestIndex = sampleIndex;
-    }
-  }
-  return bestIndex;
 }
 
 List<ArtifactCandidateData> _detectCandidatesForTemplate({

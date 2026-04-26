@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
@@ -53,12 +53,6 @@ class ImportNodeType extends NodeType {
   List<PortSpec> get outputs => const [
     PortSpec(name: 'signal', type: PortType.signal),
   ];
-
-  @override
-  Set<String> get nonComputationalParamKeys => <String>{
-        ...super.nonComputationalParamKeys,
-        'datasetAliases',
-      };
 
   @override
   Widget buildBody(
@@ -135,10 +129,8 @@ class ImportNodeType extends NodeType {
       dataset.path,
       fallbackSampleRate: fallbackSampleRate,
       fileBytes: dataset.sourceBytes,
-      sourceDescription: (dataset.ram['source.filename']?.toString().trim().isNotEmpty ??
-              false)
-          ? dataset.ram['source.filename']!.toString().trim()
-          : (dataset.path.isNotEmpty ? dataset.path : dataset.label),
+      sourceDescription:
+          dataset.path.isNotEmpty ? dataset.path : dataset.label,
     );
 
     dataset.loaded = true;
@@ -212,9 +204,7 @@ Future<ParsedSignalData> loadDatasetSignal(
   required double fallbackSampleRate,
   Uint8List? fileBytes,
   String? sourceDescription,
-  bool? isWebOverride,
 }) async {
-  final bool isWeb = isWebOverride ?? kIsWeb;
   final String normalizedPath = brainVisionHeaderPathForSelection(
     eeglabMetadataPathForSelection(path),
   );
@@ -235,14 +225,6 @@ Future<ParsedSignalData> loadDatasetSignal(
     return parseEdfBytes(bytes, sourceDescription: normalizedSourceDescription);
   }
   if (lowerPath.endsWith('.cnt')) {
-    if (isWeb) {
-      throw FormatException(
-        _webImportUnsupportedMessage(
-          'ANT Neuro .cnt',
-          'It depends on local-path desktop helpers.',
-        ),
-      );
-    }
     if (normalizedPath.isEmpty) {
       throw const FormatException(
         'ANT CNT import requires a local .cnt file path.',
@@ -258,14 +240,6 @@ Future<ParsedSignalData> loadDatasetSignal(
     );
   }
   if (lowerPath.endsWith('.set')) {
-    if (isWeb) {
-      throw FormatException(
-        _webImportUnsupportedMessage(
-          'EEGLAB .set/.fdt',
-          'It needs the sibling .fdt sidecar file.',
-        ),
-      );
-    }
     final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);
     final ParsedEeglabSetData parsedSet = parseEeglabSetBytes(
       bytes,
@@ -288,27 +262,11 @@ Future<ParsedSignalData> loadDatasetSignal(
     );
   }
   if (lowerPath.endsWith('.fdt')) {
-    if (isWeb) {
-      throw FormatException(
-        _webImportUnsupportedMessage(
-          'EEGLAB .set/.fdt',
-          'Choose the .set metadata file on desktop so BrainStory can resolve the pair.',
-        ),
-      );
-    }
     throw const FormatException(
       'Select the EEGLAB .set file, not the .fdt sidecar.',
     );
   }
   if (lowerPath.endsWith('.vhdr')) {
-    if (isWeb) {
-      throw FormatException(
-        _webImportUnsupportedMessage(
-          'BrainVision .vhdr/.eeg/.vmrk',
-          'It needs sibling .eeg and .vmrk files.',
-        ),
-      );
-    }
     final String headerText = fileBytes != null
         ? utf8.decode(fileBytes, allowMalformed: true)
         : await readTextFromPath(normalizedPath);
@@ -354,12 +312,6 @@ Future<ParsedSignalData> loadDatasetSignal(
     fallbackSampleRate: fallbackSampleRate,
     sourceDescription: normalizedSourceDescription,
   );
-}
-
-String _webImportUnsupportedMessage(String format, String detail) {
-  return '$format import is not supported in the web build yet. '
-      'Use EDF, CSV, TSV, or TXT in the browser, or use the desktop app instead. '
-      '$detail';
 }
 
 ParsedSignalData parseSignalText(

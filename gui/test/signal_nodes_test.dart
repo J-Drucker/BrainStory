@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -9,9 +8,9 @@ import 'package:brainstory_gui/model/dataset_artifact_snapshot.dart';
 import 'package:brainstory_gui/model/dataset_state.dart';
 import 'package:brainstory_gui/model/node.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
-import 'package:brainstory_gui/nodes/average_node.dart';
 import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_coordinates_node.dart';
+import 'package:brainstory_gui/nodes/channel_exclusion_node.dart';
 import 'package:brainstory_gui/nodes/edit_channels_node.dart';
 import 'package:brainstory_gui/nodes/amplitude_features_node.dart';
 import 'package:brainstory_gui/nodes/export_edf_node.dart';
@@ -20,7 +19,6 @@ import 'package:brainstory_gui/nodes/fooof_node.dart';
 import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
-import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
 import 'package:brainstory_gui/nodes/recode_markers_node.dart';
@@ -29,9 +27,7 @@ import 'package:brainstory_gui/nodes/resample_node.dart';
 import 'package:brainstory_gui/nodes/segmentation_node.dart';
 import 'package:brainstory_gui/nodes/sleep_staging_node.dart';
 import 'package:brainstory_gui/nodes/spectral_features_node.dart';
-import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/platform/ant_cnt_import.dart';
-import 'package:brainstory_gui/platform/background_node_runner.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -118,101 +114,6 @@ void main() {
       'node-1',
     );
     expect(target.timeSeries!.sampleRate, 1000);
-  });
-
-  test('dataset clears unused legacy RAM mirrors when artifacts change', () {
-    final Dataset dataset = Dataset('dataset-1', label: 'Example');
-    dataset.ram.addAll(<String, dynamic>{
-      'signal.markers': <Map<String, dynamic>>[
-        const TimeMarker(onsetMicros: 0, label: 'legacy').toJson(),
-      ],
-      'signal.channelCoordinates': <String, dynamic>{'Cz': <String, dynamic>{}},
-      'featureTable.csv': 'a,b\n1,2\n',
-      'fooof.peaks': <Map<String, dynamic>>[
-        const FooofPeakData(centerFrequencyHz: 10, amplitude: 1).toJson(),
-      ],
-      'bridgeDetection.valueCount': 42,
-      'segments.count': 3,
-    });
-
-    dataset.timeSeries = TimeSeriesData(
-      samples: <double>[1, 2, 3],
-      sampleRate: 1000,
-      channelLabels: const <String>['Cz'],
-      markers: const <TimeMarker>[TimeMarker(onsetMicros: 0, label: 'A')],
-    );
-    dataset.featureTable = const FeatureTableData(
-      columns: <String>['value'],
-      rows: <Map<String, String>>[
-        <String, String>{'value': '1'},
-      ],
-    );
-    dataset.fooofResult = const FooofResultData(
-      intercept: 1,
-      exponent: 2,
-      peaks: <FooofPeakData>[
-        FooofPeakData(centerFrequencyHz: 10, amplitude: 1),
-      ],
-    );
-    dataset.bridgeDetection = const BridgeDetectionData(
-      channelLabels: <String>['Cz'],
-      windowSampleCount: 1000,
-      sampleRate: 1000,
-      frames: <BridgeCorrelationFrameData>[],
-    );
-    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
-      segments: <SignalSegmentData>[],
-      sampleRate: 1000,
-      channelLabels: <String>['Cz'],
-    );
-
-    expect(dataset.timeSeries, isNotNull);
-    expect(dataset.featureTable, isNotNull);
-    expect(dataset.fooofResult, isNotNull);
-    expect(dataset.bridgeDetection, isNotNull);
-    expect(dataset.segmentedTimeSeries, isNotNull);
-    expect(dataset.ram.containsKey('signal.markers'), isFalse);
-    expect(dataset.ram.containsKey('signal.channelCoordinates'), isFalse);
-    expect(dataset.ram.containsKey('featureTable.csv'), isFalse);
-    expect(dataset.ram.containsKey('fooof.peaks'), isFalse);
-    expect(dataset.ram.containsKey('bridgeDetection.valueCount'), isFalse);
-    expect(dataset.ram.containsKey('segments.count'), isFalse);
-  });
-
-  test('dataset compacts stored numeric artifacts to float32 payloads', () {
-    final Dataset dataset = Dataset('dataset-1', label: 'Example');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        <double>[1, 2, 3],
-        <double>[4, 5, 6],
-      ],
-      sampleRate: 1000,
-      channelLabels: const <String>['Fz', 'Cz'],
-    );
-    dataset.spectrum = const FrequencySpectrumData(
-      frequencies: <double>[1, 2, 3],
-      power: <double>[4, 5, 6],
-    );
-    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
-      segments: <SignalSegmentData>[
-        SignalSegmentData(
-          channelSamples: <List<double>>[
-            <double>[1, 2, 3],
-          ],
-          startSeconds: 0,
-          stopSeconds: 1,
-        ),
-      ],
-      sampleRate: 1000,
-      channelLabels: <String>['Fz'],
-    );
-
-    expect(dataset.timeSeries!.channels.first, isA<Float32List>());
-    expect(dataset.spectrum!.frequencies, isA<Float32List>());
-    expect(
-      dataset.segmentedTimeSeries!.segments.first.channelSamples.first,
-      isA<Float32List>(),
-    );
   });
 
   test('channel edit change sets describe topology changes', () {
@@ -351,42 +252,6 @@ void main() {
     );
   });
 
-  test('import dataset aliases do not require computational rerun', () {
-    final ImportNodeType importType = ImportNodeType();
-
-    expect(
-      importType.paramsAffectOutput(
-        <String, dynamic>{
-          'selectedDatasetIds': <String>['dataset-1'],
-          'datasetAliases': <String, dynamic>{'dataset-1': 'Original'},
-          'sampleRateHz': 256.0,
-        },
-        <String, dynamic>{
-          'selectedDatasetIds': <String>['dataset-1'],
-          'datasetAliases': <String, dynamic>{'dataset-1': 'Renamed'},
-          'sampleRateHz': 256.0,
-        },
-      ),
-      isFalse,
-    );
-
-    expect(
-      importType.paramsAffectOutput(
-        <String, dynamic>{
-          'selectedDatasetIds': <String>['dataset-1'],
-          'datasetAliases': <String, dynamic>{'dataset-1': 'Original'},
-          'sampleRateHz': 256.0,
-        },
-        <String, dynamic>{
-          'selectedDatasetIds': <String>['dataset-1'],
-          'datasetAliases': <String, dynamic>{'dataset-1': 'Original'},
-          'sampleRateHz': 512.0,
-        },
-      ),
-      isTrue,
-    );
-  });
-
   test('segmentation output stays scoped to its branch', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -445,240 +310,6 @@ void main() {
     expect(segmentationView.segmentedTimeSeries, isNotNull);
     expect(siblingView.segmentedTimeSeries, isNull);
     expect(siblingView.timeSeries, isNotNull);
-  });
-
-  test('downstream visualization does not see datasets until parent has run', () {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('dataset-1', label: 'Example')
-      ..timeSeries = TimeSeriesData(
-        samples: <double>[0, 1, 0],
-        sampleRate: 100,
-      );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0];
-    final NodeModel visualizationNode = logic.nodes[1];
-    logic.connections.add(
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-    );
-
-    importNode.datasetStates[dataset.id] = DatasetState.ready;
-    expect(
-      logic.sourceDatasetsForVisualizationNode(visualizationNode.id),
-      isEmpty,
-    );
-
-    importNode.datasetStates[dataset.id] = DatasetState.done;
-    expect(
-      logic.sourceDatasetsForVisualizationNode(visualizationNode.id)
-          .map((Dataset item) => item.id),
-      contains(dataset.id),
-    );
-  });
-
-  test('node descriptors assign branch letters only within split-rejoin regions', () {
-    final CanvasLogic logic = CanvasLogic();
-    logic.addNode(ImportNodeType());
-    logic.addNode(BandpassNodeType());
-    logic.addNode(PSDNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..position = const Offset(0, 0);
-    final NodeModel leftBranchNode = logic.nodes[1]
-      ..position = const Offset(-120, 140);
-    final NodeModel rightBranchNode = logic.nodes[2]
-      ..position = const Offset(120, 140);
-    final NodeModel mergeNode = logic.nodes[3]
-      ..position = const Offset(0, 280);
-
-    logic.connections.addAll(<Map<String, dynamic>>[
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': leftBranchNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': rightBranchNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': leftBranchNode.id,
-        'fromPort': 0,
-        'toNode': mergeNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': rightBranchNode.id,
-        'fromPort': 0,
-        'toNode': mergeNode.id,
-        'toPort': 0,
-      },
-    ]);
-
-    expect(logic.descriptorForNode(importNode), startsWith('#1A '));
-    expect(logic.descriptorForNode(leftBranchNode), startsWith('#2A '));
-    expect(logic.descriptorForNode(rightBranchNode), startsWith('#3B '));
-    expect(logic.descriptorForNode(mergeNode), startsWith('#4A '));
-  });
-
-  test('visualization sources keep same dataset separate across branches', () {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('dataset-1', label: 'Example');
-    dataset.timeSeries = TimeSeriesData(
-      samples: List<double>.generate(32, (int index) => index.toDouble()),
-      sampleRate: 1000,
-      channelLabels: const <String>['Cz'],
-    );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(PSDNodeType());
-    logic.addNode(BandpassNodeType());
-    logic.addNode(PSDNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel leftPsdNode = logic.nodes[1]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel bandpassNode = logic.nodes[2]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel rightPsdNode = logic.nodes[3]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel visualizationNode = logic.nodes[4];
-
-    logic.connections.addAll(<Map<String, dynamic>>[
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': leftPsdNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': bandpassNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': bandpassNode.id,
-        'fromPort': 0,
-        'toNode': rightPsdNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': leftPsdNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': rightPsdNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 1,
-      },
-    ]);
-
-    final List<VisualizationSourceRef> refs =
-        logic.visualizationSourceRefsForNode(visualizationNode.id);
-
-    expect(refs, hasLength(2));
-    expect(refs.map((VisualizationSourceRef ref) => ref.datasetId).toSet(), <String>{dataset.id});
-    expect(refs.map((VisualizationSourceRef ref) => ref.sourceDescriptor).toSet().length, 2);
-    expect(refs.every((VisualizationSourceRef ref) => ref.displayLabel.contains('Example')), isTrue);
-  });
-
-  test('dragging an isolated node onto a wire inserts it and only stales the direct child', () {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('dataset-1', label: 'Example');
-    dataset.timeSeries = TimeSeriesData(
-      samples: List<double>.generate(32, (int index) => index.toDouble()),
-      sampleRate: 1000,
-      channelLabels: const <String>['Cz'],
-    );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(PSDNodeType());
-    logic.addNode(VisualizationNodeType());
-    logic.addNode(BandpassNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..position = const Offset(0, 0)
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel psdNode = logic.nodes[1]
-      ..position = const Offset(480, 0)
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel visualizationNode = logic.nodes[2]
-      ..position = const Offset(960, 0)
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel bandpassNode = logic.nodes[3]
-      ..position = const Offset(0, 288)
-      ..datasetStates[dataset.id] = DatasetState.notReady;
-
-    logic.connections.addAll(<Map<String, dynamic>>[
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': psdNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': psdNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-    ]);
-
-    logic.moveNodeOrSelection(bandpassNode, const Offset(160, 0));
-
-    expect(
-      logic.connections,
-      contains(
-        predicate<Map<String, dynamic>>(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == importNode.id &&
-              connection['toNode'] == bandpassNode.id,
-        ),
-      ),
-    );
-    expect(
-      logic.connections,
-      contains(
-        predicate<Map<String, dynamic>>(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == bandpassNode.id &&
-              connection['toNode'] == psdNode.id,
-        ),
-      ),
-    );
-    expect(
-      logic.connections,
-      isNot(
-        contains(
-          predicate<Map<String, dynamic>>(
-            (Map<String, dynamic> connection) =>
-                connection['fromNode'] == importNode.id &&
-                connection['toNode'] == psdNode.id,
-          ),
-        ),
-      ),
-    );
-    expect(bandpassNode.position, const Offset(160, 0));
-    expect(bandpassNode.datasetStates[dataset.id], DatasetState.ready);
-    expect(psdNode.datasetStates[dataset.id], DatasetState.stale);
-    expect(visualizationNode.datasetStates[dataset.id], DatasetState.done);
   });
 
   test('canvas undo reverses saved marker edits from visualization', () {
@@ -785,7 +416,7 @@ Cz,0.32,3.4,147.92
     expect(cz!.z, 147.92);
   });
 
-  test('channel positions node assigns standard coordinates from asset', () async {
+  test('channel coordinates node assigns standard coordinates from asset', () async {
     final Dataset dataset = Dataset('coords', label: 'Coords');
     dataset.timeSeries = TimeSeriesData(
       channelSamples: const <List<double>>[
@@ -807,59 +438,6 @@ Cz,0.32,3.4,147.92
     expect(coordinates['Fpz - AVG']!.units, 'mm');
     expect(coordinates.keys, isNot(contains('NotAnElectrode')));
     expect(dataset.ram['channelCoordinates.params'], isA<Map<String, dynamic>>());
-  });
-
-  test('bandpass and resample preserve channel positions for child nodes', () async {
-    const Map<String, ChannelCoordinate> coordinates = <String, ChannelCoordinate>{
-      'Fpz': ChannelCoordinate(label: 'Fpz', x: 0, y: 85, z: 10),
-      'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 95),
-    };
-
-    final Dataset bandpassDataset = Dataset('bandpass', label: 'Bandpass');
-    bandpassDataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        <double>[0, 1, 0, -1, 0, 1, 0, -1],
-        <double>[1, 0, -1, 0, 1, 0, -1, 0],
-      ],
-      sampleRate: 256,
-      channelLabels: <String>['Fpz', 'Cz'],
-      channelCoordinates: coordinates,
-    );
-
-    await BandpassNodeType().run(bandpassDataset, <String, dynamic>{
-      'low': 1.0,
-      'high': 40.0,
-      'steepness': 0.8,
-    });
-
-    expect(
-      bandpassDataset.timeSeries!.channelCoordinates.keys,
-      unorderedEquals(coordinates.keys),
-    );
-    expect(bandpassDataset.timeSeries!.channelCoordinates['Cz']!.z, 95);
-
-    final Dataset resampleDataset = Dataset('resample', label: 'Resample');
-    resampleDataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        <double>[0, 1, 0, -1, 0, 1, 0, -1],
-        <double>[1, 0, -1, 0, 1, 0, -1, 0],
-      ],
-      sampleRate: 256,
-      channelLabels: <String>['Fpz', 'Cz'],
-      channelCoordinates: coordinates,
-    );
-
-    await ResampleNodeType().run(resampleDataset, <String, dynamic>{
-      'newSampleRate': 128.0,
-      'method': 'linear',
-      'omitSpikes': false,
-    });
-
-    expect(
-      resampleDataset.timeSeries!.channelCoordinates.keys,
-      unorderedEquals(coordinates.keys),
-    );
-    expect(resampleDataset.timeSeries!.channelCoordinates['Fpz']!.y, 85);
   });
 
   test('parseSignalText infers sample rate from a time column', () {
@@ -971,37 +549,6 @@ time,Fz,Cz
     expect(output.first, isNot(closeTo(input.first, 0.0001)));
   });
 
-  test('applyBandpassFilter does not heavily corrupt the first minute of long in-band data', () {
-    const double sampleRate = 256.0;
-    const int totalSeconds = 180;
-    final List<double> input = List<double>.generate(
-      (sampleRate * totalSeconds).round(),
-      (int i) {
-        final double t = i / sampleRate;
-        return 40.0 * math.sin(2 * math.pi * 10.0 * t) +
-            15.0 * math.sin(2 * math.pi * 0.2 * t) +
-            0.5 * math.sin(2 * math.pi * 22.0 * t);
-      },
-      growable: false,
-    );
-
-    final List<double> output = applyBandpassFilter(
-      input,
-      sampleRate: sampleRate,
-      lowCutHz: 1.0,
-      highCutHz: 40.0,
-      steepness: 0.8,
-    );
-
-    final int minuteSamples = (sampleRate * 60).round();
-    final double firstMinuteRms = _segmentRms(output, 0, minuteSamples);
-    final double middleMinuteRms =
-        _segmentRms(output, minuteSamples, minuteSamples * 2);
-
-    expect(output.length, input.length);
-    expect(firstMinuteRms / middleMinuteRms, inInclusiveRange(0.85, 1.15));
-  });
-
   test('computeSpectrum identifies the dominant frequency of a sine wave', () {
     const double sampleRate = 256.0;
     const double targetFrequency = 12.0;
@@ -1049,49 +596,6 @@ time,Fz,Cz
     expect(dataset.spectrum!.power, isNotEmpty);
   });
 
-  test('background node runner returns a scoped PSD artifact snapshot', () async {
-    final Dataset dataset = Dataset('background-psd', label: 'Background PSD');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        List<double>.generate(256, (int i) {
-          final double t = i / 256.0;
-          return math.sin(2 * math.pi * 12 * t);
-        }),
-      ],
-      sampleRate: 256.0,
-      channelLabels: const <String>['Fz'],
-      source: 'synthetic',
-    );
-    final DatasetArtifactSnapshot inputSnapshot =
-        DatasetArtifactSnapshot.fromDataset(
-      dataset,
-      includedKinds: <BrainStoryArtifactKind>{
-        BrainStoryArtifactKind.timeSeries,
-      },
-    );
-
-    final Map<String, dynamic> outputJson = await runNodeSnapshotInBackground(
-      nodeTitle: PSDNodeType().title,
-      datasetId: dataset.id,
-      datasetLabel: dataset.label,
-      datasetPath: dataset.path,
-      datasetLoaded: dataset.loaded,
-      params: <String, dynamic>{
-        'fLow': 1.0,
-        'fHigh': 40.0,
-        'outputMode': 'averaged',
-      },
-      inputSnapshotJson: inputSnapshot.toJson(),
-    );
-    final DatasetArtifactSnapshot outputSnapshot =
-        DatasetArtifactSnapshot.fromJson(outputJson);
-
-    expect(outputSnapshot.spectrum, isNotNull);
-    expect(outputSnapshot.timeSeries, isNull);
-    expect(outputSnapshot.includedKinds, contains(BrainStoryArtifactKind.spectrum));
-    expect(outputSnapshot.spectrum!.frequencies, isNotEmpty);
-  });
-
   test('Edit Channels node can rename, delete, and build derived channels', () async {
     final Dataset dataset = Dataset('edit-channels', label: 'Edit');
     dataset.timeSeries = TimeSeriesData(
@@ -1134,10 +638,10 @@ time,Fz,Cz
 
     expect(dataset.timeSeries, isNotNull);
     expect(dataset.timeSeries!.channelLabels, <String>['Frontal', 'Pz', 'Difference']);
-    expect(dataset.timeSeries!.channelSamples[2], hasLength(3));
-    expect(dataset.timeSeries!.channelSamples[2][0], closeTo(4.0 / 3.0, 1e-6));
-    expect(dataset.timeSeries!.channelSamples[2][1], closeTo(5.0 / 3.0, 1e-6));
-    expect(dataset.timeSeries!.channelSamples[2][2], closeTo(2.0, 1e-6));
+    expect(
+      dataset.timeSeries!.channelSamples[2],
+      <double>[4.0 / 3.0, 5.0 / 3.0, 2.0],
+    );
   });
 
   test('loadDatasetSignal imports the sample EDF fixture', () async {
@@ -1159,56 +663,6 @@ time,Fz,Cz
 
     expect(parsed.samples, isNotEmpty);
     expect(parsed.sampleRate, greaterThan(0));
-  });
-
-  test('loadDatasetSignal supports pathless CSV bytes for web import', () async {
-    final ParsedSignalData parsed = await loadDatasetSignal(
-      '',
-      fallbackSampleRate: 256.0,
-      fileBytes: Uint8List.fromList(utf8.encode('time,Fz,Cz\n0,1,2\n500,3,4\n')),
-      sourceDescription: 'demo.csv',
-      isWebOverride: true,
-    );
-
-    expect(parsed.channelLabels, <String>['Fz', 'Cz']);
-    expect(parsed.channelSamples[0], <double>[1, 3]);
-    expect(parsed.channelSamples[1], <double>[2, 4]);
-    expect(parsed.sampleRate, closeTo(2.0, 0.001));
-  });
-
-  test('loadDatasetSignal gives a friendly web message for BrainVision', () async {
-    expect(
-      () => loadDatasetSignal(
-        '',
-        fallbackSampleRate: 256.0,
-        fileBytes: Uint8List.fromList(utf8.encode('[Common Infos]\nDataFile=demo.eeg\n')),
-        sourceDescription: 'demo.vhdr',
-        isWebOverride: true,
-      ),
-      throwsA(
-        isA<FormatException>().having(
-          (FormatException error) => error.message,
-          'message',
-          allOf(contains('web build yet'), contains('desktop app')),
-        ),
-      ),
-    );
-  });
-
-  test('import node uses source filename when path is unavailable', () async {
-    final Dataset dataset = Dataset('dataset-1', label: 'Renamed Dataset');
-    dataset.sourceBytes =
-        Uint8List.fromList(utf8.encode('time,Fz,Cz\n0,1,2\n500,3,4\n'));
-    dataset.ram['source.filename'] = 'demo.csv';
-
-    await ImportNodeType().run(
-      dataset,
-      <String, dynamic>{'sampleRateHz': 256.0},
-    );
-
-    expect(dataset.timeSeries, isNotNull);
-    expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Cz']);
-    expect(dataset.timeSeries!.sampleRate, closeTo(2.0, 0.001));
   });
 
   test('loadDatasetSignal imports the sample EEGLAB fixture', () async {
@@ -1484,88 +938,6 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
   });
 
-  test('event segmentation ignores nonzero-duration markers even if selected', () async {
-    final Dataset dataset = Dataset('segments-event-only', label: 'Segmented');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        List<double>.generate(1000, (int index) => index.toDouble()),
-      ],
-      sampleRate: 1000.0,
-      channelLabels: const <String>['Cz'],
-      markers: const <TimeMarker>[
-        TimeMarker(
-          onsetMicros: 200000,
-          durationMicros: 0,
-          label: 'Pulse',
-          markerType: MarkerType.event,
-        ),
-        TimeMarker(
-          onsetMicros: 600000,
-          durationMicros: 120000,
-          label: 'Blockish',
-          markerType: MarkerType.segment,
-        ),
-      ],
-    );
-
-    await SegmentationNodeType().run(dataset, <String, dynamic>{
-      'mode': 'events',
-      'eventWindowStartMs': -50.0,
-      'eventWindowStopMs': 50.0,
-      'includedMarkers': <String, dynamic>{
-        'event|Pulse': true,
-        'segment|Blockish': true,
-      },
-    });
-
-    expect(dataset.segmentedTimeSeries, isNotNull);
-    expect(dataset.segmentedTimeSeries!.segmentCount, 1);
-    expect(dataset.segmentedTimeSeries!.segments.single.label, 'Pulse');
-  });
-
-  test('segmentation baseline subtracts the event baseline window lazily', () async {
-    final Dataset dataset = Dataset('segments-baseline', label: 'Baseline');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        List<double>.generate(1000, (int index) => index < 500 ? 10.0 : 15.0),
-        List<double>.generate(1000, (int index) => index < 500 ? -3.0 : 7.0),
-      ],
-      sampleRate: 1000.0,
-      channelLabels: const <String>['Fz', 'Cz'],
-      markers: const <TimeMarker>[
-        TimeMarker(
-          onsetMicros: 500000,
-          durationMicros: 0,
-          label: 'Pulse',
-          markerType: MarkerType.event,
-        ),
-      ],
-    );
-
-    await SegmentationNodeType().run(dataset, <String, dynamic>{
-      'mode': 'events',
-      'eventWindowStartMs': -100.0,
-      'eventWindowStopMs': 100.0,
-      'eventBaselineEnabled': true,
-      'eventBaselineStartMs': -100.0,
-      'eventBaselineStopMs': 0.0,
-      'includedMarkers': <String, dynamic>{'event|Pulse': true},
-    });
-
-    final SegmentedTimeSeriesData segmented = dataset.segmentedTimeSeries!;
-    final SignalSegmentData segment = segmented.segments.single;
-    final List<List<double>> corrected =
-        segmented.channelSamplesForSegment(segment);
-
-    expect(segment.baselineCorrected, isTrue);
-    expect(segment.baselineStartMs, -100.0);
-    expect(segment.baselineStopMs, 0.0);
-    expect(corrected[0].first, closeTo(0.0, 0.0001));
-    expect(corrected[0].last, closeTo(5.0, 0.0001));
-    expect(corrected[1].first, closeTo(0.0, 0.0001));
-    expect(corrected[1].last, closeTo(10.0, 0.0001));
-  });
-
   test('segmented snapshots materialize source-window samples for persistence', () async {
     final Dataset dataset = Dataset('segments', label: 'Segmented');
     dataset.timeSeries = TimeSeriesData(
@@ -1673,10 +1045,7 @@ Mk2=Artifact,Bad Segment,11,5,0
 
     final TimeSeriesData? staged = dataset.timeSeries;
     expect(staged, isNotNull);
-    expect(staged!.primaryChannel, hasLength(samples.length));
-    for (int index = 0; index < samples.length; index++) {
-      expect(staged.primaryChannel[index], closeTo(samples[index], 1e-5));
-    }
+    expect(staged!.primaryChannel, samples);
     expect(
       staged.markers.any((TimeMarker marker) => marker.label == 'Existing'),
       isTrue,
@@ -1870,48 +1239,6 @@ Mk2=Artifact,Bad Segment,11,5,0
       <double>[0, 4, 0.5, 12.5],
     );
     expect(computation.templates.first.previewChannels, hasLength(2));
-    expect(computation.templates.first.peakGfpPreviewIndex, 3);
-    expect(
-      computation.templates.first.previewChannels
-          .map((List<double> channel) => channel[computation.templates.first.peakGfpPreviewIndex])
-          .toList(growable: false),
-      <double>[5, 14],
-    );
-  });
-
-  test('interactive artifact template preview preserves the peak GFP sample through decimation', () {
-    final List<double> frontal = List<double>.filled(400, 0.0);
-    final List<double> posterior = List<double>.filled(400, 0.0);
-    frontal[123] = 9.0;
-    posterior[123] = -9.0;
-
-    final ArtifactDetectionComputation computation =
-        InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
-      datasetId: 'interactive',
-      timeSeries: TimeSeriesData(
-        channelSamples: <List<double>>[frontal, posterior],
-        sampleRate: 100.0,
-        channelLabels: const <String>['Fp1', 'Oz'],
-      ),
-      exemplars: const <ArtifactExemplarData>[
-        ArtifactExemplarData(
-          id: 'e1',
-          datasetId: 'interactive',
-          label: 'blink',
-          onsetMicros: 0,
-          durationMicros: 4000000,
-        ),
-      ],
-      existingCandidates: const <ArtifactCandidateData>[],
-      threshold: 0.75,
-    );
-
-    expect(computation.templates, hasLength(1));
-    final ArtifactTemplateSummary summary = computation.templates.first;
-    expect(summary.previewChannels, hasLength(2));
-    expect(summary.peakGfpPreviewIndex, inInclusiveRange(0, summary.previewChannels.first.length - 1));
-    expect(summary.previewChannels[0][summary.peakGfpPreviewIndex], 9.0);
-    expect(summary.previewChannels[1][summary.peakGfpPreviewIndex], -9.0);
   });
 
   test('interactive artifact detection node merges accepted markers into output', () async {
@@ -1973,197 +1300,6 @@ Mk2=Artifact,Bad Segment,11,5,0
       markers.where((TimeMarker marker) => marker.attributes['brainstory.artifactStatus'] == 'pending'),
       isEmpty,
     );
-  });
-
-  test('clearing interactive artifact results also clears saved blink state', () async {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('interactive-clear', label: 'Interactive Clear');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: const <List<double>>[
-        <double>[0, 1, 0, -1, 0, 1, 0, -1],
-      ],
-      sampleRate: 1000.0,
-      channelLabels: const <String>['Fpz'],
-    );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(InteractiveArtifactDetectionNodeType());
-
-    final NodeModel importNode = logic.nodes[0];
-    final NodeModel interactiveNode = logic.nodes[1];
-    logic.connections.add(
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': interactiveNode.id,
-        'toPort': 0,
-      },
-    );
-    importNode.datasetStates[dataset.id] = DatasetState.done;
-    interactiveNode.datasetStates[dataset.id] = DatasetState.done;
-    interactiveNode.params['artifactExemplars'] = <Map<String, dynamic>>[
-      <String, dynamic>{
-        'id': 'ex-1',
-        'datasetId': dataset.id,
-        'label': 'blink',
-        'onsetMicros': 1000,
-        'durationMicros': 20000,
-        'channelMask': <int>[1],
-      },
-    ];
-    interactiveNode.params['artifactCandidates'] = <Map<String, dynamic>>[
-      <String, dynamic>{
-        'id': 'cand-1',
-        'datasetId': dataset.id,
-        'label': 'blink',
-        'onsetMicros': 30000,
-        'durationMicros': 20000,
-        'score': 0.9,
-        'status': InteractiveArtifactDetectionNodeType.pendingStatus,
-        'channelMask': <int>[1],
-      },
-    ];
-    interactiveNode.params['artifactTemplates'] = <Map<String, dynamic>>[
-      <String, dynamic>{
-        'datasetId': dataset.id,
-        'label': 'blink',
-        'exemplarCount': 1,
-        'sampleCount': 20,
-        'preview': <double>[0, 1, 0],
-        'previewPeakIndex': 1,
-      },
-    ];
-
-    final String message = await logic.clearNodeResultsForTesting(
-      interactiveNode.id,
-      datasetIds: <String>{dataset.id},
-    );
-
-    expect(message, contains('Cleared 1 result set'));
-    expect(interactiveNode.params['artifactExemplars'], isEmpty);
-    expect(interactiveNode.params['artifactCandidates'], isEmpty);
-    expect(interactiveNode.params['artifactTemplates'], isEmpty);
-    expect(interactiveNode.datasetStates[dataset.id], DatasetState.ready);
-  });
-
-  test('interactive visualization save reports added node details', () {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('interactive-save', label: 'Interactive Save');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: const <List<double>>[
-        <double>[0, 1, 0, -1, 0, 1, 0, -1],
-      ],
-      sampleRate: 1000.0,
-      channelLabels: const <String>['Fpz'],
-    );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel visualizationNode = logic.nodes[1]
-      ..datasetStates[dataset.id] = DatasetState.ready
-      ..params['interaction_mode'] = 'interactive'
-      ..params['artifactExemplars'] = <Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': 'ex-1',
-          'datasetId': dataset.id,
-          'label': 'blink',
-          'onsetMicros': 1000,
-          'durationMicros': 20000,
-          'channelMask': <int>[1],
-        },
-      ]
-      ..params['artifactCandidates'] = <Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': 'cand-1',
-          'datasetId': dataset.id,
-          'label': 'blink',
-          'onsetMicros': 30000,
-          'durationMicros': 20000,
-          'score': 0.9,
-          'status': InteractiveArtifactDetectionNodeType.pendingStatus,
-          'channelMask': <int>[1],
-        },
-      ]
-      ..params['artifactTemplates'] = <Map<String, dynamic>>[
-        <String, dynamic>{
-          'datasetId': dataset.id,
-          'label': 'blink',
-          'exemplarCount': 1,
-          'sampleCount': 20,
-          'preview': <double>[0, 1, 0],
-          'previewPeakIndex': 1,
-        },
-      ];
-
-    logic.connections.add(
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-    );
-
-    final String message = logic.applyInteractiveArtifactDetectionFromVisualization(
-      nodeId: visualizationNode.id,
-      dataset: dataset,
-    );
-
-    expect(message, contains('Added Interactive Artifact Detection'));
-    expect(message, contains('1 exemplar'));
-    expect(message, contains('1 pending candidate'));
-    expect(
-      logic.nodes.where((NodeModel node) => node.type is InteractiveArtifactDetectionNodeType),
-      hasLength(1),
-    );
-  });
-
-  test('clearing node results resets the node without staling downstream nodes', () async {
-    final CanvasLogic logic = CanvasLogic();
-    final Dataset dataset = Dataset('dataset-1', label: 'Example');
-    dataset.timeSeries = TimeSeriesData(
-      samples: List<double>.generate(32, (int index) => index.toDouble()),
-      sampleRate: 1000,
-      channelLabels: const <String>['Cz'],
-    );
-    logic.datasets[dataset.id] = dataset;
-    logic.addNode(ImportNodeType());
-    logic.addNode(PSDNodeType());
-    logic.addNode(VisualizationNodeType());
-
-    final NodeModel importNode = logic.nodes[0]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel psdNode = logic.nodes[1]
-      ..datasetStates[dataset.id] = DatasetState.done;
-    final NodeModel visualizationNode = logic.nodes[2]
-      ..datasetStates[dataset.id] = DatasetState.done;
-
-    logic.connections.addAll(<Map<String, dynamic>>[
-      <String, dynamic>{
-        'fromNode': importNode.id,
-        'fromPort': 0,
-        'toNode': psdNode.id,
-        'toPort': 0,
-      },
-      <String, dynamic>{
-        'fromNode': psdNode.id,
-        'fromPort': 0,
-        'toNode': visualizationNode.id,
-        'toPort': 0,
-      },
-    ]);
-
-    final String message = await logic.clearNodeResultsForTesting(
-      psdNode.id,
-      datasetIds: <String>{dataset.id},
-    );
-
-    expect(message, contains('Cleared 1 result set'));
-    expect(psdNode.datasetStates[dataset.id], DatasetState.ready);
-    expect(visualizationNode.datasetStates[dataset.id], DatasetState.done);
   });
 
   test('spectral features node creates a CSV-ready feature table from PSD input', () async {
@@ -2249,81 +1385,6 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(table.toCsv(), contains('peak_amplitude'));
   });
 
-  test('average node collapses channels into a single time-domain trace', () async {
-    final Dataset dataset = Dataset('dataset-1', label: 'demo')
-      ..timeSeries = TimeSeriesData(
-        channelSamples: <List<double>>[
-          <double>[1, 3, 5],
-          <double>[3, 5, 7],
-        ],
-        sampleRate: 100,
-        channelLabels: <String>['Fz', 'Cz'],
-        source: 'synthetic',
-      );
-
-    await AverageNodeType().run(dataset, <String, dynamic>{
-      'sourceArtifact': 'timeSeries',
-      'averageChannels': true,
-      'averageTimePoints': false,
-    });
-
-    expect(dataset.timeSeries, isNotNull);
-    expect(dataset.timeSeries!.channelLabels, <String>['Average']);
-    expect(dataset.timeSeries!.channels.single, <double>[2, 4, 6]);
-    expect(dataset.featureTable, isNull);
-  });
-
-  test('average node averages segmented epochs by marker label', () async {
-    final Dataset dataset = Dataset('dataset-1', label: 'demo')
-      ..segmentedTimeSeries = SegmentedTimeSeriesData(
-        sampleRate: 100,
-        channelLabels: <String>['Fz', 'Cz'],
-        segments: const <SignalSegmentData>[
-          SignalSegmentData(
-            label: 'A',
-            startSeconds: 0,
-            stopSeconds: 0.03,
-            channelSamples: <List<double>>[
-              <double>[1, 2, 3],
-              <double>[2, 4, 6],
-            ],
-          ),
-          SignalSegmentData(
-            label: 'A',
-            startSeconds: 1,
-            stopSeconds: 1.03,
-            channelSamples: <List<double>>[
-              <double>[3, 4, 5],
-              <double>[4, 6, 8],
-            ],
-          ),
-          SignalSegmentData(
-            label: 'B',
-            startSeconds: 2,
-            stopSeconds: 2.03,
-            channelSamples: <List<double>>[
-              <double>[10, 20, 30],
-              <double>[20, 40, 60],
-            ],
-          ),
-        ],
-      );
-
-    await AverageNodeType().run(dataset, <String, dynamic>{
-      'sourceArtifact': 'segmentedTimeSeries',
-      'averageChannels': false,
-      'averageTimePoints': false,
-      'averageSegments': true,
-    });
-
-    expect(dataset.segmentedTimeSeries, isNotNull);
-    expect(dataset.segmentedTimeSeries!.segments, hasLength(2));
-    final SignalSegmentData first = dataset.segmentedTimeSeries!.segments.first;
-    expect(first.label, 'A');
-    expect(first.channelSamples.first, <double>[2, 3, 4]);
-    expect(first.channelSamples[1], <double>[3, 5, 7]);
-  });
-
   test('machine learning placeholder nodes keep their category and params contract', () async {
     final Dataset dataset = Dataset('ml', label: 'ML');
 
@@ -2393,8 +1454,8 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(marker.applicableChannels(4), <int>[1, 1, 1, 1]);
   });
 
-  test('Edit Channels mark bad zeroes data and adds a channel-scoped artifact marker', () async {
-    final Dataset dataset = Dataset('edit-channels-mark-bad', label: 'QC');
+  test('channel exclusion mark bad adds a full-duration artifact marker with channel mask', () async {
+    final Dataset dataset = Dataset('channel-exclusion', label: 'QC');
     dataset.timeSeries = TimeSeriesData(
       channelSamples: <List<double>>[
         List<double>.filled(100, 1.0),
@@ -2405,28 +1466,14 @@ Mk2=Artifact,Bad Segment,11,5,0
       channelLabels: const <String>['Fz', 'Cz', 'Pz'],
     );
 
-    await EditChannelsNodeType().run(dataset, <String, dynamic>{
-      'channelEditsByDataset': <String, dynamic>{
-        dataset.id: <String, dynamic>{
-          'edits': <String, dynamic>{
-            '1': <String, dynamic>{
-              'rename': '',
-              'remove': true,
-              'removeMode': 'mark_bad',
-            },
-          },
-        },
-      },
+    await ChannelExclusionNodeType().run(dataset, <String, dynamic>{
+      'selectedChannels': <String>['Cz'],
+      'action': 'mark_bad',
     });
 
     final TimeSeriesData? result = dataset.timeSeries;
     expect(result, isNotNull);
-    final TimeSeriesData output = result!;
-    expect(output.channelLabels, const <String>['Fz', 'Cz', 'Pz']);
-    expect(output.channelSamples[0], List<double>.filled(100, 1.0));
-    expect(output.channelSamples[1], List<double>.filled(100, 0.0));
-    expect(output.channelSamples[2], List<double>.filled(100, 3.0));
-    final TimeMarker badChannel = output.markers.last;
+    final TimeMarker badChannel = result!.markers.last;
     expect(badChannel.label, 'bad channel');
     expect(badChannel.markerType, MarkerType.artifact);
     expect(badChannel.durationMicros, 1000000);
@@ -2484,118 +1531,4 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(node.markerChange.rows, isEmpty);
   });
 
-  test('ICA node stores deterministic unmixing and mixing matrices only', () async {
-    const int sampleCount = 1200;
-    final List<double> sourceA = List<double>.generate(
-      sampleCount,
-      (int index) {
-        final double t = index / 60.0;
-        return math.sin(t) + 0.35 * math.sin(3.0 * t);
-      },
-      growable: false,
-    );
-    final List<double> sourceB = List<double>.generate(
-      sampleCount,
-      (int index) {
-        final double t = index / 45.0;
-        return math.sin(t) >= 0 ? 1.0 : -1.0;
-      },
-      growable: false,
-    );
-    final List<double> observedA = List<double>.generate(
-      sampleCount,
-      (int index) => 1.0 * sourceA[index] + 0.55 * sourceB[index],
-      growable: false,
-    );
-    final List<double> observedB = List<double>.generate(
-      sampleCount,
-      (int index) => 0.35 * sourceA[index] + 1.15 * sourceB[index],
-      growable: false,
-    );
-    final Dataset dataset = Dataset('ica-test', label: 'ICA');
-    final TimeSeriesData original = TimeSeriesData(
-      channelSamples: <List<double>>[observedA, observedB],
-      sampleRate: 250.0,
-      channelLabels: const <String>['Fz', 'Cz'],
-      source: 'synthetic mixture',
-    );
-    dataset.timeSeries = original;
-
-    await ICANodeType().run(dataset, <String, dynamic>{});
-
-    final MatrixTransformationData? result = dataset.matrixTransformation;
-    expect(result, isNotNull);
-    expect(dataset.timeSeries!.channelLabels, original.channelLabels);
-    expect(result!.matrix, hasLength(2));
-    expect(result.matrix.first, hasLength(2));
-    expect(result.namedMatrices.keys, containsAll(<String>[
-      'unmixing',
-      'mixing',
-      'whitening',
-      'dewhitening',
-      'channelMeans',
-    ]));
-    expect(result.metadata['algorithm'], 'FastICA');
-    expect(result.metadata['componentCount'], 2);
-
-    final List<double> means = result.namedMatrices['channelMeans']!.first;
-    final List<List<double>> estimated = List<List<double>>.generate(
-      2,
-      (int component) => List<double>.generate(sampleCount, (int sample) {
-        final double centeredA = observedA[sample] - means[0];
-        final double centeredB = observedB[sample] - means[1];
-        return result.matrix[component][0] * centeredA +
-            result.matrix[component][1] * centeredB;
-      }, growable: false),
-      growable: false,
-    );
-    final double bestA = math.max(
-      _absoluteCorrelation(estimated[0], sourceA),
-      _absoluteCorrelation(estimated[1], sourceA),
-    );
-    final double bestB = math.max(
-      _absoluteCorrelation(estimated[0], sourceB),
-      _absoluteCorrelation(estimated[1], sourceB),
-    );
-    expect(bestA, greaterThan(0.90));
-    expect(bestB, greaterThan(0.90));
-  });
-
-}
-
-double _absoluteCorrelation(List<double> a, List<double> b) {
-  final int count = math.min(a.length, b.length);
-  double sumA = 0;
-  double sumB = 0;
-  for (int index = 0; index < count; index++) {
-    sumA += a[index];
-    sumB += b[index];
-  }
-  final double meanA = sumA / count;
-  final double meanB = sumB / count;
-  double numerator = 0;
-  double varianceA = 0;
-  double varianceB = 0;
-  for (int index = 0; index < count; index++) {
-    final double da = a[index] - meanA;
-    final double db = b[index] - meanB;
-    numerator += da * db;
-    varianceA += da * da;
-    varianceB += db * db;
-  }
-  return (numerator / math.sqrt(varianceA * varianceB)).abs();
-}
-
-double _segmentRms(List<double> values, int start, int end) {
-  final int safeStart = start.clamp(0, values.length);
-  final int safeEnd = end.clamp(safeStart, values.length);
-  if (safeEnd <= safeStart) {
-    return 0.0;
-  }
-  double sumSquares = 0.0;
-  for (int index = safeStart; index < safeEnd; index++) {
-    final double value = values[index];
-    sumSquares += value * value;
-  }
-  return math.sqrt(sumSquares / (safeEnd - safeStart));
 }

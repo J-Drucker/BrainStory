@@ -34,9 +34,6 @@ class PSDNodeType extends NodeType {
   ];
 
   @override
-  bool get supportsBackgroundRun => true;
-
-  @override
   Widget buildBody(
       Map<String, dynamic> params, {
         required Map<String, Dataset> datasets,

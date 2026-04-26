@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -33,8 +31,6 @@ class CanvasView extends StatefulWidget {
 }
 
 class _CanvasViewState extends State<CanvasView> {
-  static const bool _quickVisualizerEnabled = false;
-
   late final FocusNode _keyboardFocusNode;
   late final ScrollController _verticalScrollController;
   late final ScrollController _horizontalScrollController;
@@ -124,6 +120,19 @@ class _CanvasViewState extends State<CanvasView> {
                     children: <Widget>[
                       logic.sidebar(
                         width: leftRailWidth,
+                        publish: () async {
+                          await logic.showPublishDialog(context);
+                        },
+                        load: () async {
+                          await logic.loadBrainStory(context);
+                          if (mounted) {
+                            setState(() {});
+                          }
+                        },
+                        export: () async {
+                          await logic.exportBrainStory(context);
+                        },
+                        clear: () => setState(() => logic.clearAll()),
                         update: () => setState(() {}),
                       ),
                       Expanded(
@@ -217,27 +226,11 @@ class _CanvasViewState extends State<CanvasView> {
                                       child: Stack(
                                         children: <Widget>[
                                           ...logic.connectionWidgets(),
-                                          ValueListenableBuilder<
-                                              Map<String, NodeProcessIndicator>>(
-                                            valueListenable:
-                                                logic.nodeProcessIndicators,
-                                            builder: (
-                                              BuildContext context,
-                                              Map<String, NodeProcessIndicator>
-                                                  indicators,
-                                              Widget? child,
-                                            ) {
-                                              return Stack(
-                                                children: logic.nodeWidgets(
-                                                  context: context,
-                                                  update: () => setState(() {}),
-                                                  translateDropOffset:
-                                                      _globalToCanvasOffset,
-                                                  openVisualizationWindow:
-                                                      _openVisualizationWindow,
-                                                ),
-                                              );
-                                            },
+                                          ...logic.nodeWidgets(
+                                            context: context,
+                                            update: () => setState(() {}),
+                                            translateDropOffset: _globalToCanvasOffset,
+                                            openVisualizationWindow: _openVisualizationWindow,
                                           ),
                                           if (_selectionStart != null &&
                                               _selectionCurrent != null)
@@ -282,47 +275,13 @@ class _CanvasViewState extends State<CanvasView> {
                                 onChanged: () => setState(() {}),
                               ),
                             ),
-                            if (_quickVisualizerEnabled)
-                              Expanded(
-                                flex: 2,
-                                child: VisualizationPanel(
-                                  logic: logic,
-                                  onChanged: () => setState(() {}),
-                                  onOpenWindow: _openSelectedVisualizationWindow,
-                                ),
+                            Expanded(
+                              flex: 2,
+                              child: VisualizationPanel(
+                                logic: logic,
+                                onChanged: () => setState(() {}),
+                                onOpenWindow: _openSelectedVisualizationWindow,
                               ),
-                            _ProjectActionsPanel(
-                              saveLabel: logic.saveBrainStoryLabel,
-                              onOpen: () async {
-                                await logic.openBrainStory(context);
-                                if (mounted) {
-                                  setState(() {});
-                                }
-                              },
-                              onSave: () async {
-                                await logic.saveBrainStory(context);
-                                if (mounted) {
-                                  setState(() {});
-                                }
-                              },
-                              onSaveAs: () async {
-                                await logic.saveBrainStoryAs(context);
-                                if (mounted) {
-                                  setState(() {});
-                                }
-                              },
-                              onMemory: () async {
-                                await _openMemoryManager();
-                                if (mounted) {
-                                  setState(() {});
-                                }
-                              },
-                              onPublish: () async {
-                                await logic.showPublishDialog(context);
-                              },
-                              onClear: () {
-                                setState(() => logic.clearAll());
-                              },
                             ),
                           ],
                         ),
@@ -332,23 +291,52 @@ class _CanvasViewState extends State<CanvasView> {
                     ),
                   ),
                 ),
-                Positioned(
-                  right: 18,
-                  bottom: 18,
-                  child: ValueListenableBuilder<List<BrainStoryJob>>(
-                    valueListenable: logic.jobs,
-                    builder: (
-                      BuildContext context,
-                      List<BrainStoryJob> jobs,
-                      Widget? child,
-                    ) {
-                      return _JobTray(
-                        jobs: jobs,
-                        onCancel: logic.cancelActiveRun,
-                      );
-                    },
+                if (runActivity != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: Container(
+                        color: Colors.black.withValues(alpha: 0.14),
+                        alignment: Alignment.topCenter,
+                        padding: const EdgeInsets.only(top: 20),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          child: Card(
+                            elevation: 10,
+                            color: Colors.grey.shade900,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Text(
+                                    runActivity.label,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (runActivity.detail.isNotEmpty) ...<Widget>[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      runActivity.detail,
+                                      style: const TextStyle(color: Colors.white70),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 12),
+                                  const LinearProgressIndicator(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
               ],
             );
           },
@@ -624,686 +612,5 @@ class _CanvasViewState extends State<CanvasView> {
         ),
       ),
     );
-  }
-
-  Future<void> _openMemoryManager() async {
-    await showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return _MemoryManagerDialog(logic: logic);
-      },
-    );
-  }
-}
-
-class _MemoryManagerDialog extends StatefulWidget {
-  const _MemoryManagerDialog({
-    required this.logic,
-  });
-
-  final CanvasLogic logic;
-
-  @override
-  State<_MemoryManagerDialog> createState() => _MemoryManagerDialogState();
-}
-
-class _MemoryManagerDialogState extends State<_MemoryManagerDialog> {
-  List<MemoryArtifactSummary> _rows = const <MemoryArtifactSummary>[];
-  bool _loading = true;
-  bool _runningAction = false;
-  String _actionLabel = 'Working...';
-
-  CanvasLogic get logic => widget.logic;
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-  }
-
-  Future<void> _refresh() async {
-    setState(() {
-      _loading = true;
-    });
-    final List<MemoryArtifactSummary> rows = await logic.memoryArtifactSummaries();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _rows = rows;
-      _loading = false;
-    });
-  }
-
-  Future<void> _runAction({
-    required String label,
-    required Future<String> Function(List<MemoryArtifactSummary> rows) action,
-  }) async {
-    if (_rows.isEmpty) {
-      return;
-    }
-    setState(() {
-      _runningAction = true;
-      _actionLabel = label;
-    });
-    try {
-      final String message = await action(_rows);
-      if (!mounted) {
-        return;
-      }
-      await _refresh();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _runningAction = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final int ramRows = _rows.where((MemoryArtifactSummary row) => row.inRam).length;
-    final int diskRows = _rows.where((MemoryArtifactSummary row) => row.onDisk).length;
-    final int ramBytes = _rows.fold<int>(
-      0,
-      (int total, MemoryArtifactSummary row) => total + row.approxRamBytes,
-    );
-    final int diskBytes = _rows.fold<int>(
-      0,
-      (int total, MemoryArtifactSummary row) => total + (row.approxDiskBytes ?? 0),
-    );
-
-    return AlertDialog(
-      title: const Text('Memory Manager'),
-      content: SizedBox(
-        width: 1120,
-        height: 640,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Wrap(
-                    spacing: 16,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      _MemoryStatChip(
-                        label: 'Rows in RAM',
-                        value: '$ramRows',
-                      ),
-                      _MemoryStatChip(
-                        label: 'Rows on disk',
-                        value: '$diskRows',
-                      ),
-                      _MemoryStatChip(
-                        label: 'Approx RAM',
-                        value: _formatBytes(ramBytes),
-                      ),
-                      _MemoryStatChip(
-                        label: 'Approx disk',
-                        value: _formatBytes(diskBytes),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Numeric artifacts are compacted to Float32 (4 bytes/value) when BrainStory stores them. This dialog shows what is currently cached in RAM, what is persisted to disk, and the precision regime for each row.',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.72),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: <Widget>[
-                      const Spacer(),
-                      IconButton(
-                        tooltip: 'Refresh',
-                        onPressed: _runningAction ? null : _refresh,
-                        icon: const Icon(Icons.refresh),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Expanded(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.08),
-                        ),
-                      ),
-                      child: SingleChildScrollView(
-                        child: DataTable(
-                          columnSpacing: 18,
-                          columns: const <DataColumn>[
-                            DataColumn(label: Text('Node')),
-                            DataColumn(label: Text('Dataset')),
-                            DataColumn(label: Text('Artifacts')),
-                            DataColumn(label: Text('Processing')),
-                            DataColumn(label: Text('RAM')),
-                            DataColumn(label: Text('Disk')),
-                            DataColumn(label: Text('Precision')),
-                          ],
-                          rows: _rows
-                              .map(
-                                (MemoryArtifactSummary row) => DataRow(
-                                  cells: <DataCell>[
-                                    DataCell(Text(row.nodeDescriptor)),
-                                    DataCell(Text(row.datasetLabel)),
-                                    DataCell(Text(row.artifactLabel)),
-                                    DataCell(Text(row.processingState.name)),
-                                    DataCell(
-                                      Text(
-                                        row.inRam
-                                            ? 'Loaded (${_formatBytes(row.approxRamBytes)})'
-                                            : 'Not loaded',
-                                      ),
-                                    ),
-                                    DataCell(
-                                      Text(
-                                        row.onDisk
-                                            ? 'Saved (${_formatBytes(row.approxDiskBytes ?? 0)})'
-                                            : 'Not saved',
-                                      ),
-                                    ),
-                                    DataCell(Text(row.precisionLabel)),
-                                  ],
-                                ),
-                              )
-                              .toList(growable: false),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: <Widget>[
-                      FilledButton.tonal(
-                        onPressed: _runningAction
-                            ? null
-                            : () => _runAction(
-                                  label: 'Loading into RAM...',
-                                  action: logic.loadMemorySummariesToRam,
-                                ),
-                        child: const Text('Load from disk'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: _runningAction
-                            ? null
-                            : () => _runAction(
-                                  label: 'Saving to disk...',
-                                  action: logic.saveMemorySummariesToDisk,
-                                ),
-                        child: const Text('Save to disk'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: _runningAction
-                            ? null
-                            : () => _runAction(
-                                  label: 'Purging RAM...',
-                                  action: logic.purgeMemorySummariesFromRam,
-                                ),
-                        child: const Text('Purge RAM'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: _runningAction
-                            ? null
-                            : () => _runAction(
-                                  label: 'Purging disk cache...',
-                                  action: logic.purgeMemorySummariesFromDisk,
-                                ),
-                        child: const Text('Purge disk'),
-                      ),
-                      if (_runningAction)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 6, top: 10),
-                          child: Text(_actionLabel),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: _runningAction ? null : () => Navigator.of(context).pop(),
-          child: const Text('Close'),
-        ),
-      ],
-    );
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes <= 0) {
-      return '0 B';
-    }
-    const List<String> units = <String>['B', 'KB', 'MB', 'GB'];
-    double value = bytes.toDouble();
-    int unitIndex = 0;
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
-      unitIndex++;
-    }
-    final int decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
-    return '${value.toStringAsFixed(decimals)} ${units[unitIndex]}';
-  }
-}
-
-class _MemoryStatChip extends StatelessWidget {
-  const _MemoryStatChip({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              label,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.7),
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProjectActionsPanel extends StatelessWidget {
-  const _ProjectActionsPanel({
-    required this.saveLabel,
-    required this.onOpen,
-    required this.onSave,
-    required this.onSaveAs,
-    required this.onMemory,
-    required this.onPublish,
-    required this.onClear,
-  });
-
-  final String saveLabel;
-  final VoidCallback onOpen;
-  final VoidCallback onSave;
-  final VoidCallback onSaveAs;
-  final VoidCallback onMemory;
-  final VoidCallback onPublish;
-  final VoidCallback onClear;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.grey.shade900,
-        border: Border(
-          top: BorderSide(
-            color: Colors.white.withValues(alpha: 0.12),
-          ),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.end,
-              children: <Widget>[
-                FilledButton.tonal(
-                  onPressed: onOpen,
-                  child: const Text('Open BrainStory'),
-                ),
-                FilledButton(
-                  onPressed: onSave,
-                  child: Text(saveLabel),
-                ),
-                FilledButton.tonal(
-                  onPressed: onSaveAs,
-                  child: const Text('Save As'),
-                ),
-                FilledButton.tonal(
-                  onPressed: onMemory,
-                  child: const Text('Memory'),
-                ),
-                FilledButton.tonal(
-                  onPressed: onPublish,
-                  child: const Text('Publish'),
-                ),
-                TextButton(
-                  onPressed: onClear,
-                  child: const Text('Clear All'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _JobTray extends StatefulWidget {
-  const _JobTray({
-    required this.jobs,
-    required this.onCancel,
-  });
-
-  final List<BrainStoryJob> jobs;
-  final VoidCallback onCancel;
-
-  @override
-  State<_JobTray> createState() => _JobTrayState();
-}
-
-class _JobTrayState extends State<_JobTray> {
-  Timer? _autoCollapseTimer;
-  bool _collapsed = false;
-
-  bool get _hasActiveJob =>
-      widget.jobs.any((BrainStoryJob job) => job.isActive);
-
-  @override
-  void initState() {
-    super.initState();
-    _syncAutoCollapseTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _JobTray oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final bool hadActiveJob =
-        oldWidget.jobs.any((BrainStoryJob job) => job.isActive);
-    if (_hasActiveJob && !hadActiveJob && _collapsed) {
-      _collapsed = false;
-    }
-    _syncAutoCollapseTimer();
-  }
-
-  @override
-  void dispose() {
-    _autoCollapseTimer?.cancel();
-    super.dispose();
-  }
-
-  void _syncAutoCollapseTimer() {
-    _autoCollapseTimer?.cancel();
-    if (widget.jobs.isEmpty || _hasActiveJob || _collapsed) {
-      return;
-    }
-    _autoCollapseTimer = Timer(const Duration(seconds: 10), () {
-      if (!mounted || _hasActiveJob) {
-        return;
-      }
-      setState(() {
-        _collapsed = true;
-      });
-    });
-  }
-
-  void _collapse() {
-    setState(() {
-      _collapsed = true;
-    });
-    _syncAutoCollapseTimer();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (widget.jobs.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    if (_collapsed) {
-      return const SizedBox.shrink();
-    }
-    final List<BrainStoryJob> visibleJobs =
-        widget.jobs.take(3).toList(growable: false);
-    final bool hasActiveJob = _hasActiveJob;
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 360),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.76),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.32),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Icon(
-                    Icons.workspaces_outline,
-                    size: 16,
-                    color: hasActiveJob
-                        ? Colors.cyanAccent
-                        : Colors.white.withValues(alpha: 0.72),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      hasActiveJob ? 'Jobs running' : 'Recent jobs',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    '${widget.jobs.length}',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.58),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Tooltip(
-                    message: 'Hide recent jobs',
-                    child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 26,
-                        height: 26,
-                      ),
-                      onPressed: _collapse,
-                      icon: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: Colors.white.withValues(alpha: 0.72),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              for (final BrainStoryJob job in visibleJobs)
-                _JobTrayRow(
-                  job: job,
-                  onCancel: widget.onCancel,
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _JobTrayRow extends StatelessWidget {
-  const _JobTrayRow({
-    required this.job,
-    required this.onCancel,
-  });
-
-  final BrainStoryJob job;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color statusColor = _jobStatusColor(job.status);
-    final bool showProgress =
-        job.status == BrainStoryJobStatus.running && job.progress != null;
-    final String detailText = job.error?.isNotEmpty == true
-        ? job.error!
-        : job.detail;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: statusColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  job.label,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _jobStatusLabel(job.status),
-                style: TextStyle(
-                  color: statusColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              if (job.isActive && job.cancellable) ...<Widget>[
-                const SizedBox(width: 6),
-                SizedBox(
-                  height: 24,
-                  child: TextButton(
-                    onPressed: job.cancelRequested ? null : onCancel,
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(
-                      job.cancelRequested ? 'Canceling' : 'Cancel',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          if (detailText.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 4),
-            Text(
-              detailText,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.66),
-                fontSize: 11,
-              ),
-            ),
-          ],
-          if (showProgress) ...<Widget>[
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(99),
-              child: LinearProgressIndicator(
-                minHeight: 3,
-                value: job.progress,
-                backgroundColor: Colors.white.withValues(alpha: 0.10),
-                valueColor: AlwaysStoppedAnimation<Color>(statusColor),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-Color _jobStatusColor(BrainStoryJobStatus status) {
-  switch (status) {
-    case BrainStoryJobStatus.queued:
-      return Colors.blueGrey.shade200;
-    case BrainStoryJobStatus.running:
-      return Colors.cyanAccent;
-    case BrainStoryJobStatus.completed:
-      return Colors.lightGreenAccent;
-    case BrainStoryJobStatus.failed:
-      return Colors.redAccent;
-    case BrainStoryJobStatus.canceled:
-      return Colors.orangeAccent;
-  }
-}
-
-String _jobStatusLabel(BrainStoryJobStatus status) {
-  switch (status) {
-    case BrainStoryJobStatus.queued:
-      return 'Queued';
-    case BrainStoryJobStatus.running:
-      return 'Running';
-    case BrainStoryJobStatus.completed:
-      return 'Done';
-    case BrainStoryJobStatus.failed:
-      return 'Failed';
-    case BrainStoryJobStatus.canceled:
-      return 'Canceled';
   }
 }

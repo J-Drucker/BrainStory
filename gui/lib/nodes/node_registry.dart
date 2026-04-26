@@ -2,6 +2,7 @@ import 'node_type.dart';
 
 import 'import_node.dart';
 import 'bridge_detector_node.dart';
+import 'channel_exclusion_node.dart';
 import 'channel_coordinates_node.dart';
 import 'edit_channels_node.dart';
 import 'bandpass_node.dart';
@@ -18,11 +19,9 @@ import 'resample_node.dart';
 import 'matrix_transform_nodes.dart';
 import 'add_remove_markers_node.dart';
 import 'amplitude_features_node.dart';
-import 'average_node.dart';
 import 'segmentation_node.dart';
 import 'sleep_staging_node.dart';
 import 'spectral_features_node.dart';
-import 'topomap_node.dart';
 import 'debug_output_node.dart';
 import 'eye_blinks_node.dart';
 import 'export_edf_node.dart';
@@ -82,12 +81,12 @@ class NodeRegistry {
     // Input
     NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelCoordinatesNodeType()),
+    NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelExclusionNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => EditChannelsNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => BridgeDetectorNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => ResampleNodeType()),
 
     // Signal processing
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => AverageNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => BandpassNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => AmplitudeFeaturesNodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
@@ -161,7 +160,6 @@ class NodeRegistry {
 
     // Endpoints
     NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ImpedancesNodeType()),
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => TopomapNodeType()),
     NodeRegistryEntry(group: NodeGroup.endpoints, create: () => VisualizationNodeType()),
     NodeRegistryEntry(group: NodeGroup.endpoints, create: () => DebugOutputNodeType()),
     NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ExportNodeType()),

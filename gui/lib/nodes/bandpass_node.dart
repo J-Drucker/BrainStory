@@ -35,9 +35,6 @@ class BandpassNodeType extends NodeType {
   ];
 
   @override
-  bool get supportsBackgroundRun => true;
-
-  @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
@@ -70,9 +67,7 @@ class BandpassNodeType extends NodeType {
           .toList(growable: false),
       sampleRate: sampleRate,
       channelLabels: timeSeries.channelLabels,
-      channelCoordinates: timeSeries.channelCoordinates,
       markers: timeSeries.markers,
-      factors: timeSeries.factors,
       source: timeSeries.source,
     );
     dataset.ram['bandpass.params'] = <String, dynamic>{
@@ -201,87 +196,51 @@ List<double> applyBandpassFilter(
 
   final double nyquist = sampleRate / 2.0;
   final double normalizedSteepness = steepness.clamp(0.0, 1.0);
-  final double q = math.sqrt(0.5);
-  final int stageCount = 1 + (normalizedSteepness * 3.0).round();
+  final double q = 0.6 + (normalizedSteepness * 3.4);
   List<double> output = List<double>.from(input);
 
   if (lowCutHz > 0 && lowCutHz < nyquist) {
-    final _Biquad biquad = _Biquad.highPass(
-      sampleRate: sampleRate,
-      cutoffHz: lowCutHz,
-      q: q,
-    );
-    for (int stage = 0; stage < stageCount; stage++) {
-      output = _runZeroPhaseBiquad(
-        output,
-        biquad,
-        edgeHz: lowCutHz,
+    output = _runBiquad(
+      output,
+      _Biquad.highPass(
         sampleRate: sampleRate,
-      );
-    }
+        cutoffHz: lowCutHz,
+        q: q,
+      ),
+    );
   }
 
   if (highCutHz > 0 && highCutHz < nyquist) {
-    final _Biquad biquad = _Biquad.lowPass(
-      sampleRate: sampleRate,
-      cutoffHz: highCutHz,
-      q: q,
-    );
-    for (int stage = 0; stage < stageCount; stage++) {
-      output = _runZeroPhaseBiquad(
-        output,
-        biquad,
-        edgeHz: highCutHz,
+    output = _runBiquad(
+      output,
+      _Biquad.lowPass(
         sampleRate: sampleRate,
-      );
-    }
+        cutoffHz: highCutHz,
+        q: q,
+      ),
+    );
   }
 
   if (notchHz != null && notchHz > 0 && notchHz < nyquist) {
-    output = _runZeroPhaseBiquad(
+    output = _runBiquad(
       output,
       _Biquad.notch(
         sampleRate: sampleRate,
         centerHz: notchHz,
-        q: 20.0,
+        q: math.max(1.0, q),
       ),
-      edgeHz: notchHz,
-      sampleRate: sampleRate,
     );
   }
 
   return output;
 }
 
-List<double> _runZeroPhaseBiquad(
-  List<double> input,
-  _Biquad biquad, {
-  required double edgeHz,
-  required double sampleRate,
-}) {
-  final List<double> padded = _reflectPad(
-    input,
-    _edgePaddingLength(
-      length: input.length,
-      edgeHz: edgeHz,
-      sampleRate: sampleRate,
-    ),
-  );
-  final List<double> forward = _runBiquad(padded, biquad);
-  final List<double> backward = _runBiquad(
-    forward.reversed.toList(growable: false),
-    biquad,
-  ).reversed.toList(growable: false);
-  final int trim = (backward.length - input.length) ~/ 2;
-  return backward.sublist(trim, trim + input.length);
-}
-
 List<double> _runBiquad(List<double> input, _Biquad biquad) {
   final List<double> output = <double>[];
-  double x1 = input.isEmpty ? 0.0 : input.first;
-  double x2 = x1;
-  double y1 = x1;
-  double y2 = x1;
+  double x1 = 0.0;
+  double x2 = 0.0;
+  double y1 = 0.0;
+  double y2 = 0.0;
 
   for (final double x0 in input) {
     final double y0 = (biquad.b0 * x0) +
@@ -297,37 +256,6 @@ List<double> _runBiquad(List<double> input, _Biquad biquad) {
   }
 
   return output;
-}
-
-int _edgePaddingLength({
-  required int length,
-  required double edgeHz,
-  required double sampleRate,
-}) {
-  if (length <= 2) {
-    return 0;
-  }
-  final double safeEdgeHz = edgeHz <= 0 ? sampleRate / 8.0 : edgeHz;
-  final int requested = math.max(
-    24,
-    (sampleRate * (3.0 / safeEdgeHz)).round(),
-  );
-  return requested.clamp(0, math.max(0, length - 1));
-}
-
-List<double> _reflectPad(List<double> input, int padLength) {
-  if (padLength <= 0 || input.length < 2) {
-    return List<double>.from(input, growable: false);
-  }
-  final List<double> padded = <double>[];
-  for (int index = padLength; index >= 1; index--) {
-    padded.add(input[index.clamp(0, input.length - 1)]);
-  }
-  padded.addAll(input);
-  for (int index = input.length - 2; index >= input.length - 1 - padLength; index--) {
-    padded.add(input[index.clamp(0, input.length - 1)]);
-  }
-  return padded;
 }
 
 class _Biquad {

@@ -203,12 +203,6 @@ class EditChannelsNodeType extends NodeType {
         changeTypes.add(ArtifactChangeType.signalSamples);
         affectedIndices.add(index);
         affectedLabels.add(sourceLabels[index]);
-      } else if (remove && removeMode == 'mark_bad') {
-        changeTypes
-          ..add(ArtifactChangeType.signalSamples)
-          ..add(ArtifactChangeType.markers);
-        affectedIndices.add(index);
-        affectedLabels.add(sourceLabels[index]);
       }
       if (legacyPoolName.isNotEmpty) {
         changeTypes
@@ -280,7 +274,6 @@ class EditChannelsNodeType extends NodeType {
 
     final List<List<double>> outputChannels = <List<double>>[];
     final List<String> outputLabels = <String>[];
-    final Set<int> markBadOutputIndices = <int>{};
     bool interpolateRequested = false;
 
     for (int index = 0; index < sourceChannels.length; index++) {
@@ -300,14 +293,8 @@ class EditChannelsNodeType extends NodeType {
         interpolateRequested = true;
       }
 
-      final List<double> channel = remove && removeMode == 'mark_bad'
-          ? List<double>.filled(sourceChannels[index].length, 0.0, growable: false)
-          : sourceChannels[index];
-      outputChannels.add(channel);
+      outputChannels.add(sourceChannels[index]);
       outputLabels.add(label);
-      if (remove && removeMode == 'mark_bad') {
-        markBadOutputIndices.add(outputChannels.length - 1);
-      }
     }
 
     for (final Map<String, dynamic> newChannel in newChannels) {
@@ -362,27 +349,9 @@ class EditChannelsNodeType extends NodeType {
       );
     }
 
-    final List<TimeMarker> outputMarkers = <TimeMarker>[
-      ...timeSeries.markers,
-      if (markBadOutputIndices.isNotEmpty)
-        TimeMarker(
-          onsetMicros: 0,
-          durationMicros:
-              ((timeSeries.sampleCount / timeSeries.sampleRate) * 1000000.0)
-                  .round(),
-          label: 'bad channel',
-          markerType: MarkerType.artifact,
-          channelMask: <int>[
-            for (int index = 0; index < outputLabels.length; index++)
-              markBadOutputIndices.contains(index) ? 1 : 0,
-          ],
-        ),
-    ];
-
     return timeSeries.copyWith(
       channelSamples: outputChannels,
       channelLabels: outputLabels,
-      markers: outputMarkers,
       source: timeSeries.source.isEmpty
           ? 'Edit Channels'
           : '${timeSeries.source} -> Edit Channels',
@@ -669,15 +638,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     });
   }
 
-  void _showAllOriginalChannelRows() {
-    setState(() {
-      _setVisibleChannelIndices(
-        List<int>.generate(widget.channelLabels.length, (int index) => index),
-      );
-      _syncControllers();
-    });
-  }
-
   void _hideOriginalChannelRow(int index) {
     final List<int> updated = _visibleChannelIndices
         .where((int value) => value != index)
@@ -782,40 +742,32 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                       const SizedBox(height: 8),
                       ..._visibleChannelIndices.map(_buildExistingRow),
                       if (_remainingChannelIndices.isNotEmpty)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: <Widget>[
-                            PopupMenuButton<int>(
-                              onSelected: _addOriginalChannelRow,
-                              itemBuilder: (BuildContext context) {
-                                return _remainingChannelIndices
-                                    .map(
-                                      (int index) => PopupMenuItem<int>(
-                                        value: index,
-                                        child: Text(widget.channelLabels[index]),
-                                      ),
-                                    )
-                                    .toList(growable: false);
-                              },
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 4),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: <Widget>[
-                                    Icon(Icons.add, size: 18),
-                                    SizedBox(width: 4),
-                                    Text('Add original channel'),
-                                  ],
-                                ),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: PopupMenuButton<int>(
+                            onSelected: _addOriginalChannelRow,
+                            itemBuilder: (BuildContext context) {
+                              return _remainingChannelIndices
+                                  .map(
+                                    (int index) => PopupMenuItem<int>(
+                                      value: index,
+                                      child: Text(widget.channelLabels[index]),
+                                    ),
+                                  )
+                                  .toList(growable: false);
+                            },
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Icon(Icons.add, size: 18),
+                                  SizedBox(width: 4),
+                                  Text('Add original channel'),
+                                ],
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            TextButton.icon(
-                              onPressed: _showAllOriginalChannelRows,
-                              icon: const Icon(Icons.select_all, size: 18),
-                              label: const Text('Select all'),
-                            ),
-                          ],
+                          ),
                         ),
                       const SizedBox(height: 14),
                       const Divider(height: 1),
@@ -863,7 +815,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         SizedBox(width: 10),
         _HeaderCell(width: 180, text: 'Rename'),
         SizedBox(width: 10),
-        _HeaderCell(width: 430, text: 'Action'),
+        _HeaderCell(width: 300, text: 'Remove'),
         SizedBox(width: 10),
         _HeaderCell(width: 40, text: ''),
       ],
@@ -907,7 +859,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           ),
           const SizedBox(width: 10),
           SizedBox(
-            width: 430,
+            width: 300,
             child: Row(
               children: <Widget>[
                 Checkbox(
@@ -918,7 +870,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                     });
                   },
                 ),
-                const Text('apply'),
+                const Text('remove'),
                 const SizedBox(width: 10),
                 IgnorePointer(
                   ignoring: !remove,
@@ -955,12 +907,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                               softWrap: false,
                             ),
                           ),
-                          SizedBox(width: 8),
-                          Radio<String>(
-                            value: 'mark_bad',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          Text('mark bad'),
                         ],
                       ),
                     ),

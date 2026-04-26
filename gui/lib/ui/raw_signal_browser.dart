@@ -9,7 +9,6 @@ import '../model/dataset.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
-import 'viewer_interaction.dart';
 
 class RawSignalBrowser extends StatefulWidget {
   const RawSignalBrowser({
@@ -28,7 +27,7 @@ class RawSignalBrowser extends StatefulWidget {
   final VoidCallback? onChanged;
   final ValueChanged<List<dynamic>>? onMarkersChanged;
   final ValueChanged<Map<String, dynamic>>? onChannelEditsSaved;
-  final String Function()? onInteractiveArtifactDetectionSaved;
+  final VoidCallback? onInteractiveArtifactDetectionSaved;
   final VoidCallback? onSaveAndQuit;
 
   @override
@@ -61,6 +60,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     1000,
   ];
   static const List<double> _timeSpanOptionsSec = <double>[1, 2, 5, 10, 20, 30];
+  static const List<double> _channelSpacingOptions = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
   static const double _collapsedRailWidth = 28;
 
   late final ScrollController _verticalController;
@@ -80,15 +80,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Offset? _dragSelectionStart;
   Offset? _dragSelectionCurrent;
   Offset? _dragSelectionGlobal;
+  String? _lastFocusedReferenceId;
   String? _hoveredMarkerReferenceId;
-  String? _selectedMarkerReferenceId;
   bool _renamingMarker = false;
 
   @override
   void initState() {
     super.initState();
-    _verticalController = ScrollController(keepScrollOffset: false);
-    _horizontalController = ScrollController(keepScrollOffset: false);
+    _verticalController = ScrollController();
+    _horizontalController = ScrollController();
     _ensureDefaults();
   }
 
@@ -129,27 +129,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final bool showMarkers = _showMarkers();
     final bool removeDc = _removeDc();
     final bool hideSignals = !showSignals;
-    final bool interactiveArtifactDetection = _interactiveArtifactWorkflowEnabled();
-    final List<TimeMarker> renderedMarkers = !showMarkers
+    final bool interactiveArtifactDetection = _interactiveArtifactDetectionEnabled();
+    final List<TimeMarker> markers = !showMarkers
         ? const <TimeMarker>[]
         : interactiveArtifactDetection
             ? _interactiveDisplayMarkers(timeSeries)
-            : _currentMarkersForDataset();
-    final List<TimeMarker> listedMarkers = !showMarkers
-        ? const <TimeMarker>[]
-        : interactiveArtifactDetection
-            ? InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
-                widget.dataset.id,
-                _effectiveInteractiveArtifactParams,
-                baseMarkers: timeSeries.markers,
-              )
             : _currentMarkersForDataset();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         _buildControlBar(
-          timeSeries: timeSeries,
           sampleRate: timeSeries.sampleRate,
           channelCount: channelCount,
         ),
@@ -159,8 +149,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             builder: (BuildContext context, BoxConstraints constraints) {
               final bool rightCollapsed = _rightPanelCollapsed();
               final double defaultLabelWidth = _defaultLeftPanelWidth(labels);
-              final double defaultSidePanelWidth =
-                  _defaultRightPanelWidth(listedMarkers);
+              final double defaultSidePanelWidth = _defaultRightPanelWidth(markers);
               final double labelWidth = hideSignals
                   ? 0
                   : _resolvedLeftPanelWidth(defaultLabelWidth);
@@ -181,7 +170,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               const double axisHeight = 26;
               const double timelineHeight = 28;
               const double bottomChromeHeight = axisHeight + timelineHeight + 12;
-              final double axisLeftInset = hideSignals ? 0 : labelWidth + 16;
               final double traceAreaHeight =
                   math.max(140, constraints.maxHeight - bottomChromeHeight);
               final double totalHeight = hideSignals
@@ -260,17 +248,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                             child: SingleChildScrollView(
                                               controller: _horizontalController,
                                               scrollDirection: Axis.horizontal,
-                                              child: Listener(
-                                                onPointerSignal: (PointerSignalEvent event) {
-                                                  _handleTracePointerSignal(
-                                                    event,
-                                                    durationSeconds: durationSeconds,
-                                                    pixelsPerSecond: pixelsPerSecond,
-                                                    viewportWidth: traceWidth,
-                                                    viewportHeight: traceAreaHeight,
-                                                  );
-                                                },
-                                                child: MouseRegion(
+                                              child: MouseRegion(
                                                 onHover: (PointerHoverEvent details) {
                                                   if (_interactionMode() != 'edit') {
                                                     if (_hoveredMarkerReferenceId != null) {
@@ -381,13 +359,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                             showSignals: showSignals,
                                                             removeDc: removeDc,
                                                             colors: channelColors,
-                                                            markers: renderedMarkers,
+                                                            markers: markers,
                                                             selectionStartX: _dragSelectionStart?.dx,
                                                             selectionEndX: _dragSelectionCurrent?.dx,
                                                             hoveredMarkerReferenceId:
                                                                 _hoveredMarkerReferenceId,
-                                                            selectedMarkerReferenceId:
-                                                                _selectedMarkerReferenceId,
                                                             horizontalOffset:
                                                                 _horizontalController.hasClients
                                                                     ? _horizontalController.offset
@@ -406,7 +382,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                   ),
                                                 ),
                                               ),
-                                              ),
                                             ),
                                           ),
                                         ),
@@ -422,7 +397,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Padding(
-                            padding: EdgeInsets.only(left: axisLeftInset),
+                            padding: EdgeInsets.only(left: labelWidth + 8),
                             child: SizedBox(
                               width: traceWidth,
                               child: _TimeAxisBar(
@@ -438,7 +413,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Padding(
-                            padding: EdgeInsets.only(left: axisLeftInset),
+                            padding: EdgeInsets.only(left: labelWidth + 8),
                             child: SizedBox(
                               width: traceWidth,
                               child: _TimelineBar(
@@ -481,7 +456,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                           )
                         : _buildInfoPanel(
                             interactiveArtifactDetection: interactiveArtifactDetection,
-                            markers: listedMarkers,
+                            markers: markers,
                             onCollapse: () => _updateParam('right_panel_collapsed', true),
                           ),
                   ),
@@ -495,18 +470,18 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Widget _buildControlBar({
-    required TimeSeriesData timeSeries,
     required double sampleRate,
     required int channelCount,
   }) {
-    final bool interactiveArtifactMode = _interactiveModeActive();
+    final bool interactiveArtifactDetection = _interactiveArtifactDetectionEnabled();
     final double windowSeconds =
         (widget.params['window_sec'] as num?)?.toDouble() ?? 10.0;
     final bool showSignals = _showSignals();
     final bool showMarkers = _showMarkers();
     final bool removeDc = _removeDc();
-    final List<_ResolvedChannelCoordinate> mappedCoordinates =
-        _resolvedChannelCoordinatesForTimeSeries(timeSeries);
+    final double spacingFactor = _channelSpacingFactor();
+    final bool controlsExpanded =
+        (widget.params['controls_expanded'] as bool?) ?? false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -542,33 +517,28 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                   label: 'Remove DC',
                   selected: removeDc,
                   leadingGap: 10,
-                  showLeadingDivider: true,
                   onPressed: () => _updateParam('raw_remove_dc', !removeDc),
                 ),
               ],
             ),
             const _ControlStripDivider(),
-            _InlineChoiceGroup(
-              label: 'Mode:',
-              options: <_InlineChoiceOption>[
-                _InlineChoiceOption(
-                  label: 'view',
-                  selected: _interactionMode() == 'view',
-                  onPressed: () => _updateParam('interaction_mode', 'view'),
-                ),
-                _InlineChoiceOption(
-                  label: 'edit',
-                  selected: _interactionMode() == 'edit',
-                  onPressed: () => _updateParam('interaction_mode', 'edit'),
-                ),
-                _InlineChoiceOption(
-                  label: 'interactive',
-                  selected: _interactionMode() == 'interactive',
-                  onPressed: () => _updateParam('interaction_mode', 'interactive'),
-                ),
-              ],
-            ),
-            if (interactiveArtifactMode)
+            if (!interactiveArtifactDetection)
+              _InlineChoiceGroup(
+                label: 'Mode:',
+                options: <_InlineChoiceOption>[
+                  _InlineChoiceOption(
+                    label: 'view',
+                    selected: _interactionMode() == 'view',
+                    onPressed: () => _updateParam('interaction_mode', 'view'),
+                  ),
+                  _InlineChoiceOption(
+                    label: 'edit',
+                    selected: _interactionMode() == 'edit',
+                    onPressed: () => _updateParam('interaction_mode', 'edit'),
+                  ),
+                ],
+              ),
+            if (interactiveArtifactDetection)
               const Text(
                 'Drag to label blink • Alt+drag for other artifacts',
                 style: TextStyle(color: Colors.white70, fontSize: 12),
@@ -581,22 +551,30 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               rangeUv: _yScaleUv(),
               rangeOptionsUv: _yScaleOptionsUv,
               onRangeSelected: (double value) => _updateParam('y_scale_uv', value),
+              spacingFactor: spacingFactor,
+              spacingOptions: _channelSpacingOptions,
+              onSpacingSelected: (double value) =>
+                  _updateParam('channel_spacing_factor', value),
             ),
-            const _ControlStripDivider(),
-            Tooltip(
-              message: mappedCoordinates.isEmpty
-                  ? 'Run Channel Positions upstream first.'
-                  : 'View mapped channel positions and XYZ coordinates',
-              child: OutlinedButton.icon(
-                onPressed: mappedCoordinates.isEmpty
-                    ? null
-                    : () => _showChannelPositionsDialog(timeSeries),
-                icon: const Icon(Icons.public, size: 18),
-                label: const Text('Channel positions'),
+            OutlinedButton.icon(
+              onPressed: () => _updateParam('controls_expanded', !controlsExpanded),
+              icon: Icon(
+                controlsExpanded ? Icons.expand_less : Icons.tune,
+                size: 18,
               ),
+              label: Text(controlsExpanded ? 'Hide Controls' : 'Show Controls'),
             ),
           ],
         ),
+        if (controlsExpanded) ...<Widget>[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: <Widget>[
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -629,10 +607,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               ),
             ),
             if (_hasAnyDraftChanges) ...<Widget>[
-              if (interactiveArtifactDetection) ...<Widget>[
-                _buildInteractiveDraftSummary(),
-                const SizedBox(height: 10),
-              ],
               _buildDraftActions(interactiveArtifactDetection),
               const SizedBox(height: 10),
             ],
@@ -645,7 +619,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       _InteractiveArtifactReviewSection(
                         labelChoices:
                             InteractiveArtifactDetectionNodeType.supportedLabels,
-                        timeSeries: widget.dataset.timeSeries,
                         exemplarsExpanded:
                             (widget.params['artifact_exemplars_expanded'] as bool?) ?? true,
                         candidatesExpanded:
@@ -713,9 +686,13 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       },
                       onDelete: _deleteMarker,
                       onFocus: (TimeMarker marker) {
-                        _focusMarker(marker);
+                        _jumpToTimeRange(
+                          referenceId:
+                              'marker:${marker.label}:${marker.onsetMicros}:${marker.durationMicros}',
+                          onsetMicros: marker.onsetMicros,
+                          durationMicros: marker.durationMicros,
+                        );
                       },
-                      selectedMarkerReferenceId: _selectedMarkerReferenceId,
                     ),
                   ],
                 ),
@@ -755,73 +732,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
-  Widget _buildInteractiveDraftSummary() {
-    final int exemplarCount = _artifactExemplars().length;
-    final int pendingCount = _artifactCandidates(
-      statuses: const <String>{
-        InteractiveArtifactDetectionNodeType.pendingStatus,
-      },
-    ).length;
-    final int acceptedCount = _artifactCandidates(
-      statuses: const <String>{
-        InteractiveArtifactDetectionNodeType.acceptedStatus,
-      },
-    ).length;
-    final int templateCount = _artifactTemplateSummaries().length;
-    final bool alreadyBackedByNode = _interactiveArtifactDetectionEnabled();
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            const Text(
-              'Pending interactive changes',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Save will ${alreadyBackedByNode ? 'update' : 'add'} the Interactive Artifact Detection node for ${widget.dataset.label}.',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                _SummaryChip(label: 'Exemplars', value: '$exemplarCount'),
-                _SummaryChip(label: 'Pending', value: '$pendingCount'),
-                _SummaryChip(label: 'Accepted', value: '$acceptedCount'),
-                _SummaryChip(label: 'Templates', value: '$templateCount'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _updateParam(String key, dynamic value) {
     setState(() {
       widget.params[key] = value;
-      if (key == 'interaction_mode' && value == 'interactive') {
-        widget.params.putIfAbsent('artifactExemplars', () => <Map<String, dynamic>>[]);
-        widget.params.putIfAbsent('artifactCandidates', () => <Map<String, dynamic>>[]);
-        widget.params.putIfAbsent('artifactTemplates', () => <Map<String, dynamic>>[]);
-        widget.params.putIfAbsent('artifactThreshold', () => 0.78);
-      }
       if (key == 'preview_bandpass' ||
           key == 'preview_low' ||
           key == 'preview_high') {
@@ -831,99 +744,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         _colorCacheKey = null;
       }
     });
-  }
-
-  void _handleTracePointerSignal(
-    PointerSignalEvent event, {
-    required double durationSeconds,
-    required double pixelsPerSecond,
-    required double viewportWidth,
-    required double viewportHeight,
-  }) {
-    final ViewerScrollGesture? gesture =
-        viewerScrollGestureFromPointerSignal(event);
-    if (gesture == null) {
-      return;
-    }
-    switch (gesture.intent) {
-      case ViewerScrollIntent.timeZoom:
-        _zoomTimeAtPointer(
-          scrollDeltaY: gesture.primaryDelta,
-          localX: gesture.localPosition.dx,
-          durationSeconds: durationSeconds,
-          pixelsPerSecond: pixelsPerSecond,
-        );
-        return;
-      case ViewerScrollIntent.amplitudeZoom:
-        _stepAmplitudeScale(gesture.primaryDelta);
-        return;
-      case ViewerScrollIntent.horizontalPan:
-        scrollControllerBy(_horizontalController, gesture.primaryDelta);
-        return;
-      case ViewerScrollIntent.verticalPan:
-        scrollControllerBy(_verticalController, gesture.primaryDelta);
-        return;
-    }
-  }
-
-  void _zoomTimeAtPointer({
-    required double scrollDeltaY,
-    required double localX,
-    required double durationSeconds,
-    required double pixelsPerSecond,
-  }) {
-    final double currentWindow =
-        (widget.params['window_sec'] as num?)?.toDouble() ?? 10.0;
-    final double zoomFactor = scrollDeltaY < 0 ? 0.82 : 1.22;
-    final double nextWindow = (currentWindow * zoomFactor).clamp(
-      0.1,
-      math.max(0.1, durationSeconds),
-    );
-    final double oldOffset =
-        _horizontalController.hasClients ? _horizontalController.offset : 0.0;
-    final double cursorSeconds = (oldOffset + localX) / pixelsPerSecond;
-    setState(() {
-      widget.params['window_sec'] = nextWindow;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_horizontalController.hasClients) {
-        return;
-      }
-      final double viewportFraction =
-          currentWindow <= 0 ? 0.5 : (localX / math.max(1.0, currentWindow * pixelsPerSecond));
-      final double nextPixelsPerSecond =
-          _horizontalController.position.viewportDimension / nextWindow;
-      final double targetOffset =
-          (cursorSeconds * nextPixelsPerSecond) -
-              (viewportFraction * _horizontalController.position.viewportDimension);
-      _horizontalController.jumpTo(
-        targetOffset.clamp(0.0, _horizontalController.position.maxScrollExtent),
-      );
-    });
-  }
-
-  void _stepAmplitudeScale(double scrollDeltaY) {
-    final double current = _yScaleUv();
-    final int index = _nearestOptionIndex(_yScaleOptionsUv, current);
-    final int direction = scrollDeltaY < 0 ? -1 : 1;
-    final int nextIndex =
-        (index + direction).clamp(0, _yScaleOptionsUv.length - 1);
-    if (nextIndex != index) {
-      _updateParam('y_scale_uv', _yScaleOptionsUv[nextIndex]);
-    }
-  }
-
-  int _nearestOptionIndex(List<double> options, double value) {
-    int bestIndex = 0;
-    double bestDistance = (options.first - value).abs();
-    for (int index = 1; index < options.length; index++) {
-      final double distance = (options[index] - value).abs();
-      if (distance < bestDistance) {
-        bestIndex = index;
-        bestDistance = distance;
-      }
-    }
-    return bestIndex;
   }
 
   void _handleMarkerTapOrRename(Offset localPosition, double pixelsPerSecond) {
@@ -940,7 +760,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     final TimeMarker? tappedMarker = _markerAtLabelPosition(localPosition, pixelsPerSecond);
     if (tappedMarker != null) {
-      _setSelectedMarker(tappedMarker);
       _renameMarker(tappedMarker);
       return;
     }
@@ -1047,27 +866,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   String _markerReferenceId(TimeMarker marker) {
-    return markerReferenceIdFor(marker);
-  }
-
-  void _setSelectedMarker(TimeMarker marker) {
-    final Map<String, dynamic> nextExpandedMap = Map<String, dynamic>.from(
-      widget.params['marker_label_expanded'] as Map? ?? <String, dynamic>{},
-    );
-    nextExpandedMap[marker.label] = true;
-    setState(() {
-      _selectedMarkerReferenceId = markerReferenceIdFor(marker);
-      widget.params['marker_label_expanded'] = nextExpandedMap;
-    });
-  }
-
-  void _focusMarker(TimeMarker marker) {
-    _setSelectedMarker(marker);
-    _jumpToTimeRange(
-      referenceId: markerReferenceIdFor(marker),
-      onsetMicros: marker.onsetMicros,
-      durationMicros: marker.durationMicros,
-    );
+    return '${marker.label}:${marker.onsetMicros}:${marker.durationMicros}:${marker.markerType}';
   }
 
   Future<void> _renameMarker(TimeMarker marker) async {
@@ -1129,7 +928,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               : existing,
         )
         .toList(growable: false);
-    _setSelectedMarker(marker.copyWith(label: normalized));
     _setDraftMarkersForDataset(updated);
     setState(() {
       widget.params['marker_default_label'] = normalized;
@@ -1207,15 +1005,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             ),
           ),
         );
-      },
-    );
-  }
-
-  Future<void> _showChannelPositionsDialog(TimeSeriesData timeSeries) async {
-    await showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return _ChannelPositionsDialog(timeSeries: timeSeries);
       },
     );
   }
@@ -1358,11 +1147,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   bool _interactiveArtifactDetectionEnabled() =>
       widget.params['interactiveArtifactDetection'] == true;
-
-  bool _interactiveArtifactWorkflowEnabled() =>
-      _interactiveArtifactDetectionEnabled() || _interactiveModeActive();
-
-  bool _interactiveModeActive() => _interactionMode() == 'interactive';
 
   Map<String, dynamic> get _effectiveInteractiveArtifactParams =>
       <String, dynamic>{
@@ -1608,12 +1392,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         _draftArtifactTemplates = null;
         _markerCacheKey = null;
       });
-      final String? message = widget.onInteractiveArtifactDetectionSaved?.call();
-      if (message != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(message)),
-        );
-      }
+      widget.onInteractiveArtifactDetectionSaved?.call();
       return;
     }
 
@@ -1688,21 +1467,30 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final double durationSeconds = durationMicros / 1000000.0;
     final double centerSeconds = onsetSeconds + (durationSeconds / 2);
     final double recordingSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
-    final ScrollPosition position = _horizontalController.position;
-    final double viewportWidth = position.viewportDimension;
-    final double scrollableWidth = position.maxScrollExtent + viewportWidth;
-    final double pixelsPerSecond = recordingSeconds <= 0
-        ? viewportWidth / secondsPerView
-        : scrollableWidth / recordingSeconds;
-    final double targetStartSeconds = (centerSeconds - (secondsPerView / 2)).clamp(
-      0.0,
-      math.max(0.0, recordingSeconds - secondsPerView),
-    );
+    final double viewportWidth = _horizontalController.position.viewportDimension;
+    final double pixelsPerSecond = viewportWidth / secondsPerView;
+    final double currentStartSeconds =
+        _horizontalController.offset / pixelsPerSecond;
+    final double currentEndSeconds = currentStartSeconds + secondsPerView;
+    final bool alreadyVisible =
+        onsetSeconds >= currentStartSeconds &&
+        (onsetSeconds + math.max(durationSeconds, 0.001)) <= currentEndSeconds;
+    final bool centerThisTime = _lastFocusedReferenceId == referenceId && alreadyVisible;
+    final double targetStartSeconds = centerThisTime
+        ? (centerSeconds - (secondsPerView / 2)).clamp(
+            0.0,
+            math.max(0.0, recordingSeconds - secondsPerView),
+          )
+        : onsetSeconds.clamp(
+            0.0,
+            math.max(0.0, recordingSeconds - secondsPerView),
+          );
     final double targetOffset = targetStartSeconds * pixelsPerSecond;
+    _lastFocusedReferenceId = referenceId;
     _horizontalController.animateTo(
       targetOffset.clamp(
         0.0,
-        position.maxScrollExtent,
+        _horizontalController.position.maxScrollExtent,
       ),
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
@@ -1720,25 +1508,23 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         (widget.params['marker_interaction_mode'] ?? 'view').toString();
     widget.params.putIfAbsent(
       'interaction_mode',
-      () => widget.params['interactiveArtifactDetection'] == true
-          ? 'interactive'
-          : legacyMarkerMode == 'edit'
-              ? 'edit'
-              : 'view',
+      () => legacyMarkerMode == 'edit' ? 'edit' : 'view',
     );
     widget.params.putIfAbsent('marker_default_label', () => 'new marker');
     widget.params.putIfAbsent('markers', () => <Map<String, dynamic>>[]);
     widget.params.putIfAbsent('channel_colors', () => <String, dynamic>{});
+    widget.params.putIfAbsent('controls_expanded', () => false);
     widget.params.putIfAbsent('marker_list_expanded', () => false);
     widget.params.putIfAbsent('marker_label_expanded', () => <String, dynamic>{});
     widget.params.putIfAbsent('artifact_exemplars_expanded', () => true);
     widget.params.putIfAbsent('artifact_candidates_expanded', () => true);
     widget.params.putIfAbsent('y_scale_uv', () => 100.0);
+    widget.params.putIfAbsent('channel_spacing_factor', () => 1.0);
     widget.params.putIfAbsent('raw_show_data', () => true);
     widget.params.putIfAbsent('raw_show_markers', () => true);
     widget.params.putIfAbsent('raw_remove_dc', () => true);
     widget.params.putIfAbsent('right_panel_collapsed', () => false);
-    if (_interactiveArtifactDetectionEnabled() || _interactionMode() == 'interactive') {
+    if (_interactiveArtifactDetectionEnabled()) {
       widget.params.putIfAbsent(
         'artifactExemplars',
         () => <Map<String, dynamic>>[],
@@ -1807,7 +1593,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   double _channelHeight(double viewportHeight, int channelCount) {
-    final double spacingFactor = _autoChannelSpacingFactor();
+    final double spacingFactor = _channelSpacingFactor();
     return math.max(40.0, (viewportHeight / math.max(1, channelCount)) * spacingFactor);
   }
 
@@ -1837,10 +1623,19 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     return (widget.params['raw_remove_dc'] as bool?) ?? false;
   }
 
-  double _autoChannelSpacingFactor() {
-    final double rangeUv = _yScaleUv();
-    final double factor = math.sqrt(100.0 / math.max(1.0, rangeUv));
-    return factor.clamp(0.75, 2.4);
+  double _channelSpacingFactor() {
+    final double requested =
+        (widget.params['channel_spacing_factor'] as num?)?.toDouble() ?? 1.0;
+    double closest = _channelSpacingOptions.first;
+    double bestDistance = (requested - closest).abs();
+    for (final double option in _channelSpacingOptions.skip(1)) {
+      final double distance = (requested - option).abs();
+      if (distance < bestDistance) {
+        closest = option;
+        bestDistance = distance;
+      }
+    }
+    return closest;
   }
 
   bool _rightPanelCollapsed() {
@@ -1904,9 +1699,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   String _interactionMode() {
     final String mode = (widget.params['interaction_mode'] ?? 'view').toString();
-    if (mode == 'interactive') {
-      return 'interactive';
-    }
     if (mode == 'edit' || mode == 'markers' || mode == 'channels') {
       return 'edit';
     }
@@ -1991,12 +1783,10 @@ class _HoverHighlightFrame extends StatefulWidget {
   const _HoverHighlightFrame({
     required this.child,
     required this.glowColor,
-    this.forceHighlighted = false,
   });
 
   final Widget child;
   final Color glowColor;
-  final bool forceHighlighted;
 
   @override
   State<_HoverHighlightFrame> createState() => _HoverHighlightFrameState();
@@ -2007,7 +1797,6 @@ class _HoverHighlightFrameState extends State<_HoverHighlightFrame> {
 
   @override
   Widget build(BuildContext context) {
-    final bool highlighted = _hovered || widget.forceHighlighted;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -2015,14 +1804,12 @@ class _HoverHighlightFrameState extends State<_HoverHighlightFrame> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 90),
         decoration: BoxDecoration(
-          color: highlighted
-              ? Colors.yellow.withValues(alpha: 0.18)
-              : Colors.transparent,
+          color: _hovered ? Colors.yellow.withValues(alpha: 0.18) : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: highlighted
+          border: _hovered
               ? Border.all(color: Colors.yellow.withValues(alpha: 0.85))
               : null,
-          boxShadow: highlighted
+          boxShadow: _hovered
               ? <BoxShadow>[
                   BoxShadow(
                     color: widget.glowColor.withValues(alpha: 0.45),
@@ -2125,6 +1912,9 @@ class _ScaleCluster extends StatelessWidget {
     required this.rangeUv,
     required this.rangeOptionsUv,
     required this.onRangeSelected,
+    required this.spacingFactor,
+    required this.spacingOptions,
+    required this.onSpacingSelected,
   });
 
   final double timeSeconds;
@@ -2133,6 +1923,9 @@ class _ScaleCluster extends StatelessWidget {
   final double rangeUv;
   final List<double> rangeOptionsUv;
   final ValueChanged<double> onRangeSelected;
+  final double spacingFactor;
+  final List<double> spacingOptions;
+  final ValueChanged<double> onSpacingSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -2163,20 +1956,15 @@ class _ScaleCluster extends StatelessWidget {
           itemLabelBuilder: (double option) => '${option.toStringAsFixed(0)} uV',
           onSelected: onRangeSelected,
         ),
-        Tooltip(
-          message: 'Channel spacing follows signal range automatically',
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.05),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-            ),
-            child: const Text(
-              'Spacing: Auto',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          ),
+        _ScalePillMenu<double>(
+          label: 'Spacing',
+          currentValue: spacingFactor,
+          valueText: '${spacingFactor.toStringAsFixed(spacingFactor == spacingFactor.roundToDouble() ? 0 : 2)}x',
+          tooltip: 'Channel spacing',
+          options: spacingOptions,
+          itemLabelBuilder: (double option) =>
+              '${option.toStringAsFixed(option == option.roundToDouble() ? 0 : 2)}x',
+          onSelected: onSpacingSelected,
         ),
       ],
     );
@@ -2267,14 +2055,12 @@ class _InlineToggleOption {
     required this.selected,
     required this.onPressed,
     this.leadingGap = 0,
-    this.showLeadingDivider = false,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onPressed;
   final double leadingGap;
-  final bool showLeadingDivider;
 }
 
 class _InlineChoiceOption {
@@ -2321,51 +2107,38 @@ class _InlineToggleGroup extends StatelessWidget {
           final double buttonWidth = painter.width + 40;
           return Padding(
             padding: EdgeInsets.only(left: option.leadingGap),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (option.showLeadingDivider) ...<Widget>[
-                  Container(
-                    width: 1,
-                    height: 24,
-                    margin: const EdgeInsets.only(right: 10),
-                    color: Colors.white.withValues(alpha: 0.18),
+            child: SizedBox(
+              width: buttonWidth,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: OutlinedButton(
+                  onPressed: option.onPressed,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    minimumSize: Size(buttonWidth, 34),
+                    backgroundColor: option.selected
+                        ? Colors.white.withValues(alpha: 0.24)
+                        : Colors.white.withValues(alpha: 0.04),
+                    foregroundColor: option.selected ? Colors.white : Colors.white70,
+                    side: BorderSide(
+                      color: option.selected
+                          ? Colors.white.withValues(alpha: 0.24)
+                          : Colors.white.withValues(alpha: 0.12),
+                    ),
+                    shape: const StadiumBorder(),
+                    splashFactory: NoSplash.splashFactory,
+                    overlayColor: Colors.transparent,
+                    animationDuration: Duration.zero,
                   ),
-                ],
-                SizedBox(
-                  width: buttonWidth,
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: OutlinedButton(
-                      onPressed: option.onPressed,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        minimumSize: Size(buttonWidth, 34),
-                        backgroundColor: option.selected
-                            ? Colors.white.withValues(alpha: 0.24)
-                            : Colors.white.withValues(alpha: 0.04),
-                        foregroundColor: option.selected ? Colors.white : Colors.white70,
-                        side: BorderSide(
-                          color: option.selected
-                              ? Colors.white.withValues(alpha: 0.24)
-                              : Colors.white.withValues(alpha: 0.12),
-                        ),
-                        shape: const StadiumBorder(),
-                        splashFactory: NoSplash.splashFactory,
-                        overlayColor: Colors.transparent,
-                        animationDuration: Duration.zero,
-                      ),
-                      child: Text(
-                        option.label,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontWeight: option.selected ? FontWeight.w600 : FontWeight.w500,
-                        ),
-                      ),
+                  child: Text(
+                    option.label,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontWeight: option.selected ? FontWeight.w600 : FontWeight.w500,
                     ),
                   ),
                 ),
-              ],
+              ),
             ),
           );
         }),
@@ -2576,13 +2349,11 @@ class _MarkerList extends StatelessWidget {
     required this.markers,
     required this.onDelete,
     required this.onFocus,
-    required this.selectedMarkerReferenceId,
   });
 
   final List<TimeMarker> markers;
   final ValueChanged<TimeMarker> onDelete;
   final ValueChanged<TimeMarker> onFocus;
-  final String? selectedMarkerReferenceId;
 
   @override
   Widget build(BuildContext context) {
@@ -2599,11 +2370,8 @@ class _MarkerList extends StatelessWidget {
       children: markers.map((TimeMarker marker) {
         final bool isArtifact = marker.markerType == MarkerType.artifact;
         final Color markerColor = _markerDisplayColor(marker);
-        final bool selected =
-            selectedMarkerReferenceId == markerReferenceIdFor(marker);
         return _HoverHighlightFrame(
           glowColor: markerColor,
-          forceHighlighted: selected,
           child: InputChip(
             avatar: Container(
               width: 10,
@@ -2616,7 +2384,7 @@ class _MarkerList extends StatelessWidget {
             label: Text(
               '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
             ),
-            selected: isArtifact || selected,
+            selected: isArtifact,
             selectedColor: markerColor.withValues(alpha: 0.22),
             onPressed: () => onFocus(marker),
             onDeleted: () => onDelete(marker),
@@ -2642,7 +2410,6 @@ class _MarkerSection extends StatelessWidget {
     required this.expanded,
     required this.markers,
     required this.labelExpandedMap,
-    required this.selectedMarkerReferenceId,
     required this.onToggleLabelExpanded,
     required this.onToggle,
     required this.onDelete,
@@ -2652,7 +2419,6 @@ class _MarkerSection extends StatelessWidget {
   final bool expanded;
   final List<TimeMarker> markers;
   final Map<String, dynamic> labelExpandedMap;
-  final String? selectedMarkerReferenceId;
   final void Function(String label, bool expanded) onToggleLabelExpanded;
   final ValueChanged<bool> onToggle;
   final ValueChanged<TimeMarker> onDelete;
@@ -2766,7 +2532,6 @@ class _MarkerSection extends StatelessWidget {
                               markers: group.markers,
                               onDelete: onDelete,
                               onFocus: onFocus,
-                              selectedMarkerReferenceId: selectedMarkerReferenceId,
                             ),
                           ],
                         ],
@@ -2796,10 +2561,6 @@ class _MarkerSection extends StatelessWidget {
         )
         .toList(growable: false);
   }
-}
-
-String markerReferenceIdFor(TimeMarker marker) {
-  return '${marker.label}:${marker.onsetMicros}:${marker.durationMicros}:${marker.markerType}';
 }
 
 Color _markerDisplayColor(TimeMarker marker) {
@@ -2898,7 +2659,6 @@ Color _artifactTemplateColor(String label) {
 class _InteractiveArtifactReviewSection extends StatelessWidget {
   const _InteractiveArtifactReviewSection({
     required this.labelChoices,
-    required this.timeSeries,
     required this.exemplarsExpanded,
     required this.candidatesExpanded,
     required this.templates,
@@ -2918,7 +2678,6 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
   });
 
   final List<String> labelChoices;
-  final TimeSeriesData? timeSeries;
   final bool exemplarsExpanded;
   final bool candidatesExpanded;
   final List<ArtifactTemplateSummary> templates;
@@ -2955,10 +2714,7 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
           ),
           if (templates.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
-            _ArtifactTemplatePreview(
-              templates: templates,
-              timeSeries: timeSeries,
-            ),
+            _ArtifactTemplatePreview(templates: templates),
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -3049,7 +2805,6 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
             else
               Column(
                 children: pendingCandidates.map((ArtifactCandidateData candidate) {
-                  const Color candidateDotColor = Color(0xFFFFD54F);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Material(
@@ -3066,7 +2821,7 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
                                 width: 10,
                                 height: 10,
                                 decoration: BoxDecoration(
-                                  color: candidateDotColor,
+                                  color: _artifactTemplateColor(candidate.label),
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -3109,14 +2864,13 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: acceptedCandidates.map((ArtifactCandidateData candidate) {
-                  const Color candidateDotColor = Color(0xFFFFD54F);
                   final Color labelColor = _artifactTemplateColor(candidate.label);
                   return InputChip(
                     avatar: Container(
                       width: 10,
                       height: 10,
                       decoration: BoxDecoration(
-                        color: candidateDotColor,
+                        color: labelColor,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -3162,15 +2916,11 @@ class _SectionHeader extends StatelessWidget {
             size: 18,
           ),
           const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              '$title ($count)',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.w600,
-              ),
+          Text(
+            '$title ($count)',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -3179,64 +2929,17 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _SummaryChip extends StatelessWidget {
-  const _SummaryChip({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: RichText(
-          text: TextSpan(
-            children: <InlineSpan>[
-              TextSpan(
-                text: '$label: ',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 11,
-                ),
-              ),
-              TextSpan(
-                text: value,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ArtifactTemplatePreview extends StatelessWidget {
   const _ArtifactTemplatePreview({
     required this.templates,
-    required this.timeSeries,
   });
 
   final List<ArtifactTemplateSummary> templates;
-  final TimeSeriesData? timeSeries;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 190,
+      height: 132,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(10),
@@ -3255,29 +2958,9 @@ class _ArtifactTemplatePreview extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Expanded(
-            child: LayoutBuilder(
-              builder: (BuildContext context, BoxConstraints constraints) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: templates.map((ArtifactTemplateSummary template) {
-                      return SizedBox(
-                        width: math.max(132, math.min(180, constraints.maxWidth * 0.72)),
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 10),
-                          child: CustomPaint(
-                            painter: _ArtifactTemplateTopomapPainter(
-                              template: template,
-                              timeSeries: timeSeries,
-                            ),
-                            child: const SizedBox.expand(),
-                          ),
-                        ),
-                      );
-                    }).toList(growable: false),
-                  ),
-                );
-              },
+            child: CustomPaint(
+              painter: _ArtifactTemplatePainter(templates: templates),
+              child: const SizedBox.expand(),
             ),
           ),
         ],
@@ -3286,777 +2969,71 @@ class _ArtifactTemplatePreview extends StatelessWidget {
   }
 }
 
-class _ArtifactTemplateTopomapPainter extends CustomPainter {
-  const _ArtifactTemplateTopomapPainter({
-    required this.template,
-    required this.timeSeries,
+class _ArtifactTemplatePainter extends CustomPainter {
+  const _ArtifactTemplatePainter({
+    required this.templates,
   });
 
-  final ArtifactTemplateSummary template;
-  final TimeSeriesData? timeSeries;
+  final List<ArtifactTemplateSummary> templates;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final List<_ArtifactTemplateTopoPoint> points =
-        _artifactTemplateTopoPoints(template, timeSeries);
-    if (points.length < 2) {
-      _paintTemplateFallbackTrace(canvas, size, template);
-      return;
-    }
+    final Paint gridPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.08)
+      ..strokeWidth = 1;
+    final Paint baselinePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.16)
+      ..strokeWidth = 1.2;
 
-    final double mapTop = 16;
-    final double mapHeight = math.max(24, size.height - 28);
-    final Offset center = Offset(size.width / 2, mapTop + mapHeight / 2);
-    final double radius = math.min(size.width, mapHeight) * 0.42;
-    final Rect headRect = Rect.fromCircle(center: center, radius: radius);
-    final double maxAbsValue = math.max(
-      1e-9,
-      points.map((_ArtifactTemplateTopoPoint point) => point.value.abs()).reduce(math.max),
+    final double baselineY = size.height - 6;
+    canvas.drawLine(
+      Offset(0, baselineY),
+      Offset(size.width, baselineY),
+      baselinePaint,
     );
+    canvas.drawLine(Offset(size.width / 2, 0), Offset(size.width / 2, size.height), gridPaint);
 
-    canvas.save();
-    canvas.clipPath(Path()..addOval(headRect));
-    final int grid = math.max(32, math.min(60, (radius * 2 / 4).round()));
-    final double cell = (radius * 2) / grid;
-    for (int row = 0; row < grid; row++) {
-      for (int column = 0; column < grid; column++) {
-        final Offset pixel = Offset(
-          center.dx - radius + (column + 0.5) * cell,
-          center.dy - radius + (row + 0.5) * cell,
-        );
-        final Offset normalized = Offset(
-          (pixel.dx - center.dx) / radius,
-          (pixel.dy - center.dy) / radius,
-        );
-        if (normalized.distance > 1.0) {
-          continue;
+    double maxValue = 1.0;
+    for (final ArtifactTemplateSummary template in templates) {
+      for (final double sample in template.previewSamples) {
+        if (sample > maxValue) {
+          maxValue = sample;
         }
-        final double value = _interpolatedTemplateTopoValue(points, normalized);
-        canvas.drawRect(
-          Rect.fromLTWH(
-            pixel.dx - cell / 2,
-            pixel.dy - cell / 2,
-            cell + 0.5,
-            cell + 0.5,
-          ),
-          Paint()..color = _artifactTemplateTopoColor(value / maxAbsValue),
-        );
       }
     }
-    canvas.restore();
 
-    final Color labelColor = _artifactTemplateColor(template.label);
-    final Paint outlinePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.76)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6;
-    canvas.drawOval(headRect, outlinePaint);
-    _drawMiniHeadLandmarks(canvas, center, radius, outlinePaint);
-
-    for (final _ArtifactTemplateTopoPoint point in points) {
-      final Offset projected = center + point.position * radius;
-      canvas.drawCircle(
-        projected,
-        3.0,
-        Paint()
-          ..color = Colors.black.withValues(alpha: 0.72)
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawCircle(
-        projected,
-        3.0,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.82)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1,
-      );
-    }
-
-    final TextPainter titlePainter = TextPainter(
-      text: TextSpan(
-        text: template.label,
-        style: TextStyle(
-          color: labelColor,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-          shadows: const <Shadow>[Shadow(blurRadius: 6, color: Colors.black)],
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: size.width);
-    titlePainter.paint(canvas, const Offset(0, 0));
-
-    final TextPainter detailPainter = TextPainter(
-      text: TextSpan(
-        text: '${template.exemplarCount} ex • peak GFP',
-        style: const TextStyle(color: Colors.white70, fontSize: 9),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: size.width);
-    detailPainter.paint(
-      canvas,
-      Offset(0, size.height - detailPainter.height),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _ArtifactTemplateTopomapPainter oldDelegate) {
-    return oldDelegate.template != template ||
-        oldDelegate.timeSeries != timeSeries;
-  }
-}
-
-class _ArtifactTemplateTopoPoint {
-  const _ArtifactTemplateTopoPoint({
-    required this.position,
-    required this.value,
-  });
-
-  final Offset position;
-  final double value;
-}
-
-List<_ArtifactTemplateTopoPoint> _artifactTemplateTopoPoints(
-  ArtifactTemplateSummary template,
-  TimeSeriesData? timeSeries,
-) {
-  final List<List<double>> channels = template.previewChannels;
-  if (channels.isEmpty || timeSeries == null) {
-    return const <_ArtifactTemplateTopoPoint>[];
-  }
-  final List<_ResolvedChannelCoordinate> resolvedCoordinates =
-      _resolvedChannelCoordinatesForTimeSeries(timeSeries);
-  if (resolvedCoordinates.length < 3) {
-    return const <_ArtifactTemplateTopoPoint>[];
-  }
-
-  return resolvedCoordinates
-      .where(
-        (_ResolvedChannelCoordinate coordinate) =>
-            coordinate.index < channels.length && channels[coordinate.index].isNotEmpty,
-      )
-      .map((_ResolvedChannelCoordinate coordinate) {
-        final List<double> samples = channels[coordinate.index];
-        final int peakIndex =
-            template.peakGfpPreviewIndex.clamp(0, samples.length - 1);
-        return _ArtifactTemplateTopoPoint(
-          position: coordinate.position,
-          value: samples[peakIndex],
-        );
-      })
-      .toList(growable: false);
-}
-
-ChannelCoordinate? _templateCoordinateForLabel(
-  Map<String, ChannelCoordinate> coordinates,
-  String label,
-) {
-  final ChannelCoordinate? direct = coordinates[label];
-  if (direct != null) {
-    return direct;
-  }
-  final String normalizedLabel = _normalizeTemplateChannelLabel(label);
-  for (final MapEntry<String, ChannelCoordinate> entry in coordinates.entries) {
-    final String normalizedCoordinateLabel =
-        _normalizeTemplateChannelLabel(entry.key);
-    if (normalizedCoordinateLabel == normalizedLabel ||
-        normalizedLabel.startsWith('$normalizedCoordinateLabel-')) {
-      return entry.value;
-    }
-  }
-  return null;
-}
-
-String _normalizeTemplateChannelLabel(String value) {
-  return value
-      .toLowerCase()
-      .replaceAll(RegExp(r'\s+'), '')
-      .replaceAll(RegExp(r'[^a-z0-9-]'), '');
-}
-
-class _ResolvedChannelCoordinate {
-  const _ResolvedChannelCoordinate({
-    required this.index,
-    required this.label,
-    required this.coordinate,
-    required this.position,
-  });
-
-  final int index;
-  final String label;
-  final ChannelCoordinate coordinate;
-  final Offset position;
-}
-
-List<_ResolvedChannelCoordinate> _resolvedChannelCoordinatesForTimeSeries(
-  TimeSeriesData timeSeries,
-) {
-  if (timeSeries.channelCoordinates.isEmpty) {
-    return const <_ResolvedChannelCoordinate>[];
-  }
-  double maxRadius = 1.0;
-  for (final ChannelCoordinate coordinate in timeSeries.channelCoordinates.values) {
-    maxRadius = math.max(
-      maxRadius,
-      math.sqrt(coordinate.x * coordinate.x + coordinate.y * coordinate.y),
-    );
-  }
-  final List<_ResolvedChannelCoordinate> resolved = <_ResolvedChannelCoordinate>[];
-  for (int index = 0; index < timeSeries.channelCount; index++) {
-    final String label = index < timeSeries.channelLabels.length
-        ? timeSeries.channelLabels[index]
-        : 'Ch ${index + 1}';
-    final ChannelCoordinate? coordinate = _templateCoordinateForLabel(
-      timeSeries.channelCoordinates,
-      label,
-    );
-    if (coordinate == null) {
-      continue;
-    }
-    resolved.add(
-      _ResolvedChannelCoordinate(
-        index: index,
-        label: label,
-        coordinate: coordinate,
-        position: Offset(coordinate.x / maxRadius, -coordinate.y / maxRadius),
-      ),
-    );
-  }
-  return resolved;
-}
-
-double _interpolatedTemplateTopoValue(
-  List<_ArtifactTemplateTopoPoint> points,
-  Offset position,
-) {
-  double weightedSum = 0.0;
-  double weightTotal = 0.0;
-  for (final _ArtifactTemplateTopoPoint point in points) {
-    final double distance = (position - point.position).distance;
-    if (distance < 0.001) {
-      return point.value;
-    }
-    final double weight = 1.0 / math.pow(distance, 2.35);
-    weightedSum += point.value * weight;
-    weightTotal += weight;
-  }
-  return weightTotal == 0.0 ? 0.0 : weightedSum / weightTotal;
-}
-
-Color _artifactTemplateTopoColor(double normalizedValue) {
-  final double value = normalizedValue.clamp(-1.0, 1.0);
-  if (value < 0) {
-    return Color.lerp(
-      const Color(0xFF1E4FA8),
-      Colors.white,
-      (value + 1.0).clamp(0.0, 1.0),
-    )!;
-  }
-  return Color.lerp(
-    Colors.white,
-    const Color(0xFFFF5A36),
-    value,
-  )!;
-}
-
-void _drawMiniHeadLandmarks(
-  Canvas canvas,
-  Offset center,
-  double radius,
-  Paint outlinePaint,
-) {
-  final Path nose = Path()
-    ..moveTo(center.dx - radius * 0.10, center.dy - radius * 0.98)
-    ..lineTo(center.dx, center.dy - radius * 1.12)
-    ..lineTo(center.dx + radius * 0.10, center.dy - radius * 0.98);
-  canvas.drawPath(nose, outlinePaint);
-  canvas.drawArc(
-    Rect.fromCenter(
-      center: Offset(center.dx - radius * 1.02, center.dy),
-      width: radius * 0.18,
-      height: radius * 0.38,
-    ),
-    math.pi / 2,
-    math.pi,
-    false,
-    outlinePaint,
-  );
-  canvas.drawArc(
-    Rect.fromCenter(
-      center: Offset(center.dx + radius * 1.02, center.dy),
-      width: radius * 0.18,
-      height: radius * 0.38,
-    ),
-    -math.pi / 2,
-    math.pi,
-    false,
-    outlinePaint,
-  );
-}
-
-void _paintTemplateFallbackTrace(
-  Canvas canvas,
-  Size size,
-  ArtifactTemplateSummary template,
-) {
-  final List<double> samples = template.previewSamples;
-  if (samples.length < 2) {
-    final TextPainter painter = TextPainter(
-      text: const TextSpan(
-        text: 'No template preview',
-        style: TextStyle(color: Colors.white54, fontSize: 11),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: size.width);
-    painter.paint(canvas, Offset(0, size.height / 2 - painter.height / 2));
-    return;
-  }
-  final double maxValue = math.max(
-    1.0,
-    samples.map((double value) => value.abs()).reduce(math.max),
-  );
-  final double baselineY = size.height / 2;
-  final Path path = Path();
-  for (int index = 0; index < samples.length; index++) {
-    final double x = (index / (samples.length - 1)) * size.width;
-    final double y = baselineY - (samples[index] / maxValue) * (size.height * 0.42);
-    if (index == 0) {
-      path.moveTo(x, y);
-    } else {
-      path.lineTo(x, y);
-    }
-  }
-  canvas.drawPath(
-    path,
-    Paint()
-      ..color = _artifactTemplateColor(template.label).withValues(alpha: 0.9)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2,
-  );
-}
-
-class _ChannelPositionsDialog extends StatelessWidget {
-  const _ChannelPositionsDialog({
-    required this.timeSeries,
-  });
-
-  final TimeSeriesData timeSeries;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<_ResolvedChannelCoordinate> coordinates =
-        _resolvedChannelCoordinatesForTimeSeries(timeSeries);
-    final String units = coordinates.isEmpty ? '' : coordinates.first.coordinate.units;
-    final String coordinateSystem = coordinates.isEmpty
-        ? ''
-        : coordinates.first.coordinate.coordinateSystem;
-
-    return Dialog(
-      backgroundColor: const Color(0xFF10151D),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 1120,
-          maxHeight: 760,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      'Channel positions',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: Colors.white70),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${coordinates.length}/${timeSeries.channelCount} channels mapped'
-                '${units.isEmpty ? '' : ' • $units'}'
-                '${coordinateSystem.isEmpty ? '' : ' • $coordinateSystem'}',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: coordinates.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No channel coordinates are available for this dataset yet.',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                      )
-                    : LayoutBuilder(
-                        builder: (BuildContext context, BoxConstraints constraints) {
-                          final bool stacked = constraints.maxWidth < 920;
-                          final Widget topomap = _ChannelPositionsTopomap(
-                            coordinates: coordinates,
-                          );
-                          final Widget table = _ChannelPositionsTable(
-                            coordinates: coordinates,
-                          );
-                          if (stacked) {
-                            return Column(
-                              children: <Widget>[
-                                SizedBox(
-                                  height: math.min(320, constraints.maxHeight * 0.44),
-                                  child: topomap,
-                                ),
-                                const SizedBox(height: 12),
-                                Expanded(child: table),
-                              ],
-                            );
-                          }
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              SizedBox(
-                                width: math.min(380, constraints.maxWidth * 0.38),
-                                child: topomap,
-                              ),
-                              const SizedBox(width: 14),
-                              Expanded(child: table),
-                            ],
-                          );
-                        },
-                      ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Close'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ChannelPositionsTopomap extends StatelessWidget {
-  const _ChannelPositionsTopomap({
-    required this.coordinates,
-  });
-
-  final List<_ResolvedChannelCoordinate> coordinates;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: CustomPaint(
-        painter: _ChannelPositionHeadPainter(
-          coordinates: coordinates,
-        ),
-        child: const SizedBox.expand(),
-      ),
-    );
-  }
-}
-
-class _ChannelPositionHeadPainter extends CustomPainter {
-  const _ChannelPositionHeadPainter({
-    required this.coordinates,
-  });
-
-  final List<_ResolvedChannelCoordinate> coordinates;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final double side = math.min(size.width, size.height);
-    final Offset center = Offset(size.width / 2, size.height / 2);
-    final double radius = side * 0.40;
-    final Rect headRect = Rect.fromCircle(center: center, radius: radius);
-    final Paint outlinePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.82)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8;
-
-    canvas.drawOval(headRect, outlinePaint);
-    _drawMiniHeadLandmarks(canvas, center, radius, outlinePaint);
-
-    double minZ = coordinates.first.coordinate.z;
-    double maxZ = minZ;
-    for (final _ResolvedChannelCoordinate coordinate in coordinates) {
-      minZ = math.min(minZ, coordinate.coordinate.z);
-      maxZ = math.max(maxZ, coordinate.coordinate.z);
-    }
-
-    for (final _ResolvedChannelCoordinate coordinate in coordinates) {
-      final Offset projected = center + coordinate.position * radius;
-      final Color fillColor = _coordinateAxisColor(
-        coordinate.coordinate.z,
-        minZ,
-        maxZ,
-        const Color(0xFFF3D94C),
-        const Color(0xFF2F7DFF),
-      );
-      canvas.drawCircle(
-        projected,
-        5.0,
-        Paint()
-          ..color = fillColor
-          ..style = PaintingStyle.fill,
-      );
-      canvas.drawCircle(
-        projected,
-        5.0,
-        Paint()
-          ..color = Colors.black.withValues(alpha: 0.78)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.1,
-      );
-
-      final TextPainter textPainter = TextPainter(
-        text: TextSpan(
-          text: coordinate.label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            shadows: <Shadow>[Shadow(blurRadius: 6, color: Colors.black)],
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: 88);
-      textPainter.paint(
-        canvas,
-        projected + const Offset(6, -8),
-      );
+    for (final ArtifactTemplateSummary template in templates) {
+      final List<double> samples = template.previewSamples;
+      if (samples.length < 2) {
+        continue;
+      }
+      final Path path = Path();
+      for (int index = 0; index < samples.length; index++) {
+        final double x = samples.length == 1
+            ? 0
+            : (index / (samples.length - 1)) * size.width;
+        final double normalized = (samples[index] / maxValue).clamp(0.0, 1.0);
+        final double y = baselineY - (normalized * (size.height - 14));
+        if (index == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      final Paint paint = Paint()
+        ..color = _artifactTemplateColor(template.label).withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = 2.0;
+      canvas.drawPath(path, paint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _ChannelPositionHeadPainter oldDelegate) {
-    return oldDelegate.coordinates != coordinates;
+  bool shouldRepaint(covariant _ArtifactTemplatePainter oldDelegate) {
+    return oldDelegate.templates != templates;
   }
-}
-
-class _ChannelPositionsTable extends StatelessWidget {
-  const _ChannelPositionsTable({
-    required this.coordinates,
-  });
-
-  final List<_ResolvedChannelCoordinate> coordinates;
-
-  @override
-  Widget build(BuildContext context) {
-    double minX = coordinates.first.coordinate.x;
-    double maxX = minX;
-    double minY = coordinates.first.coordinate.y;
-    double maxY = minY;
-    double minZ = coordinates.first.coordinate.z;
-    double maxZ = minZ;
-    for (final _ResolvedChannelCoordinate coordinate in coordinates) {
-      minX = math.min(minX, coordinate.coordinate.x);
-      maxX = math.max(maxX, coordinate.coordinate.x);
-      minY = math.min(minY, coordinate.coordinate.y);
-      maxY = math.max(maxY, coordinate.coordinate.y);
-      minZ = math.min(minZ, coordinate.coordinate.z);
-      maxZ = math.max(maxZ, coordinate.coordinate.z);
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text(
-            'XYZ coordinates',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'X: left-right • Y: posterior-anterior • Z: inferior-superior',
-            style: TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(height: 10),
-          const _CoordinateTableHeader(),
-          const SizedBox(height: 8),
-          Expanded(
-            child: ListView.separated(
-              itemCount: coordinates.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 6),
-              itemBuilder: (BuildContext context, int index) {
-                final _ResolvedChannelCoordinate coordinate = coordinates[index];
-                return Row(
-                  children: <Widget>[
-                    SizedBox(
-                      width: 118,
-                      child: Text(
-                        coordinate.label,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _CoordinateValueCell(
-                        value: coordinate.coordinate.x,
-                        minValue: minX,
-                        maxValue: maxX,
-                        lowColor: const Color(0xFF37E0FF),
-                        highColor: const Color(0xFFFF5A36),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _CoordinateValueCell(
-                        value: coordinate.coordinate.y,
-                        minValue: minY,
-                        maxValue: maxY,
-                        lowColor: const Color(0xFFE945FF),
-                        highColor: const Color(0xFF43E36E),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _CoordinateValueCell(
-                        value: coordinate.coordinate.z,
-                        minValue: minZ,
-                        maxValue: maxZ,
-                        lowColor: const Color(0xFFF3D94C),
-                        highColor: const Color(0xFF2F7DFF),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CoordinateTableHeader extends StatelessWidget {
-  const _CoordinateTableHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      children: <Widget>[
-        SizedBox(
-          width: 118,
-          child: Text(
-            'Channel',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'X',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Y',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-        ),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Z',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _CoordinateValueCell extends StatelessWidget {
-  const _CoordinateValueCell({
-    required this.value,
-    required this.minValue,
-    required this.maxValue,
-    required this.lowColor,
-    required this.highColor,
-  });
-
-  final double value;
-  final double minValue;
-  final double maxValue;
-  final Color lowColor;
-  final Color highColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color background = _coordinateAxisColor(
-      value,
-      minValue,
-      maxValue,
-      lowColor,
-      highColor,
-    );
-    final Brightness brightness =
-        ThemeData.estimateBrightnessForColor(background);
-    final Color textColor =
-        brightness == Brightness.dark ? Colors.white : Colors.black87;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        value.toStringAsFixed(1),
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: textColor,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
-Color _coordinateAxisColor(
-  double value,
-  double minValue,
-  double maxValue,
-  Color lowColor,
-  Color highColor,
-) {
-  final double normalized = maxValue <= minValue
-      ? 0.5
-      : ((value - minValue) / (maxValue - minValue)).clamp(0.0, 1.0);
-  return Color.lerp(lowColor, highColor, normalized)!.withValues(alpha: 0.92);
 }
 
 class _TimeAxisBar extends StatelessWidget {
@@ -4096,12 +3073,12 @@ class _TimeAxisBar extends StatelessWidget {
                 children: <Widget>[
                   for (int second = firstTick; second <= lastTick; second++)
                     Positioned(
-                      left: (second * pixelsPerSecond) - offset - 22,
+                      left: (second * pixelsPerSecond) - offset - 1,
                       top: 0,
                       child: SizedBox(
                         width: 44,
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
                             Container(
                               width: 1,
@@ -4109,15 +3086,11 @@ class _TimeAxisBar extends StatelessWidget {
                               color: Colors.white.withValues(alpha: 0.28),
                             ),
                             const SizedBox(height: 2),
-                            SizedBox(
-                              width: 44,
-                              child: Text(
-                                '${second}s',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 10,
-                                ),
+                            Text(
+                              '${second}s',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 10,
                               ),
                             ),
                           ],
@@ -4283,32 +3256,6 @@ class _BrowserMessage extends StatelessWidget {
   }
 }
 
-class _VisibleMarkerPaintData {
-  const _VisibleMarkerPaintData({
-    required this.marker,
-    required this.label,
-    required this.referenceId,
-    required this.color,
-    required this.complementColor,
-    required this.x,
-    required this.endX,
-    required this.interactiveStatus,
-    required this.interactiveSource,
-  });
-
-  final TimeMarker marker;
-  final String label;
-  final String referenceId;
-  final Color color;
-  final Color complementColor;
-  final double x;
-  final double endX;
-  final String? interactiveStatus;
-  final String? interactiveSource;
-
-  bool get hasDuration => marker.durationMicros > 0;
-}
-
 class _RawSignalPainter extends CustomPainter {
   const _RawSignalPainter({
     required this.channels,
@@ -4324,7 +3271,6 @@ class _RawSignalPainter extends CustomPainter {
     this.selectionStartX,
     this.selectionEndX,
     this.hoveredMarkerReferenceId,
-    this.selectedMarkerReferenceId,
     required this.horizontalOffset,
     required this.verticalOffset,
     required this.viewportWidth,
@@ -4344,7 +3290,6 @@ class _RawSignalPainter extends CustomPainter {
   final double? selectionStartX;
   final double? selectionEndX;
   final String? hoveredMarkerReferenceId;
-  final String? selectedMarkerReferenceId;
   final double horizontalOffset;
   final double verticalOffset;
   final double viewportWidth;
@@ -4354,8 +3299,6 @@ class _RawSignalPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final double startTime = horizontalOffset / pixelsPerSecond;
     final double endTime = (horizontalOffset + viewportWidth) / pixelsPerSecond;
-    final double sampleToPixel = sampleRate <= 0 ? 0.0 : pixelsPerSecond / sampleRate;
-    final double microsToPixel = pixelsPerSecond / 1000000.0;
     final int startSample = channels.isEmpty
         ? 0
         : math.max(0, (startTime * sampleRate).floor() - 1);
@@ -4381,13 +3324,6 @@ class _RawSignalPainter extends CustomPainter {
     final Paint scalePaint = Paint()
       ..color = Colors.white70
       ..strokeWidth = 2;
-    final Paint rangePaint = Paint()..style = PaintingStyle.fill;
-    final Paint signalPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    final Paint overlaySignalPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.9;
 
     final double firstGridSecond = startTime.floorToDouble();
     for (double second = firstGridSecond; second <= endTime + 1; second += 1) {
@@ -4399,33 +3335,21 @@ class _RawSignalPainter extends CustomPainter {
       );
     }
 
-    final List<_VisibleMarkerPaintData> visibleMarkers = <_VisibleMarkerPaintData>[];
+    final List<TimeMarker> visibleMarkers = <TimeMarker>[];
     for (final TimeMarker marker in markers) {
-      final double x = marker.onsetMicros * microsToPixel;
-      final double markerEndX =
-          (marker.onsetMicros + marker.durationMicros) * microsToPixel;
+      final double x = marker.timeSeconds * pixelsPerSecond;
+      final double markerEndX = ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+          pixelsPerSecond;
       if (markerEndX < horizontalOffset - 24 ||
           x > horizontalOffset + viewportWidth + 24) {
         continue;
       }
+      visibleMarkers.add(marker);
       final Color markerColor = _markerDisplayColor(marker);
-      visibleMarkers.add(
-        _VisibleMarkerPaintData(
-          marker: marker,
-          label: marker.label,
-          referenceId: markerReferenceIdFor(marker),
-          color: markerColor,
-          complementColor: _complementColor(markerColor),
-          x: x,
-          endX: markerEndX,
-          interactiveStatus:
-              marker.attributes['brainstory.artifactStatus']?.toString(),
-          interactiveSource:
-              marker.attributes['brainstory.artifactSource']?.toString(),
-        ),
-      );
       if (marker.durationMicros > 0) {
-        rangePaint.color = markerColor.withValues(alpha: 0.24);
+        final Paint rangePaint = Paint()
+          ..color = markerColor.withValues(alpha: 0.24)
+          ..style = PaintingStyle.fill;
         final Rect rangeRect = Rect.fromLTRB(
           x,
           verticalOffset,
@@ -4497,18 +3421,6 @@ class _RawSignalPainter extends CustomPainter {
     if (showSignals) {
       final double verticalScale = channelHeight * 0.35;
       final double pixelsPerUv = verticalScale / math.max(1.0, yScaleUv);
-      final List<_VisibleMarkerPaintData> durationMarkers = visibleMarkers
-          .where((_VisibleMarkerPaintData marker) => marker.hasDuration)
-          .toList(growable: false);
-      final int visibleChannelCount =
-          lastChannel >= firstChannel ? (lastChannel - firstChannel + 1) : 0;
-      final int overlayMarkerLimit = visibleChannelCount <= 0
-          ? 0
-          : math.max(1, 96 ~/ visibleChannelCount);
-      final List<_VisibleMarkerPaintData> overlayMarkers =
-          durationMarkers.length <= overlayMarkerLimit
-              ? durationMarkers
-              : durationMarkers.take(overlayMarkerLimit).toList(growable: false);
       for (int channelIndex = firstChannel; channelIndex <= lastChannel; channelIndex++) {
         final double centerY = (channelIndex * channelHeight) + (channelHeight / 2);
         canvas.drawLine(
@@ -4534,7 +3446,7 @@ class _RawSignalPainter extends CustomPainter {
           (visibleSampleCount / math.max(1.0, viewportWidth * 2)).ceil(),
         );
         for (int sampleIndex = startSample; sampleIndex < endSample; sampleIndex += stride) {
-          final double x = sampleIndex * sampleToPixel;
+          final double x = (sampleIndex / sampleRate) * pixelsPerSecond;
           final double y = centerY - ((samples[sampleIndex] - dcOffset) * pixelsPerUv);
           if (sampleIndex == startSample) {
             path.moveTo(x, y);
@@ -4545,62 +3457,86 @@ class _RawSignalPainter extends CustomPainter {
         if ((endSample - 1) > startSample) {
           final int lastSampleIndex = endSample - 1;
           path.lineTo(
-            lastSampleIndex * sampleToPixel,
+            (lastSampleIndex / sampleRate) * pixelsPerSecond,
             centerY - ((samples[lastSampleIndex] - dcOffset) * pixelsPerUv),
           );
         }
 
-        signalPaint.color = colors[channelIndex];
+        final Paint signalPaint = Paint()
+          ..color = colors[channelIndex]
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
         canvas.drawPath(path, signalPaint);
 
-        for (final _VisibleMarkerPaintData marker in overlayMarkers) {
+        for (final TimeMarker marker in visibleMarkers) {
+          if (marker.durationMicros <= 0) {
+            continue;
+          }
+          final double markerStartX = marker.timeSeconds * pixelsPerSecond;
+          final double markerEndX =
+              ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+                  pixelsPerSecond;
           canvas.save();
           canvas.clipRect(
             Rect.fromLTRB(
-              marker.x,
+              markerStartX,
               centerY - (channelHeight * 0.48),
-              math.max(marker.x + 1, marker.endX),
+              math.max(markerStartX + 1, markerEndX),
               centerY + (channelHeight * 0.48),
             ),
           );
-          overlaySignalPaint.color = marker.complementColor;
-          canvas.drawPath(path, overlaySignalPaint);
+          canvas.drawPath(
+            path,
+            Paint()
+              ..color = _complementColor(_markerDisplayColor(marker))
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1.9,
+          );
           canvas.restore();
         }
       }
     }
 
-    for (final _VisibleMarkerPaintData marker in visibleMarkers) {
-      final bool hovered = hoveredMarkerReferenceId == marker.referenceId;
-      final bool selected = selectedMarkerReferenceId == marker.referenceId;
-      final bool emphasized = hovered || selected;
+    for (final TimeMarker marker in visibleMarkers) {
+      final double x = marker.timeSeconds * pixelsPerSecond;
+      final double markerEndX =
+          ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+              pixelsPerSecond;
+      final Color markerColor = _markerDisplayColor(marker);
+      final String markerReferenceId =
+          '${marker.label}:${marker.onsetMicros}:${marker.durationMicros}:${marker.markerType}';
+      final bool hovered = hoveredMarkerReferenceId == markerReferenceId;
+      final String? interactiveStatus =
+          marker.attributes['brainstory.artifactStatus']?.toString();
+      final String? interactiveSource =
+          marker.attributes['brainstory.artifactSource']?.toString();
       _drawMarkerGuideLine(
         canvas: canvas,
-        x: marker.x,
+        x: x,
         top: verticalOffset,
         bottom: verticalOffset + viewportHeight,
-        color: marker.color,
-        extraStrokeWidth: emphasized ? 1.2 : 0.0,
-        interactiveStatus: marker.interactiveStatus,
-        interactiveSource: marker.interactiveSource,
+        color: markerColor,
+        extraStrokeWidth: hovered ? 1.2 : 0.0,
+        interactiveStatus: interactiveStatus,
+        interactiveSource: interactiveSource,
       );
-      if (marker.hasDuration) {
+      if (marker.durationMicros > 0) {
         _drawMarkerGuideLine(
           canvas: canvas,
-          x: marker.endX,
+          x: markerEndX,
           top: verticalOffset,
           bottom: verticalOffset + viewportHeight,
-          color: marker.color,
-          extraStrokeWidth: emphasized ? 1.2 : 0.0,
-          interactiveStatus: marker.interactiveStatus,
-          interactiveSource: marker.interactiveSource,
+          color: markerColor,
+          extraStrokeWidth: hovered ? 1.2 : 0.0,
+          interactiveStatus: interactiveStatus,
+          interactiveSource: interactiveSource,
         );
       }
       final TextPainter textPainter = TextPainter(
         text: TextSpan(
           text: marker.label,
           style: TextStyle(
-            color: marker.color,
+            color: markerColor,
             fontSize: 11,
             fontWeight: FontWeight.w700,
             shadows: const <Shadow>[
@@ -4613,9 +3549,9 @@ class _RawSignalPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      if (emphasized) {
+      if (hovered) {
         final Rect highlightRect = Rect.fromLTWH(
-          marker.x,
+          x,
           verticalOffset + 2,
           textPainter.width + 10,
           textPainter.height + 6,
@@ -4638,7 +3574,7 @@ class _RawSignalPainter extends CustomPainter {
             ..style = PaintingStyle.stroke,
         );
       }
-      textPainter.paint(canvas, Offset(marker.x + 4, verticalOffset + 4));
+      textPainter.paint(canvas, Offset(x + 4, verticalOffset + 4));
     }
   }
 

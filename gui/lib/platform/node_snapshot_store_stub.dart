@@ -26,10 +26,3 @@ Future<void> deleteNodeSnapshotFromDisk({
   required String nodeId,
   required String datasetId,
 }) async {}
-
-Future<int?> nodeSnapshotDiskBytes({
-  required String nodeId,
-  required String datasetId,
-}) async {
-  return null;
-}

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -260,41 +259,6 @@ abstract class NodeType {
 
   List<PortSpec> get inputs;
   List<PortSpec> get outputs;
-
-  /// Whether this node can safely run against a serialized dataset snapshot
-  /// in a worker isolate and commit only its output artifact back on the UI
-  /// isolate. Nodes that use platform dialogs, file handles, or complex live
-  /// graph state should leave this false.
-  bool get supportsBackgroundRun => false;
-
-  /// Parameter keys that affect node bookkeeping or UI only, not the artifact
-  /// this node produces. Subclasses can add keys such as display labels.
-  Set<String> get nonComputationalParamKeys => const <String>{
-        'selectedDatasetIds',
-        'selectedDatasetSourceKeys',
-        'storagePolicy',
-      };
-
-  bool paramsAffectOutput(
-    Map<String, dynamic> previousParams,
-    Map<String, dynamic> nextParams,
-  ) {
-    return jsonEncode(_computationalParams(previousParams)) !=
-        jsonEncode(_computationalParams(nextParams));
-  }
-
-  Map<String, dynamic> _computationalParams(Map<String, dynamic> params) {
-    final Map<String, dynamic> output = <String, dynamic>{};
-    final List<String> keys = params.keys
-        .map((String key) => key)
-        .where((String key) => !nonComputationalParamKeys.contains(key))
-        .toList()
-      ..sort();
-    for (final String key in keys) {
-      output[key] = params[key];
-    }
-    return output;
-  }
 
   Widget buildBody(
     Map<String, dynamic> params, {

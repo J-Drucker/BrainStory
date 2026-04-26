@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -13,9 +12,9 @@ import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/add_remove_markers_node.dart';
 import '../nodes/amplitude_features_node.dart';
-import '../nodes/average_node.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/bridge_detector_node.dart';
+import '../nodes/channel_exclusion_node.dart';
 import '../nodes/channel_coordinates_node.dart';
 import '../nodes/debug_output_node.dart';
 import '../nodes/edit_channels_node.dart';
@@ -37,9 +36,7 @@ import '../nodes/resample_node.dart';
 import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/spectral_features_node.dart';
-import '../nodes/topomap_node.dart';
 import '../nodes/visualization_node.dart';
-import '../platform/background_node_runner.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/project_file_save.dart';
 import 'connection_painter.dart';
@@ -60,210 +57,18 @@ class RunActivity {
   const RunActivity({
     required this.label,
     this.detail = '',
-    this.jobId,
   });
 
   final String label;
   final String detail;
-  final String? jobId;
 
   RunActivity copyWith({
     String? label,
     String? detail,
-    String? jobId,
   }) {
     return RunActivity(
       label: label ?? this.label,
       detail: detail ?? this.detail,
-      jobId: jobId ?? this.jobId,
-    );
-  }
-}
-
-enum BrainStoryJobStatus {
-  queued,
-  running,
-  completed,
-  failed,
-  canceled,
-}
-
-class BrainStoryRunCanceled implements Exception {
-  const BrainStoryRunCanceled([this.message = 'Run canceled.']);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-enum NodeProcessStatus {
-  waiting,
-  running,
-  done,
-  canceling,
-  canceled,
-  failed,
-}
-
-class NodeProcessIndicator {
-  const NodeProcessIndicator({
-    required this.status,
-  });
-
-  final NodeProcessStatus status;
-
-  String get label {
-    switch (status) {
-      case NodeProcessStatus.waiting:
-        return 'Waiting';
-      case NodeProcessStatus.running:
-        return 'Running';
-      case NodeProcessStatus.done:
-        return 'Done';
-      case NodeProcessStatus.canceling:
-        return 'Canceling';
-      case NodeProcessStatus.canceled:
-        return 'Canceled';
-      case NodeProcessStatus.failed:
-        return 'Failed';
-    }
-  }
-
-  bool get active =>
-      status == NodeProcessStatus.running ||
-      status == NodeProcessStatus.canceling;
-
-  Color get color {
-    switch (status) {
-      case NodeProcessStatus.waiting:
-        return const Color(0xFFB9C0CC);
-      case NodeProcessStatus.running:
-        return const Color(0xFF66D9FF);
-      case NodeProcessStatus.done:
-        return const Color(0xFF62E391);
-      case NodeProcessStatus.canceling:
-        return const Color(0xFFFFC857);
-      case NodeProcessStatus.canceled:
-        return const Color(0xFFFFA24D);
-      case NodeProcessStatus.failed:
-        return const Color(0xFFFF6B6B);
-    }
-  }
-}
-
-class MemoryArtifactSummary {
-  const MemoryArtifactSummary({
-    required this.nodeId,
-    required this.nodeDescriptor,
-    required this.datasetId,
-    required this.datasetLabel,
-    required this.artifactLabel,
-    required this.processingState,
-    required this.inRam,
-    required this.onDisk,
-    required this.precisionLabel,
-    required this.approxRamBytes,
-    required this.approxDiskBytes,
-  });
-
-  final String nodeId;
-  final String nodeDescriptor;
-  final String datasetId;
-  final String datasetLabel;
-  final String artifactLabel;
-  final DatasetState processingState;
-  final bool inRam;
-  final bool onDisk;
-  final String precisionLabel;
-  final int approxRamBytes;
-  final int? approxDiskBytes;
-
-  String get key => '$nodeId|$datasetId';
-}
-
-class VisualizationSourceRef {
-  const VisualizationSourceRef({
-    required this.key,
-    required this.datasetId,
-    required this.datasetLabel,
-    required this.materializeFromNodeId,
-    required this.sourceDescriptor,
-  });
-
-  final String key;
-  final String datasetId;
-  final String datasetLabel;
-  final String materializeFromNodeId;
-  final String sourceDescriptor;
-
-  String get displayLabel => '$datasetLabel [$sourceDescriptor]';
-}
-
-class BrainStoryJob {
-  const BrainStoryJob({
-    required this.id,
-    required this.label,
-    this.detail = '',
-    this.status = BrainStoryJobStatus.queued,
-    this.progress,
-    required this.createdAt,
-    this.startedAt,
-    this.finishedAt,
-    this.error,
-    this.nodeId,
-    this.datasetIds = const <String>{},
-    this.cancellable = false,
-    this.cancelRequested = false,
-  });
-
-  final String id;
-  final String label;
-  final String detail;
-  final BrainStoryJobStatus status;
-  final double? progress;
-  final DateTime createdAt;
-  final DateTime? startedAt;
-  final DateTime? finishedAt;
-  final String? error;
-  final String? nodeId;
-  final Set<String> datasetIds;
-  final bool cancellable;
-  final bool cancelRequested;
-
-  bool get isActive =>
-      status == BrainStoryJobStatus.queued ||
-      status == BrainStoryJobStatus.running;
-
-  BrainStoryJob copyWith({
-    String? label,
-    String? detail,
-    BrainStoryJobStatus? status,
-    double? progress,
-    bool clearProgress = false,
-    DateTime? startedAt,
-    DateTime? finishedAt,
-    String? error,
-    bool clearError = false,
-    String? nodeId,
-    Set<String>? datasetIds,
-    bool? cancellable,
-    bool? cancelRequested,
-  }) {
-    return BrainStoryJob(
-      id: id,
-      label: label ?? this.label,
-      detail: detail ?? this.detail,
-      status: status ?? this.status,
-      progress: clearProgress ? null : (progress ?? this.progress),
-      createdAt: createdAt,
-      startedAt: startedAt ?? this.startedAt,
-      finishedAt: finishedAt ?? this.finishedAt,
-      error: clearError ? null : (error ?? this.error),
-      nodeId: nodeId ?? this.nodeId,
-      datasetIds: datasetIds ?? this.datasetIds,
-      cancellable: cancellable ?? this.cancellable,
-      cancelRequested: cancelRequested ?? this.cancelRequested,
     );
   }
 }
@@ -504,24 +309,6 @@ dynamic _deepCloneJsonValue(dynamic value) {
   return value;
 }
 
-bool _setEquals<T>(Set<T> a, Set<T> b) {
-  if (a.length != b.length) {
-    return false;
-  }
-  for (final T value in a) {
-    if (!b.contains(value)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-String _basename(String path) {
-  final String normalized = path.replaceAll('\\', '/');
-  final int slashIndex = normalized.lastIndexOf('/');
-  return slashIndex >= 0 ? normalized.substring(slashIndex + 1) : normalized;
-}
-
 class CanvasLogic {
   CanvasLogic();
 
@@ -529,10 +316,10 @@ class CanvasLogic {
   final List<NodeType> availableNodes = <NodeType>[
     ImportNodeType(),
     ChannelCoordinatesNodeType(),
+    ChannelExclusionNodeType(),
     EditChannelsNodeType(),
     BridgeDetectorNodeType(),
     ResampleNodeType(),
-    AverageNodeType(),
     BandpassNodeType(),
     AmplitudeFeaturesNodeType(),
     PSDNodeType(),
@@ -556,7 +343,6 @@ class CanvasLogic {
     SleepStagingNodeType(),
     RealignNodeType(),
     ImpedancesNodeType(),
-    TopomapNodeType(),
     VisualizationNodeType(),
     DebugOutputNodeType(),
     ExportNodeType(),
@@ -575,29 +361,18 @@ class CanvasLogic {
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
   final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
-  final ValueNotifier<List<BrainStoryJob>> jobs =
-      ValueNotifier<List<BrainStoryJob>>(<BrainStoryJob>[]);
-  final ValueNotifier<Map<String, NodeProcessIndicator>> nodeProcessIndicators =
-      ValueNotifier<Map<String, NodeProcessIndicator>>(
-    <String, NodeProcessIndicator>{},
-  );
   final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
       <String, Map<String, DatasetArtifactSnapshot>>{};
   final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
-  final Set<String> _cancelRequestedJobIds = <String>{};
 
   String? selectedNodeId;
   final Set<String> selectedNodeIds = <String>{};
   int? selectedConnectionIndex;
   String? keyboardFocusedNodeId;
-  String? currentProjectPath;
 
   String? _pendingFromNodeId;
   int? _pendingFromPortIndex;
   int _lastGeneratedNodeIdMicros = 0;
-  int _lastGeneratedJobIdMicros = 0;
-  String? _activeRunJobId;
-  String? _activeRunNodeId;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
   final Map<String, bool> _collapsedSubcategories = <String, bool>{};
 
@@ -605,8 +380,8 @@ class CanvasLogic {
   static const double _cardHeight = 72;
   static const double _spawnGap = 48;
   static const double _canvasPadding = 120;
-  static const double _gridWidth = _cardWidth;
-  static const double _gridHeight = _cardHeight + 24;
+  static const double _gridWidth = _cardWidth * 0.625;
+  static const double _gridHeight = _cardHeight * 0.625;
   static const int _maxUndoDepth = 60;
 
   final List<_CanvasUndoSnapshot> _undoStack = <_CanvasUndoSnapshot>[];
@@ -715,13 +490,6 @@ class CanvasLogic {
     connections.clear();
     _nodeRamSnapshots.clear();
     _nodeDiskSnapshotIds.clear();
-    _cancelRequestedJobIds.clear();
-    jobs.value = const <BrainStoryJob>[];
-    currentProjectPath = null;
-    nodeProcessIndicators.value = const <String, NodeProcessIndicator>{};
-    runActivity.value = null;
-    _activeRunJobId = null;
-    _activeRunNodeId = null;
     selectedNodeId = null;
     selectedNodeIds.clear();
     selectedConnectionIndex = null;
@@ -750,18 +518,16 @@ class CanvasLogic {
       final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
       final bool selectedBrainVisionSidecar = file.name.toLowerCase().endsWith('.eeg') ||
           file.name.toLowerCase().endsWith('.vmrk');
-      final bool hasUsablePath = normalizedPath.trim().isNotEmpty;
-      final Uint8List? bytes = (!hasUsablePath || kIsWeb)
-          ? await file.readAsBytes()
-          : null;
-      final bool normalizeSidecarName = hasUsablePath && !kIsWeb;
-      final String sourceName = normalizeSidecarName
-          ? selectedFdt
-              ? '${file.name.substring(0, file.name.length - 4)}.set'
-              : selectedBrainVisionSidecar
-                  ? '${file.name.substring(0, file.name.length - 4)}.vhdr'
-                  : file.name
-          : file.name;
+      final bool selectedAntCnt = file.name.toLowerCase().endsWith('.cnt');
+      final Uint8List? bytes =
+          (selectedFdt || selectedBrainVisionSidecar || selectedAntCnt)
+              ? null
+              : await file.readAsBytes();
+      final String sourceName = selectedFdt
+          ? '${file.name.substring(0, file.name.length - 4)}.set'
+          : selectedBrainVisionSidecar
+              ? '${file.name.substring(0, file.name.length - 4)}.vhdr'
+              : file.name;
       final Dataset dataset = datasets.putIfAbsent(
         normalizedPath.isEmpty ? sourceName : normalizedPath,
         () => Dataset(
@@ -1102,47 +868,9 @@ class CanvasLogic {
     return prefix;
   }
 
-  String get saveBrainStoryLabel {
-    final String? path = currentProjectPath;
-    if (path == null || path.trim().isEmpty) {
-      return 'Save BrainStory';
-    }
-    return 'Save ${_basename(path)}';
-  }
-
-  Future<void> saveBrainStory(BuildContext context) async {
-    final String? path = currentProjectPath;
-    if (path == null || path.trim().isEmpty) {
-      await saveBrainStoryAs(context);
-      return;
-    }
-
-    final String jsonPayload = const JsonEncoder.withIndent('  ').convert(
-      exportProjectJson(),
-    );
-    final String? savedPath = await saveBrainStoryProject(
-      suggestedName: _basename(path),
-      targetPath: path,
-      jsonPayload: jsonPayload,
-    );
-    if (savedPath != null) {
-      currentProjectPath = savedPath;
-    }
-    if (context.mounted) {
-      _showStatusSnackBar(
-        context,
-        savedPath == null
-            ? 'BrainStory save was canceled.'
-            : 'Saved BrainStory project to $savedPath.',
-      );
-    }
-  }
-
-  Future<void> saveBrainStoryAs(BuildContext context) async {
+  Future<void> exportBrainStory(BuildContext context) async {
     final FileSaveLocation? location = await getSaveLocation(
-      suggestedName: currentProjectPath == null
-          ? 'brainstory_project.bst'
-          : _basename(currentProjectPath!),
+      suggestedName: 'brainstory_project.bst',
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
           label: 'BrainStory Project',
@@ -1158,24 +886,21 @@ class CanvasLogic {
       exportProjectJson(),
     );
     final String? savedPath = await saveBrainStoryProject(
-      suggestedName: _basename(location.path),
+      suggestedName: 'brainstory_project',
       targetPath: location.path,
       jsonPayload: jsonPayload,
     );
-    if (savedPath != null) {
-      currentProjectPath = savedPath;
-    }
     if (context.mounted) {
       _showStatusSnackBar(
         context,
         savedPath == null
-            ? 'BrainStory save was canceled.'
+            ? 'BrainStory export was canceled.'
             : 'Saved BrainStory project to $savedPath.',
       );
     }
   }
 
-  Future<void> openBrainStory(BuildContext context) async {
+  Future<void> loadBrainStory(BuildContext context) async {
     final XFile? file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
@@ -1194,7 +919,6 @@ class CanvasLogic {
           Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
       _recordUndo('load BrainStory');
       importProjectJson(jsonMap);
-      currentProjectPath = file.path;
       await _refreshDiskSnapshotFlagsForLoadedProject();
       _normalizeNodeStatesAfterProjectLoad();
       if (context.mounted) {
@@ -1212,10 +936,6 @@ class CanvasLogic {
       }
     }
   }
-
-  Future<void> exportBrainStory(BuildContext context) => saveBrainStoryAs(context);
-
-  Future<void> loadBrainStory(BuildContext context) => openBrainStory(context);
 
   Future<void> showPublishDialog(BuildContext context) async {
     final String methodsText = generateMethodsDescription();
@@ -1253,122 +973,6 @@ class CanvasLogic {
           ],
         );
       },
-    );
-  }
-
-  Future<List<MemoryArtifactSummary>> memoryArtifactSummaries() async {
-    final List<MemoryArtifactSummary> summaries = <MemoryArtifactSummary>[];
-    final List<NodeModel> orderedNodes =
-        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
-    final List<Dataset> orderedDatasets = datasets.values.toList(growable: false)
-      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
-
-    for (final NodeModel node in orderedNodes) {
-      final NodeDatasetStatusSnapshot status = await _datasetStatusSnapshotForNode(
-        node: node,
-        params: node.params,
-      );
-      for (final Dataset dataset in orderedDatasets) {
-        final DatasetState processingState =
-            status.processedDatasetStates[dataset.id] ?? DatasetState.notReady;
-        final bool inRam = status.ramLoadedDatasetIds.contains(dataset.id);
-        final bool onDisk = status.diskSavedDatasetIds.contains(dataset.id);
-        final bool available = status.availableDatasetIds.contains(dataset.id);
-        if (!available &&
-            processingState == DatasetState.notReady &&
-            !inRam &&
-            !onDisk) {
-          continue;
-        }
-
-        final DatasetArtifactSnapshot? snapshot =
-            _nodeRamSnapshots[node.id]?[dataset.id];
-        summaries.add(
-          MemoryArtifactSummary(
-            nodeId: node.id,
-            nodeDescriptor: _nodeDescriptor(node),
-            datasetId: dataset.id,
-            datasetLabel: dataset.label,
-            artifactLabel: _memoryArtifactLabel(
-              node: node,
-              dataset: dataset,
-              snapshot: snapshot,
-            ),
-            processingState: processingState,
-            inRam: inRam,
-            onDisk: onDisk,
-            precisionLabel: _memoryPrecisionLabel(
-              node: node,
-              dataset: dataset,
-              snapshot: snapshot,
-            ),
-            approxRamBytes: snapshot == null
-                ? 0
-                : _estimateSnapshotNumericBytes(snapshot),
-            approxDiskBytes: onDisk
-                ? await nodeSnapshotDiskBytes(
-                    nodeId: node.id,
-                    datasetId: dataset.id,
-                  )
-                : null,
-          ),
-        );
-      }
-    }
-
-    return summaries;
-  }
-
-  Future<String> loadMemorySummariesToRam(
-    Iterable<MemoryArtifactSummary> rows,
-  ) async {
-    return _runMemorySummaryAction(
-      rows,
-      (NodeModel node, Set<String> datasetIds) => _loadNodeSnapshotsToRam(
-        node: node,
-        datasetIds: datasetIds,
-        update: () {},
-      ),
-    );
-  }
-
-  Future<String> saveMemorySummariesToDisk(
-    Iterable<MemoryArtifactSummary> rows,
-  ) async {
-    return _runMemorySummaryAction(
-      rows,
-      (NodeModel node, Set<String> datasetIds) => _saveNodeSnapshotsToDisk(
-        node: node,
-        datasetIds: datasetIds,
-        update: () {},
-      ),
-    );
-  }
-
-  Future<String> purgeMemorySummariesFromRam(
-    Iterable<MemoryArtifactSummary> rows,
-  ) async {
-    return _runMemorySummaryAction(
-      rows,
-      (NodeModel node, Set<String> datasetIds) => _clearNodeResults(
-        node: node,
-        params: node.params,
-        datasetIds: datasetIds,
-        update: () {},
-      ),
-    );
-  }
-
-  Future<String> purgeMemorySummariesFromDisk(
-    Iterable<MemoryArtifactSummary> rows,
-  ) async {
-    return _runMemorySummaryAction(
-      rows,
-      (NodeModel node, Set<String> datasetIds) => _deleteNodeSnapshotsFromDisk(
-        node: node,
-        datasetIds: datasetIds,
-        update: () {},
-      ),
     );
   }
 
@@ -1587,6 +1191,10 @@ class CanvasLogic {
 
   Widget sidebar({
     required double width,
+    required VoidCallback publish,
+    required VoidCallback export,
+    required VoidCallback load,
+    required VoidCallback clear,
     required VoidCallback update,
   }) {
     final List<NodeCategory> categoryOrder = <NodeCategory>[
@@ -1618,6 +1226,57 @@ class CanvasLogic {
                     update: update,
                   ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Divider(
+              height: 20,
+              thickness: 1,
+              color: Colors.white.withValues(alpha: 0.18),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: publish,
+                child: const Text('Publish'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: load,
+                child: const Text('Load BrainStory'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: export,
+                child: const Text('Export BrainStory'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: clear,
+                child: const Text('Clear All'),
+              ),
             ),
           ),
           const SizedBox(height: 20),
@@ -1819,7 +1478,7 @@ class CanvasLogic {
         nodeNumber: nodeNumber,
         position: node.position,
         color: _nodeColor(node),
-        processIndicator: _processViewForNode(node),
+        statusLabel: _statusLabel(node),
         highlighted: _isHighlighted(node),
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
@@ -1891,19 +1550,11 @@ class CanvasLogic {
               );
             }
           } catch (error) {
-            failRunUi(error);
             if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                error is BrainStoryRunCanceled
-                    ? 'Run canceled.'
-                    : 'Run failed: $error',
-              );
+              _showStatusSnackBar(context, 'Run failed: $error');
             }
           } finally {
-            if (runActivity.value != null) {
-              finishRunUi();
-            }
+            finishRunUi();
           }
         },
         onRunFromStart: () async {
@@ -1933,19 +1584,11 @@ class CanvasLogic {
               );
             }
           } catch (error) {
-            failRunUi(error);
             if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                error is BrainStoryRunCanceled
-                    ? 'Run canceled.'
-                    : 'Run failed: $error',
-              );
+              _showStatusSnackBar(context, 'Run failed: $error');
             }
           } finally {
-            if (runActivity.value != null) {
-              finishRunUi();
-            }
+            finishRunUi();
           }
         },
         onRunToEnd: () async {
@@ -1966,19 +1609,11 @@ class CanvasLogic {
               );
             }
           } catch (error) {
-            failRunUi(error);
             if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                error is BrainStoryRunCanceled
-                    ? 'Run canceled.'
-                    : 'Run failed: $error',
-              );
+              _showStatusSnackBar(context, 'Run failed: $error');
             }
           } finally {
-            if (runActivity.value != null) {
-              finishRunUi();
-            }
+            finishRunUi();
           }
         },
       );
@@ -2093,19 +1728,11 @@ class CanvasLogic {
               );
             }
           } catch (error) {
-            failRunUi(error);
             if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                error is BrainStoryRunCanceled
-                    ? 'Run canceled.'
-                    : 'Run failed: $error',
-              );
+              _showStatusSnackBar(context, 'Run failed: $error');
             }
           } finally {
-            if (runActivity.value != null) {
-              finishRunUi();
-            }
+            finishRunUi();
           }
         },
         datasetActions: _datasetActionsForNode(
@@ -2127,64 +1754,17 @@ class CanvasLogic {
     required VoidCallback update,
   }) {
     _recordUndo('edit ${node.title} parameters');
-    final Map<String, dynamic> previousParams = _deepCloneJsonMap(node.params);
-    final Map<dynamic, DatasetState> previousStates =
-        Map<dynamic, DatasetState>.from(node.datasetStates);
-    final bool outputParametersChanged =
-        node.type.paramsAffectOutput(previousParams, params);
     node.params = params;
     if (node.type is ImportNodeType) {
       ImportNodeType.applyDatasetAliases(params, datasets.values);
     }
     final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
     for (final Dataset dataset in datasets.values) {
-      final bool selected = availableDatasetIds.contains(dataset.id);
-      if (!selected) {
-        node.datasetStates[dataset.id] = DatasetState.notReady;
-        continue;
-      }
-
-      final DatasetState previousState =
-          previousStates[dataset.id] ?? DatasetState.notReady;
-      if (!outputParametersChanged) {
-        node.datasetStates[dataset.id] =
-            previousState == DatasetState.notReady ? DatasetState.ready : previousState;
-        continue;
-      }
-
-      node.datasetStates[dataset.id] = DatasetState.ready;
-      if (previousState == DatasetState.done || previousState == DatasetState.stale) {
-        _markImmediateChildrenStale(
-          node.id,
-          dataset.id,
-          changeSet: ArtifactChangeSet(
-            datasetId: dataset.id,
-            sourceNodeId: node.id,
-            changeTypes: const <ArtifactChangeType>{
-              ArtifactChangeType.params,
-            },
-            paramKeys: _changedParamKeys(previousParams, params),
-            description: '${node.title} parameters changed.',
-          ),
-        );
-      }
+      node.datasetStates[dataset.id] = availableDatasetIds.contains(dataset.id)
+          ? DatasetState.ready
+          : DatasetState.notReady;
     }
     update();
-  }
-
-  List<String> _changedParamKeys(
-    Map<String, dynamic> previousParams,
-    Map<String, dynamic> nextParams,
-  ) {
-    final Set<String> keys = <String>{
-      ...previousParams.keys,
-      ...nextParams.keys,
-    };
-    final List<String> changed = keys.where((String key) {
-      return jsonEncode(previousParams[key]) != jsonEncode(nextParams[key]);
-    }).toList()
-      ..sort();
-    return changed;
   }
 
   NodeModel? get selectedNode =>
@@ -2210,9 +1790,10 @@ class CanvasLogic {
   }
 
   Future<List<Dataset>> datasetsForVisualizationNode(String nodeId) async {
-    final List<VisualizationSourceRef> sources =
-        visualizationSourceRefsForNode(nodeId);
-    return materializedDatasetViewsForSourceRefs(sources);
+    return materializedDatasetViewsForNode(
+      nodeId,
+      sourceDatasetsForVisualizationNode(nodeId),
+    );
   }
 
   List<Dataset> sourceDatasetsForVisualizationNode(String nodeId) {
@@ -2221,67 +1802,12 @@ class CanvasLogic {
       return <Dataset>[];
     }
 
-    final Set<String> datasetIds = _availableDatasetIdsForNode(node);
+    final Set<String> datasetIds = _datasetsForNode(node);
     final List<Dataset> matchingDatasets = datasets.values
         .where((Dataset dataset) => datasetIds.contains(dataset.id))
         .toList(growable: false);
     matchingDatasets.sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
     return matchingDatasets;
-  }
-
-  List<VisualizationSourceRef> visualizationSourceRefsForNode(String nodeId) {
-    final NodeModel? node = _findNode(nodeId);
-    if (node == null) {
-      return const <VisualizationSourceRef>[];
-    }
-
-    final List<VisualizationSourceRef> refs = <VisualizationSourceRef>[];
-    if (node.type is VisualizationNodeType) {
-      final List<NodeModel> parents = _immediateParents(node.id)
-          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
-          .toList(growable: false)
-        ..sort(
-          (NodeModel a, NodeModel b) =>
-              _nodeDescriptor(a).compareTo(_nodeDescriptor(b)),
-        );
-      for (final NodeModel parent in parents) {
-        final Set<String> datasetIds = _availableDatasetIdsForNode(parent);
-        final List<Dataset> matchingDatasets = datasets.values
-            .where((Dataset dataset) => datasetIds.contains(dataset.id))
-            .toList(growable: false)
-          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
-        for (final Dataset dataset in matchingDatasets) {
-          refs.add(
-            VisualizationSourceRef(
-              key: '${parent.id}|${dataset.id}',
-              datasetId: dataset.id,
-              datasetLabel: dataset.label,
-              materializeFromNodeId: parent.id,
-              sourceDescriptor: _nodeDescriptor(parent),
-            ),
-          );
-        }
-      }
-      return refs;
-    }
-
-    final Set<String> datasetIds = _availableDatasetIdsForNode(node);
-    final List<Dataset> matchingDatasets = datasets.values
-        .where((Dataset dataset) => datasetIds.contains(dataset.id))
-        .toList(growable: false)
-      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
-    for (final Dataset dataset in matchingDatasets) {
-      refs.add(
-        VisualizationSourceRef(
-          key: '${node.id}|${dataset.id}',
-          datasetId: dataset.id,
-          datasetLabel: dataset.label,
-          materializeFromNodeId: node.id,
-          sourceDescriptor: _nodeDescriptor(node),
-        ),
-      );
-    }
-    return refs;
   }
 
   Future<List<Dataset>> materializedDatasetViewsForNode(
@@ -2295,34 +1821,6 @@ class CanvasLogic {
     return views;
   }
 
-  Future<List<Dataset>> materializedDatasetViewsForSourceRefs(
-    List<VisualizationSourceRef> sources,
-  ) async {
-    final List<Dataset> views = <Dataset>[];
-    for (final VisualizationSourceRef source in sources) {
-      views.add(await materializedDatasetViewForSourceRef(source));
-    }
-    return views;
-  }
-
-  Future<Dataset> materializedDatasetViewForSourceRef(
-    VisualizationSourceRef source,
-  ) async {
-    final Dataset? dataset = datasets[source.datasetId];
-    if (dataset == null) {
-      return Dataset(source.datasetId, label: source.displayLabel);
-    }
-    final Dataset view = await materializedDatasetViewForNode(
-      source.materializeFromNodeId,
-      dataset,
-    );
-    view.label = source.displayLabel;
-    view.ram['viewer.sourceKey'] = source.key;
-    view.ram['viewer.sourceDescriptor'] = source.sourceDescriptor;
-    view.ram['viewer.baseDatasetLabel'] = source.datasetLabel;
-    return view;
-  }
-
   Future<Dataset> materializedDatasetViewForNode(String nodeId, Dataset source) async {
     final Dataset view = _datasetShell(source);
     final Set<String> ancestorIds = _collectAncestorsInclusive(nodeId);
@@ -2334,11 +1832,7 @@ class CanvasLogic {
         continue;
       }
       final DatasetArtifactSnapshot? snapshot =
-          await _loadSnapshotForNodeDataset(
-        ancestor.id,
-        source.id,
-        cacheInRam: _shouldCacheLoadedSnapshotInRam(ancestor),
-      );
+          await _loadSnapshotForNodeDataset(ancestor.id, source.id);
       if (snapshot != null && !snapshot.isEmpty) {
         _snapshotScopedToNodeOutputs(ancestor, snapshot).applyToDataset(view);
         appliedAnySnapshot = true;
@@ -2360,6 +1854,7 @@ class CanvasLogic {
       source.id,
       label: source.label,
       path: source.path,
+      sourceBytes: source.sourceBytes,
     );
     shell.loaded = source.loaded;
     final Object? sourceFilename = source.ram['source.filename'];
@@ -2370,7 +1865,9 @@ class CanvasLogic {
   }
 
   void _applyLiveSourceArtifacts(Dataset target, Dataset source) {
-    target.timeSeries = source.timeSeries?.copyWith();
+    target.timeSeries = source.timeSeries == null
+        ? null
+        : TimeSeriesData.fromJson(source.timeSeries!.toJson());
     final Map<BrainStoryArtifactKind, ArtifactIdentity> sourceIdentities =
         source.artifactIdentities;
     target.artifactIdentities =
@@ -2395,9 +1892,6 @@ class CanvasLogic {
       return true;
     }
     if (node.type is BridgeDetectorNodeType) {
-      return true;
-    }
-    if (node.type is TopomapNodeType) {
       return true;
     }
     if (node.type is PSDNodeType) {
@@ -2464,9 +1958,6 @@ class CanvasLogic {
     if (node.type is BridgeDetectorNodeType) {
       return 'bridge';
     }
-    if (node.type is TopomapNodeType) {
-      return 'topomap';
-    }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents = _immediateParents(node.id);
       if (parents.any((NodeModel parent) => parent.type is SleepStagingNodeType)) {
@@ -2513,18 +2004,9 @@ class CanvasLogic {
   int _lastRunDatasetCount = 0;
 
   Future<void> prepareRunUi(String label) async {
-    final BrainStoryJob job = _createJob(label: label);
-    _activeRunJobId = job.id;
     runActivity.value = RunActivity(
       label: label,
       detail: 'Preparing run state...',
-      jobId: job.id,
-    );
-    _updateJob(
-      job.id,
-      status: BrainStoryJobStatus.running,
-      detail: 'Preparing run state...',
-      progress: 0.04,
     );
     await _yieldToUi();
     await setRunDetail('Settling the interface...');
@@ -2534,89 +2016,7 @@ class CanvasLogic {
   }
 
   void finishRunUi() {
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId != null && _cancelRequestedJobIds.contains(jobId)) {
-      cancelRunUi();
-      return;
-    }
-    if (jobId != null) {
-      _updateJob(
-        jobId,
-        status: BrainStoryJobStatus.completed,
-        detail: 'Complete',
-        progress: 1.0,
-        finishedAt: DateTime.now(),
-        cancelRequested: false,
-      );
-    }
-    if (jobId != null) {
-      _cancelRequestedJobIds.remove(jobId);
-    }
-    _activeRunJobId = null;
-    _activeRunNodeId = null;
     runActivity.value = null;
-  }
-
-  void failRunUi(Object error) {
-    if (error is BrainStoryRunCanceled) {
-      cancelRunUi(error.message);
-      return;
-    }
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId != null) {
-      _updateJob(
-        jobId,
-        status: BrainStoryJobStatus.failed,
-        detail: 'Failed',
-        error: error.toString(),
-        finishedAt: DateTime.now(),
-        cancelRequested: false,
-      );
-      _cancelRequestedJobIds.remove(jobId);
-    }
-    _activeRunJobId = null;
-    _activeRunNodeId = null;
-    runActivity.value = null;
-  }
-
-  void cancelRunUi([String detail = 'Canceled']) {
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId != null) {
-      _updateJob(
-        jobId,
-        status: BrainStoryJobStatus.canceled,
-        detail: detail,
-        finishedAt: DateTime.now(),
-        cancelRequested: false,
-      );
-      _cancelRequestedJobIds.remove(jobId);
-    }
-    _activeRunJobId = null;
-    _activeRunNodeId = null;
-    runActivity.value = null;
-  }
-
-  void cancelActiveRun() {
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId == null) {
-      return;
-    }
-    _cancelRequestedJobIds.add(jobId);
-    if (_activeRunNodeId != null) {
-      _setNodeProcessStatus(_activeRunNodeId!, NodeProcessStatus.canceling);
-    }
-    _updateJob(
-      jobId,
-      status: BrainStoryJobStatus.running,
-      detail: 'A sub-process is finishing; cancellation will take effect next.',
-      cancelRequested: true,
-    );
-    final RunActivity? current = runActivity.value;
-    if (current != null) {
-      runActivity.value = current.copyWith(
-        detail: 'A sub-process is finishing; cancellation will take effect next.',
-      );
-    }
   }
 
   Future<void> setRunDetail(String detail) async {
@@ -2625,92 +2025,7 @@ class CanvasLogic {
       return;
     }
     runActivity.value = current.copyWith(detail: detail);
-    if (current.jobId != null) {
-      _updateJob(current.jobId!, detail: detail);
-    }
     await _yieldToUi();
-  }
-
-  BrainStoryJob _createJob({
-    required String label,
-    String? nodeId,
-    Set<String> datasetIds = const <String>{},
-  }) {
-    final DateTime now = DateTime.now();
-    final BrainStoryJob job = BrainStoryJob(
-      id: _nextJobId(),
-      label: label,
-      detail: 'Queued',
-      status: BrainStoryJobStatus.queued,
-      progress: 0.0,
-      createdAt: now,
-      nodeId: nodeId,
-      datasetIds: datasetIds,
-      cancellable: true,
-    );
-    jobs.value = <BrainStoryJob>[job, ...jobs.value].take(12).toList(growable: false);
-    return job;
-  }
-
-  String _nextJobId() {
-    final int nowMicros = DateTime.now().microsecondsSinceEpoch;
-    final int nextMicros = nowMicros <= _lastGeneratedJobIdMicros
-        ? _lastGeneratedJobIdMicros + 1
-        : nowMicros;
-    _lastGeneratedJobIdMicros = nextMicros;
-    return 'job-$nextMicros';
-  }
-
-  void _updateJob(
-    String jobId, {
-    String? detail,
-    BrainStoryJobStatus? status,
-    double? progress,
-    DateTime? startedAt,
-    DateTime? finishedAt,
-    String? error,
-    bool? cancelRequested,
-  }) {
-    final List<BrainStoryJob> currentJobs = jobs.value;
-    final int index = currentJobs.indexWhere((BrainStoryJob job) => job.id == jobId);
-    if (index < 0) {
-      return;
-    }
-    final BrainStoryJob current = currentJobs[index];
-    final BrainStoryJob next = current.copyWith(
-      detail: detail,
-      status: status,
-      progress: progress,
-      startedAt: startedAt ??
-          (status == BrainStoryJobStatus.running && current.startedAt == null
-              ? DateTime.now()
-              : null),
-      finishedAt: finishedAt,
-      error: error,
-      cancelRequested: cancelRequested,
-    );
-    jobs.value = <BrainStoryJob>[
-      for (int i = 0; i < currentJobs.length; i++)
-        if (i == index) next else currentJobs[i],
-    ];
-  }
-
-  void _updateActiveRunProgress(double progress) {
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId == null) {
-      return;
-    }
-    _updateJob(jobId, progress: progress.clamp(0.04, 0.96).toDouble());
-  }
-
-  void _throwIfActiveRunCanceled() {
-    final String? jobId = _activeRunJobId ?? runActivity.value?.jobId;
-    if (jobId != null && _cancelRequestedJobIds.contains(jobId)) {
-      if (_activeRunNodeId != null) {
-        _setNodeProcessStatus(_activeRunNodeId!, NodeProcessStatus.canceled);
-      }
-      throw const BrainStoryRunCanceled();
-    }
   }
 
   Future<void> runThisStep(
@@ -2751,7 +2066,6 @@ class CanvasLogic {
     }
 
     await setRunDetail('Resolving datasets...');
-    _throwIfActiveRunCanceled();
 
     final Set<String> candidateDatasetIds = <String>{};
     for (final NodeModel node in orderedNodes) {
@@ -2771,58 +2085,28 @@ class CanvasLogic {
       return;
     }
 
-    final int totalWorkUnits = math.max(
-      1,
-      targetDatasets.length * orderedNodes.length,
-    );
-    int completedWorkUnits = 0;
-    _setNodeProcessStatuses(
-      orderedNodes,
-      NodeProcessStatus.waiting,
-      clearExisting: true,
-    );
-
     for (final Dataset dataset in targetDatasets) {
-      _throwIfActiveRunCanceled();
       await setRunDetail('Preparing ${dataset.label}...');
       for (final NodeModel node in orderedNodes) {
-        _throwIfActiveRunCanceled();
         if (!_datasetsForNode(node).contains(dataset.id)) {
-          continue;
-        }
-        if (node.type is! ImportNodeType &&
-            !_availableDatasetIdsForNode(node).contains(dataset.id)) {
           continue;
         }
 
         if (node.datasetStates[dataset.id] == DatasetState.done) {
           await setRunDetail('Skipping ${node.title} for ${dataset.label} (already done)...');
           await _restoreMaterializedOutputIfNeeded(node, dataset);
-          _setNodeProcessStatus(node.id, NodeProcessStatus.done);
-          completedWorkUnits++;
-          _updateActiveRunProgress(completedWorkUnits / totalWorkUnits);
           continue;
         }
 
         node.datasetStates[dataset.id] = DatasetState.ready;
         try {
-          _activeRunNodeId = node.id;
-          _setNodeProcessStatus(node.id, NodeProcessStatus.running);
           dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
           final List<String> sourceArtifactIds =
               _sourceArtifactIdsForDataset(dataset);
           await setRunDetail('Running ${node.title} on ${dataset.label}...');
-          _throwIfActiveRunCanceled();
-          await _runNodeTypeOnDataset(
-            node: node,
-            dataset: dataset,
-            sourceArtifactIds: sourceArtifactIds,
-          );
-          _throwIfActiveRunCanceled();
-          _activeRunNodeId = null;
+          await node.type.run(dataset, node.params);
           node.datasetStates[dataset.id] = DatasetState.done;
-          _setNodeProcessStatus(node.id, NodeProcessStatus.done);
           await _materializeNodeOutput(
             node,
             dataset,
@@ -2833,15 +2117,7 @@ class CanvasLogic {
             dataset.id,
             changeSet: _takeLastChangeSet(dataset),
           );
-          completedWorkUnits++;
-          _updateActiveRunProgress(completedWorkUnits / totalWorkUnits);
         } catch (_) {
-          if (_cancelRequestedJobIds.contains(_activeRunJobId)) {
-            _setNodeProcessStatus(node.id, NodeProcessStatus.canceled);
-          } else {
-            _setNodeProcessStatus(node.id, NodeProcessStatus.failed);
-          }
-          _activeRunNodeId = null;
           node.datasetStates[dataset.id] = _availableDatasetIdsForNode(node)
                   .contains(dataset.id)
               ? DatasetState.ready
@@ -2850,53 +2126,6 @@ class CanvasLogic {
         }
       }
     }
-  }
-
-  Future<void> _runNodeTypeOnDataset({
-    required NodeModel node,
-    required Dataset dataset,
-    required List<String> sourceArtifactIds,
-  }) async {
-    if (!node.type.supportsBackgroundRun) {
-      await node.type.run(dataset, node.params);
-      return;
-    }
-
-    final String paramsFingerprint = jsonEncode(node.params);
-    final Set<String> sourceArtifactIdSet = sourceArtifactIds.toSet();
-    final Set<BrainStoryArtifactKind> inputKinds =
-        _artifactKindsForNodeInputs(node, dataset);
-    final DatasetArtifactSnapshot inputSnapshot =
-        DatasetArtifactSnapshot.fromDataset(
-      dataset,
-      includedKinds: inputKinds,
-    );
-
-    await setRunDetail('Running ${node.title} on ${dataset.label} in the background...');
-    final Map<String, dynamic> outputSnapshotJson =
-        await runNodeSnapshotInBackground(
-      nodeTitle: node.title,
-      datasetId: dataset.id,
-      datasetLabel: dataset.label,
-      datasetPath: dataset.path,
-      datasetLoaded: dataset.loaded,
-      params: _deepCloneJsonMap(node.params),
-      inputSnapshotJson: inputSnapshot.toJson(),
-    );
-    _throwIfActiveRunCanceled();
-
-    if (jsonEncode(node.params) != paramsFingerprint) {
-      throw StateError(
-        '${node.title} parameters changed while it was running; discarded background result.',
-      );
-    }
-    if (!_setEquals(_sourceArtifactIdsForDataset(dataset).toSet(), sourceArtifactIdSet)) {
-      throw StateError(
-        '${dataset.label} changed upstream while ${node.title} was running; discarded background result.',
-      );
-    }
-
-    DatasetArtifactSnapshot.fromJson(outputSnapshotJson).applyToDataset(dataset);
   }
 
   Set<String> _datasetsForNode(NodeModel node) {
@@ -2951,17 +2180,13 @@ class CanvasLogic {
     return datasets.values
         .where((Dataset dataset) {
           return parents.every(
-            (NodeModel parent) => _nodeHasRunForDataset(parent, dataset.id),
+            (NodeModel parent) =>
+                (parent.datasetStates[dataset.id] ?? DatasetState.notReady) !=
+                DatasetState.notReady,
           );
         })
         .map((Dataset dataset) => dataset.id)
         .toSet();
-  }
-
-  bool _nodeHasRunForDataset(NodeModel node, String datasetId) {
-    final DatasetState state =
-        node.datasetStates[datasetId] ?? DatasetState.notReady;
-    return state == DatasetState.done || state == DatasetState.stale;
   }
 
   Map<String, DatasetState> _processedDatasetStatesForNode(NodeModel node) {
@@ -2983,7 +2208,8 @@ class CanvasLogic {
     for (final NodeModel parent in parents) {
       final String descriptor = _nodeDescriptor(parent);
       for (final Dataset dataset in datasets.values) {
-        if (_nodeHasRunForDataset(parent, dataset.id)) {
+        if ((parent.datasetStates[dataset.id] ?? DatasetState.notReady) !=
+            DatasetState.notReady) {
           labelsByDataset
               .putIfAbsent(dataset.id, () => <String>[])
               .add(descriptor);
@@ -3167,7 +2393,11 @@ class CanvasLogic {
       final List<NodeModel> parents = _immediateParents(node.id);
       final bool structurallyReady =
           node.type is ImportNodeType ||
-          parents.every((NodeModel parent) => _nodeHasRunForDataset(parent, datasetId));
+          parents.every(
+            (NodeModel parent) =>
+                (parent.datasetStates[datasetId] ?? DatasetState.notReady) !=
+                DatasetState.notReady,
+          );
 
       if (!structurallyReady) {
         if ((node.datasetStates[datasetId] ?? DatasetState.notReady) !=
@@ -3382,45 +2612,13 @@ class CanvasLogic {
     _clearPendingConnection();
   }
 
-  String applyInteractiveArtifactDetectionFromVisualization({
+  void applyInteractiveArtifactDetectionFromVisualization({
     required String nodeId,
     required Dataset dataset,
   }) {
-    final NodeModel? node = _findNode(nodeId);
-    if (node == null) {
-      return 'Interactive save failed because the source node is no longer available.';
-    }
     final NodeModel? sourceNode = _interactiveArtifactSourceNode(nodeId);
-    final NodeModel? targetNode;
-    final bool createdNode;
-    if (sourceNode != null) {
-      targetNode = sourceNode;
-      createdNode = false;
-    } else if (node.type is VisualizationNodeType) {
-      final List<NodeModel> parents = _immediateParents(node.id)
-          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
-          .toList(growable: false);
-      if (parents.isEmpty) {
-        return 'Interactive save failed because there is no upstream dataset to attach the node to.';
-      }
-      final NodeModel parent = parents.first;
-      final bool hadInteractiveChild = _immediateChildren(parent.id)
-          .any((NodeModel child) => child.type is InteractiveArtifactDetectionNodeType);
-      targetNode = _ensureInteractiveArtifactNode(parent);
-      createdNode = !hadInteractiveChild;
-      _copyInteractiveArtifactViewerParams(
-        fromParams: node.params,
-        toParams: targetNode.params,
-      );
-    } else {
-      final bool hadInteractiveChild = _immediateChildren(node.id)
-          .any((NodeModel child) => child.type is InteractiveArtifactDetectionNodeType);
-      targetNode = _ensureInteractiveArtifactNode(node);
-      createdNode = !hadInteractiveChild;
-      _copyInteractiveArtifactViewerParams(
-        fromParams: node.params,
-        toParams: targetNode.params,
-      );
+    if (sourceNode == null) {
+      return;
     }
 
     _recordUndo(
@@ -3433,48 +2631,25 @@ class CanvasLogic {
       dataset.timeSeries = timeSeries.copyWith(
         markers: InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
           dataset.id,
-          targetNode.params,
+          sourceNode.params,
           baseMarkers: timeSeries.markers,
         ),
       );
       _cacheVisualizationEditOutput(
-        targetNode,
+        sourceNode,
         dataset,
         sourceArtifactIds: sourceArtifactIds,
       );
     }
 
-    targetNode.datasetStates[dataset.id] = DatasetState.done;
-    _markImmediateChildrenStale(targetNode.id, dataset.id);
-    selectedNodeId = targetNode.id;
+    sourceNode.datasetStates[dataset.id] = DatasetState.done;
+    _markImmediateChildrenStale(sourceNode.id, dataset.id);
+    selectedNodeId = sourceNode.id;
     selectedNodeIds
       ..clear()
-      ..add(targetNode.id);
+      ..add(sourceNode.id);
     selectedConnectionIndex = null;
     _clearPendingConnection();
-    final int exemplarCount = InteractiveArtifactDetectionNodeType.exemplarsForDataset(
-      dataset.id,
-      targetNode.params,
-    ).length;
-    final int pendingCount = InteractiveArtifactDetectionNodeType.candidatesForDataset(
-      dataset.id,
-      targetNode.params,
-      statuses: const <String>{
-        InteractiveArtifactDetectionNodeType.pendingStatus,
-      },
-    ).length;
-    final int acceptedCount = InteractiveArtifactDetectionNodeType.candidatesForDataset(
-      dataset.id,
-      targetNode.params,
-      statuses: const <String>{
-        InteractiveArtifactDetectionNodeType.acceptedStatus,
-      },
-    ).length;
-    final String action = createdNode ? 'Added' : 'Updated';
-    return '$action Interactive Artifact Detection for ${dataset.label}: '
-        '$exemplarCount exemplar${exemplarCount == 1 ? '' : 's'}, '
-        '$pendingCount pending candidate${pendingCount == 1 ? '' : 's'}, '
-        '$acceptedCount accepted.';
   }
 
   void _cacheVisualizationEditOutput(
@@ -3549,9 +2724,8 @@ class CanvasLogic {
       ),
       purgeActiveMemory:
           (Map<String, dynamic> params, Set<String> datasetIds) =>
-              _clearNodeResults(
+              _releaseNodeSnapshotsFromRam(
         node: node,
-        params: params,
         datasetIds: datasetIds,
         update: update,
       ),
@@ -3710,51 +2884,6 @@ class CanvasLogic {
     return kinds;
   }
 
-  Set<BrainStoryArtifactKind> _artifactKindsForNodeInputs(
-    NodeModel node,
-    Dataset dataset,
-  ) {
-    final Set<BrainStoryArtifactKind> kinds = <BrainStoryArtifactKind>{};
-    for (final PortSpec input in node.inputPorts) {
-      final String inputName = input.name.toLowerCase();
-      switch (input.type) {
-        case PortType.signal:
-          if ((inputName.contains('psd') || inputName.contains('spectrum')) &&
-              dataset.spectrum != null) {
-            kinds.add(BrainStoryArtifactKind.spectrum);
-          } else if (dataset.timeSeries != null) {
-            kinds.add(BrainStoryArtifactKind.timeSeries);
-          }
-          break;
-        case PortType.markers:
-          if (dataset.timeSeries != null) {
-            kinds.add(BrainStoryArtifactKind.markers);
-          }
-          break;
-        case PortType.metadata:
-          if (inputName.contains('segment') &&
-              dataset.segmentedTimeSeries != null) {
-            kinds.add(BrainStoryArtifactKind.segmentedTimeSeries);
-          } else if (dataset.fooofResult != null) {
-            kinds.add(BrainStoryArtifactKind.fooofResult);
-          } else if (dataset.featureTable != null) {
-            kinds.add(BrainStoryArtifactKind.featureTable);
-          } else if (dataset.bridgeDetection != null) {
-            kinds.add(BrainStoryArtifactKind.bridgeDetection);
-          } else if (dataset.timeFrequency != null) {
-            kinds.add(BrainStoryArtifactKind.timeFrequency);
-          }
-          break;
-        case PortType.matrixTransformation:
-          if (dataset.matrixTransformation != null) {
-            kinds.add(BrainStoryArtifactKind.matrixTransformation);
-          }
-          break;
-      }
-    }
-    return kinds;
-  }
-
   Set<BrainStoryArtifactKind> _artifactKindsForSnapshotOutputs(
     NodeModel node,
     DatasetArtifactSnapshot snapshot,
@@ -3852,13 +2981,8 @@ class CanvasLogic {
       return _lastRunDatasetCount == 0
           ? 'No datasets matched ${node.title}.'
           : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
-    } catch (error) {
-      failRunUi(error);
-      rethrow;
     } finally {
-      if (runActivity.value != null) {
-        finishRunUi();
-      }
+      finishRunUi();
     }
   }
 
@@ -3976,6 +3100,35 @@ class CanvasLogic {
     return 'Loaded $loadedCount cached output(s) into RAM for ${node.title}.';
   }
 
+  Future<String> _releaseNodeSnapshotsFromRam({
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
+    if (selectedDatasets.isEmpty) {
+      return 'No checked datasets to release for ${node.title}.';
+    }
+
+    int releasedCount = 0;
+    final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+    if (snapshots != null) {
+      for (final Dataset dataset in selectedDatasets) {
+        if (snapshots.remove(dataset.id) != null) {
+          releasedCount++;
+        }
+      }
+      if (snapshots.isEmpty) {
+        _nodeRamSnapshots.remove(node.id);
+      }
+    }
+
+    update();
+    return releasedCount == 0
+        ? 'No RAM cache was being held for ${node.title}.'
+        : 'Released $releasedCount in-memory cached output(s) for ${node.title}.';
+  }
+
   Future<String> _deleteNodeSnapshotsFromDisk({
     required NodeModel node,
     required Set<String> datasetIds,
@@ -4033,9 +3186,6 @@ class CanvasLogic {
 
     for (final Dataset dataset in selectedDatasets) {
       bool changed = false;
-      if (_clearNodeParamsForDataset(node, dataset.id)) {
-        changed = true;
-      }
       final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
       if (snapshots?.remove(dataset.id) != null) {
         changed = true;
@@ -4068,6 +3218,7 @@ class CanvasLogic {
         node.datasetStates[dataset.id] = nextState;
         changed = true;
       }
+      _markImmediateChildrenStale(node.id, dataset.id);
       if (changed) {
         clearedCount++;
       }
@@ -4077,47 +3228,6 @@ class CanvasLogic {
     return clearedCount == 0
         ? 'There were no results to clear for ${node.title}.'
         : 'Cleared $clearedCount result set(s) for ${node.title}.';
-  }
-
-  bool _clearNodeParamsForDataset(NodeModel node, String datasetId) {
-    if (node.type is! InteractiveArtifactDetectionNodeType) {
-      return false;
-    }
-    bool changed = false;
-    for (final String key in const <String>[
-      'artifactExemplars',
-      'artifactCandidates',
-      'artifactTemplates',
-    ]) {
-      final List<dynamic> current =
-          node.params[key] as List<dynamic>? ?? const <dynamic>[];
-      final List<Map<String, dynamic>> filtered = current
-          .whereType<Map<String, dynamic>>()
-          .where((Map<String, dynamic> item) => item['datasetId'] != datasetId)
-          .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
-          .toList(growable: false);
-      if (filtered.length != current.length) {
-        node.params[key] = filtered;
-        changed = true;
-      }
-    }
-    return changed;
-  }
-
-  Future<String> clearNodeResultsForTesting(
-    String nodeId, {
-    required Set<String> datasetIds,
-  }) async {
-    final NodeModel? node = _findNode(nodeId);
-    if (node == null) {
-      return 'Node not found.';
-    }
-    return _clearNodeResults(
-      node: node,
-      params: node.params,
-      datasetIds: datasetIds,
-      update: () {},
-    );
   }
 
   Future<void> _restoreMaterializedOutputIfNeeded(
@@ -4198,11 +3308,7 @@ class CanvasLogic {
         continue;
       }
       final DatasetArtifactSnapshot? snapshot =
-          await _loadSnapshotForNodeDataset(
-        upstreamNode.id,
-        dataset.id,
-        cacheInRam: _shouldCacheLoadedSnapshotInRam(upstreamNode),
-      );
+          await _loadSnapshotForNodeDataset(upstreamNode.id, dataset.id);
       if (snapshot != null && !snapshot.isEmpty) {
         _snapshotScopedToNodeOutputs(upstreamNode, snapshot).applyToDataset(view);
         appliedAnySnapshot = true;
@@ -4282,7 +3388,6 @@ class CanvasLogic {
   Future<DatasetArtifactSnapshot?> _loadSnapshotForNodeDataset(
     String nodeId,
     String datasetId,
-    {bool cacheInRam = true}
   ) async {
     final DatasetArtifactSnapshot? ramSnapshot =
         _nodeRamSnapshots[nodeId]?[datasetId];
@@ -4306,26 +3411,9 @@ class CanvasLogic {
       return null;
     }
     _nodeDiskSnapshotIds.putIfAbsent(nodeId, () => <String>{}).add(datasetId);
-    if (cacheInRam) {
-      _nodeRamSnapshots.putIfAbsent(
-        nodeId,
-        () => <String, DatasetArtifactSnapshot>{},
-      )[datasetId] = snapshot;
-    }
+    _nodeRamSnapshots
+        .putIfAbsent(nodeId, () => <String, DatasetArtifactSnapshot>{})[datasetId] = snapshot;
     return snapshot;
-  }
-
-  bool _shouldCacheLoadedSnapshotInRam(NodeModel node) {
-    final NodeStoragePolicy policy = _storagePolicyForNode(node);
-    switch (policy) {
-      case NodeStoragePolicy.preferDisk:
-      case NodeStoragePolicy.onDemand:
-        return false;
-      case NodeStoragePolicy.automatic:
-      case NodeStoragePolicy.preferRam:
-      case NodeStoragePolicy.ramAndDisk:
-        return true;
-    }
   }
 
   Future<void> _refreshDiskSnapshotFlagsForLoadedProject() async {
@@ -4402,127 +3490,6 @@ class CanvasLogic {
         .toList(growable: false);
   }
 
-  Future<String> _runMemorySummaryAction(
-    Iterable<MemoryArtifactSummary> rows,
-    Future<String> Function(NodeModel node, Set<String> datasetIds) action,
-  ) async {
-    final Map<String, Set<String>> datasetIdsByNodeId = <String, Set<String>>{};
-    for (final MemoryArtifactSummary row in rows) {
-      datasetIdsByNodeId.putIfAbsent(row.nodeId, () => <String>{}).add(row.datasetId);
-    }
-    if (datasetIdsByNodeId.isEmpty) {
-      return 'No memory rows were selected.';
-    }
-
-    final List<String> messages = <String>[];
-    for (final MapEntry<String, Set<String>> entry in datasetIdsByNodeId.entries) {
-      final NodeModel? node = _findNode(entry.key);
-      if (node == null) {
-        continue;
-      }
-      messages.add(await action(node, entry.value));
-    }
-    return messages.join(' ');
-  }
-
-  String _memoryArtifactLabel({
-    required NodeModel node,
-    required Dataset dataset,
-    required DatasetArtifactSnapshot? snapshot,
-  }) {
-    final Set<BrainStoryArtifactKind> kinds = snapshot == null
-        ? _artifactKindsForNodeOutputs(node, dataset)
-        : _artifactKindsForSnapshotOutputs(node, snapshot);
-    if (kinds.isEmpty) {
-      return node.outputPorts.map((PortSpec port) => port.name).join(', ');
-    }
-    return kinds.map(_artifactKindLabel).join(', ');
-  }
-
-  String _memoryPrecisionLabel({
-    required NodeModel node,
-    required Dataset dataset,
-    required DatasetArtifactSnapshot? snapshot,
-  }) {
-    final Set<BrainStoryArtifactKind> kinds = snapshot == null
-        ? _artifactKindsForNodeOutputs(node, dataset)
-        : _artifactKindsForSnapshotOutputs(node, snapshot);
-    final bool hasNumeric = kinds.any(_isNumericArtifactKind);
-    final bool hasMarkers = kinds.contains(BrainStoryArtifactKind.markers);
-    final bool hasTable = kinds.contains(BrainStoryArtifactKind.featureTable);
-    if (hasNumeric && (hasMarkers || hasTable)) {
-      return '$kBrainStoryNumericPrecisionLabel + metadata';
-    }
-    if (hasNumeric) {
-      return kBrainStoryNumericPrecisionLabel;
-    }
-    if (hasTable) {
-      return 'Text table';
-    }
-    if (hasMarkers) {
-      return 'Marker metadata';
-    }
-    return 'Pending';
-  }
-
-  bool _isNumericArtifactKind(BrainStoryArtifactKind kind) {
-    switch (kind) {
-      case BrainStoryArtifactKind.timeSeries:
-      case BrainStoryArtifactKind.segmentedTimeSeries:
-      case BrainStoryArtifactKind.spectrum:
-      case BrainStoryArtifactKind.fooofResult:
-      case BrainStoryArtifactKind.bridgeDetection:
-      case BrainStoryArtifactKind.timeFrequency:
-      case BrainStoryArtifactKind.matrixTransformation:
-        return true;
-      case BrainStoryArtifactKind.featureTable:
-      case BrainStoryArtifactKind.markers:
-      case BrainStoryArtifactKind.channelCoordinates:
-      case BrainStoryArtifactKind.markerChange:
-      case BrainStoryArtifactKind.unknown:
-        return false;
-    }
-  }
-
-  String _artifactKindLabel(BrainStoryArtifactKind kind) {
-    switch (kind) {
-      case BrainStoryArtifactKind.timeSeries:
-        return 'Signal';
-      case BrainStoryArtifactKind.segmentedTimeSeries:
-        return 'Segments';
-      case BrainStoryArtifactKind.spectrum:
-        return 'Spectrum';
-      case BrainStoryArtifactKind.fooofResult:
-        return 'FOOOF';
-      case BrainStoryArtifactKind.featureTable:
-        return 'Table';
-      case BrainStoryArtifactKind.bridgeDetection:
-        return 'Bridge matrix';
-      case BrainStoryArtifactKind.timeFrequency:
-        return 'Time-frequency';
-      case BrainStoryArtifactKind.matrixTransformation:
-        return 'Matrix';
-      case BrainStoryArtifactKind.markers:
-        return 'Markers';
-      case BrainStoryArtifactKind.channelCoordinates:
-        return 'Coordinates';
-      case BrainStoryArtifactKind.markerChange:
-        return 'Marker changes';
-      case BrainStoryArtifactKind.unknown:
-        return 'Unknown';
-    }
-  }
-
-  int _estimateSnapshotNumericBytes(DatasetArtifactSnapshot snapshot) {
-    return (snapshot.timeSeries?.estimatedNumericBytes ?? 0) +
-        (snapshot.segmentedTimeSeries?.estimatedNumericBytes ?? 0) +
-        (snapshot.spectrum?.estimatedNumericBytes ?? 0) +
-        (snapshot.fooofResult?.estimatedNumericBytes ?? 0) +
-        (snapshot.bridgeDetection?.estimatedNumericBytes ?? 0) +
-        (snapshot.timeFrequency?.estimatedNumericBytes ?? 0) +
-        (snapshot.matrixTransformation?.estimatedNumericBytes ?? 0);
-  }
-
   NodeStoragePolicy _storagePolicyForNode(NodeModel node) {
     return NodeStoragePolicyPresentation.fromWireValue(
       node.params['storagePolicy']?.toString(),
@@ -4552,79 +3519,6 @@ class CanvasLogic {
     await Future<void>.delayed(Duration(milliseconds: extraDelayMs));
   }
 
-  NodeProcessViewData _processViewForNode(NodeModel node) {
-    final NodeProcessIndicator? indicator = nodeProcessIndicators.value[node.id];
-    if (indicator != null) {
-      return NodeProcessViewData(
-        label: indicator.label,
-        color: indicator.color,
-        active: indicator.active,
-      );
-    }
-    final DatasetState state = node.visualState;
-    return NodeProcessViewData(
-      label: _nodeStateLabel(state),
-      color: _nodeStateColor(state),
-    );
-  }
-
-  String _nodeStateLabel(DatasetState state) {
-    switch (state) {
-      case DatasetState.notReady:
-        return 'Not ready';
-      case DatasetState.ready:
-        return 'Ready';
-      case DatasetState.done:
-        return 'Done';
-      case DatasetState.stale:
-        return 'Stale';
-    }
-  }
-
-  Color _nodeStateColor(DatasetState state) {
-    switch (state) {
-      case DatasetState.notReady:
-        return const Color(0xFF9AA2AE);
-      case DatasetState.ready:
-        return const Color(0xFF66D9FF);
-      case DatasetState.done:
-        return const Color(0xFF62E391);
-      case DatasetState.stale:
-        return const Color(0xFFFFC857);
-    }
-  }
-
-  void _setNodeProcessStatus(String nodeId, NodeProcessStatus status) {
-    if (_findNode(nodeId) == null) {
-      return;
-    }
-    nodeProcessIndicators.value = <String, NodeProcessIndicator>{
-      ...nodeProcessIndicators.value,
-      nodeId: NodeProcessIndicator(
-        status: status,
-      ),
-    };
-  }
-
-  void _setNodeProcessStatuses(
-    List<NodeModel> targetNodes,
-    NodeProcessStatus status, {
-    bool clearExisting = false,
-  }) {
-    final Map<String, NodeProcessIndicator> next =
-        clearExisting
-            ? <String, NodeProcessIndicator>{}
-            : Map<String, NodeProcessIndicator>.from(
-                nodeProcessIndicators.value,
-              );
-    for (final NodeModel node in targetNodes) {
-      next[node.id] = NodeProcessIndicator(
-        status: status,
-      );
-    }
-    nodeProcessIndicators.value = next;
-  }
-
   Color _nodeColor(NodeModel node) {
     return node.type.category.color;
   }
@@ -4645,6 +3539,19 @@ class CanvasLogic {
       return const Color(0xFF24D6A7);
     }
     return const Color(0xFF958A52);
+  }
+
+  String? _statusLabel(NodeModel node) {
+    switch (node.visualState) {
+      case DatasetState.notReady:
+        return null;
+      case DatasetState.ready:
+        return 'Ready';
+      case DatasetState.done:
+        return 'Done';
+      case DatasetState.stale:
+        return 'Stale';
+    }
   }
 
   Offset _nextSpawnPosition() {
@@ -4703,32 +3610,6 @@ class CanvasLogic {
       }
     }
     return null;
-  }
-
-  void _copyInteractiveArtifactViewerParams({
-    required Map<String, dynamic> fromParams,
-    required Map<String, dynamic> toParams,
-  }) {
-    toParams['interactiveArtifactDetection'] = true;
-    toParams['interaction_mode'] = 'interactive';
-    if (fromParams['artifactThreshold'] != null) {
-      toParams['artifactThreshold'] = fromParams['artifactThreshold'];
-    }
-    if (fromParams['artifactExemplars'] is List) {
-      toParams['artifactExemplars'] = List<dynamic>.from(
-        fromParams['artifactExemplars'] as List<dynamic>,
-      );
-    }
-    if (fromParams['artifactCandidates'] is List) {
-      toParams['artifactCandidates'] = List<dynamic>.from(
-        fromParams['artifactCandidates'] as List<dynamic>,
-      );
-    }
-    if (fromParams['artifactTemplates'] is List) {
-      toParams['artifactTemplates'] = List<dynamic>.from(
-        fromParams['artifactTemplates'] as List<dynamic>,
-      );
-    }
   }
 
   NodeModel? _channelEditSourceNode(String nodeId) {
@@ -4872,69 +3753,6 @@ class CanvasLogic {
     return channelNode;
   }
 
-  NodeModel _ensureInteractiveArtifactNode(NodeModel sourceNode) {
-    if (sourceNode.type is InteractiveArtifactDetectionNodeType) {
-      return sourceNode;
-    }
-
-    for (final Map<String, dynamic> connection in connections) {
-      if (connection['fromNode'] != sourceNode.id) {
-        continue;
-      }
-      final NodeModel? child = _findNode(connection['toNode'] as String);
-      if (child?.type is InteractiveArtifactDetectionNodeType) {
-        return child!;
-      }
-    }
-
-    final NodeType interactiveType = InteractiveArtifactDetectionNodeType();
-    final NodeModel interactiveNode = _buildNode(
-      type: interactiveType,
-      position: _nearestAvailablePosition(
-        Offset(
-          sourceNode.position.dx,
-          sourceNode.position.dy + _cardHeight + _spawnGap,
-        ),
-      ),
-      params: <String, dynamic>{
-        ...interactiveType.defaultParams,
-        'interaction_mode': 'interactive',
-        if (sourceNode.params['selectedDatasetIds'] != null)
-          'selectedDatasetIds': List<dynamic>.from(
-            sourceNode.params['selectedDatasetIds'] as List<dynamic>,
-          ),
-      },
-    );
-    nodes.add(interactiveNode);
-
-    int? fromPortIndex;
-    int? toPortIndex;
-    for (int candidateFromPort = 0;
-        candidateFromPort < sourceNode.outputPorts.length;
-        candidateFromPort++) {
-      final int? candidateToPort = _matchingInputPortForOutputPort(
-        sourceNode,
-        candidateFromPort,
-        interactiveNode,
-      );
-      if (candidateToPort != null) {
-        fromPortIndex = candidateFromPort;
-        toPortIndex = candidateToPort;
-        break;
-      }
-    }
-    if (fromPortIndex != null && toPortIndex != null) {
-      connections.add(<String, dynamic>{
-        'fromNode': sourceNode.id,
-        'fromPort': fromPortIndex,
-        'toNode': interactiveNode.id,
-        'toPort': toPortIndex,
-      });
-    }
-
-    return interactiveNode;
-  }
-
   double _snapCoordinate(double value, double gridSize) {
     return math.max(
       0,
@@ -4980,15 +3798,6 @@ class CanvasLogic {
         targetPosition,
         movingNodeId: draggedNode.id,
       );
-      if (_tryInsertNodeIntoConnection(draggedNode, nextPosition)) {
-        selectedNodeId = draggedNode.id;
-        selectedNodeIds
-          ..clear()
-          ..add(draggedNode.id);
-        selectedConnectionIndex = null;
-        _clearPendingConnection();
-        return;
-      }
       if (nextPosition != draggedNode.position) {
         _recordUndo('move node');
         draggedNode.position = nextPosition;
@@ -5061,213 +3870,6 @@ class CanvasLogic {
     return false;
   }
 
-  bool _tryInsertNodeIntoConnection(NodeModel draggedNode, Offset nextPosition) {
-    if (_nodeHasAnyConnection(draggedNode.id)) {
-      return false;
-    }
-    final int? connectionIndex = _connectionIndexIntersectingNodeRect(
-      Rect.fromLTWH(
-        nextPosition.dx,
-        nextPosition.dy,
-        _cardWidth,
-        _cardHeight,
-      ),
-      ignoredNodeIds: <String>{draggedNode.id},
-    );
-    if (connectionIndex == null) {
-      return false;
-    }
-
-    final Map<String, dynamic> existingConnection = Map<String, dynamic>.from(
-      connections[connectionIndex],
-    );
-    final NodeModel? fromNode = _findNode(existingConnection['fromNode'] as String);
-    final NodeModel? toNode = _findNode(existingConnection['toNode'] as String);
-    if (fromNode == null || toNode == null) {
-      return false;
-    }
-    final int originalFromPort = (existingConnection['fromPort'] as num?)?.toInt() ?? 0;
-    final int originalToPort = (existingConnection['toPort'] as num?)?.toInt() ?? 0;
-    final int? draggedInputPort = _matchingInputPortForOutputPort(
-      fromNode,
-      originalFromPort,
-      draggedNode,
-    );
-    final int? draggedOutputPort = _matchingOutputPortForInputPort(
-      draggedNode,
-      toNode,
-      originalToPort,
-    );
-    final bool introducesCycle =
-        _collectDescendantsInclusive(toNode.id).contains(draggedNode.id) ||
-            _collectAncestorsInclusive(fromNode.id).contains(draggedNode.id);
-    if (draggedInputPort == null ||
-        draggedOutputPort == null ||
-        introducesCycle) {
-      return false;
-    }
-
-    final Map<String, DatasetState> previousInsertedStates =
-        Map<String, DatasetState>.from(draggedNode.datasetStates);
-    final Map<String, DatasetState> previousChildStates =
-        Map<String, DatasetState>.from(toNode.datasetStates);
-    _recordUndo('insert node into wire');
-    draggedNode.position = nextPosition;
-    connections.removeAt(connectionIndex);
-    connections.add(<String, dynamic>{
-      'fromNode': fromNode.id,
-      'fromPort': originalFromPort,
-      'toNode': draggedNode.id,
-      'toPort': draggedInputPort,
-    });
-    connections.add(<String, dynamic>{
-      'fromNode': draggedNode.id,
-      'fromPort': draggedOutputPort,
-      'toNode': toNode.id,
-      'toPort': originalToPort,
-    });
-    _updateStatesAfterNodeInsertion(
-      insertedNode: draggedNode,
-      interruptedChild: toNode,
-      previousInsertedStates: previousInsertedStates,
-      previousChildStates: previousChildStates,
-    );
-    return true;
-  }
-
-  bool _nodeHasAnyConnection(String nodeId) {
-    for (final Map<String, dynamic> connection in connections) {
-      if (connection['fromNode'] == nodeId || connection['toNode'] == nodeId) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  int? _matchingOutputPortForInputPort(
-    NodeModel fromNode,
-    NodeModel toNode,
-    int toPortIndex,
-  ) {
-    if (toPortIndex < 0 || toPortIndex >= toNode.inputPorts.length) {
-      return null;
-    }
-    final PortType inputType = toNode.inputPorts[toPortIndex].type;
-    for (final _EffectiveOutputPort outputPort in _effectiveOutputPorts(fromNode)) {
-      if (outputPort.port.type == inputType) {
-        return outputPort.portIndex;
-      }
-    }
-    return null;
-  }
-
-  void _updateStatesAfterNodeInsertion({
-    required NodeModel insertedNode,
-    required NodeModel interruptedChild,
-    required Map<String, DatasetState> previousInsertedStates,
-    required Map<String, DatasetState> previousChildStates,
-  }) {
-    for (final Dataset dataset in datasets.values) {
-      final String datasetId = dataset.id;
-      insertedNode.datasetStates[datasetId] = _nextStateAfterWireInsertion(
-        node: insertedNode,
-        datasetId: datasetId,
-        previousState: previousInsertedStates[datasetId],
-      );
-      interruptedChild.datasetStates[datasetId] = _nextStateAfterWireInsertion(
-        node: interruptedChild,
-        datasetId: datasetId,
-        previousState: previousChildStates[datasetId],
-      );
-    }
-  }
-
-  DatasetState _nextStateAfterWireInsertion({
-    required NodeModel node,
-    required String datasetId,
-    required DatasetState? previousState,
-  }) {
-    final DatasetState prior = previousState ?? DatasetState.notReady;
-    final bool selectedForNode = _datasetsForNode(node).contains(datasetId);
-    if (!selectedForNode) {
-      return prior == DatasetState.done ? DatasetState.done : DatasetState.notReady;
-    }
-    if (prior == DatasetState.done || prior == DatasetState.stale) {
-      return DatasetState.stale;
-    }
-    final List<NodeModel> parents = _immediateParents(node.id);
-    final bool structurallyReady =
-        node.type is ImportNodeType ||
-        parents.every((NodeModel parent) => _nodeHasRunForDataset(parent, datasetId));
-    return structurallyReady ? DatasetState.ready : DatasetState.notReady;
-  }
-
-  int? _connectionIndexIntersectingNodeRect(
-    Rect nodeRect, {
-    Set<String> ignoredNodeIds = const <String>{},
-  }) {
-    final Rect probe = nodeRect.inflate(8);
-    for (int index = connections.length - 1; index >= 0; index--) {
-      final Map<String, dynamic> connection = connections[index];
-      final String fromNodeId = connection['fromNode'] as String;
-      final String toNodeId = connection['toNode'] as String;
-      if (ignoredNodeIds.contains(fromNodeId) || ignoredNodeIds.contains(toNodeId)) {
-        continue;
-      }
-      final NodeModel? fromNode = _findNode(fromNodeId);
-      final NodeModel? toNode = _findNode(toNodeId);
-      if (fromNode == null || toNode == null) {
-        continue;
-      }
-      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
-      final Offset end = _inputAnchor(fromNode, toNode);
-      final List<Offset> points = buildConnectionPolyline(
-        start: start,
-        end: end,
-        preferVertical: (end.dy - start.dy).abs() >= (end.dx - start.dx).abs(),
-        gridWidth: _gridWidth,
-        gridHeight: _gridHeight,
-        obstacles: _connectionObstacles(fromNode, toNode),
-      );
-      if (_polylineIntersectsRect(points, probe)) {
-        return index;
-      }
-    }
-    return null;
-  }
-
-  bool _polylineIntersectsRect(List<Offset> points, Rect rect) {
-    for (int index = 1; index < points.length; index++) {
-      if (_segmentIntersectsRect(points[index - 1], points[index], rect)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  bool _segmentIntersectsRect(Offset a, Offset b, Rect rect) {
-    if ((a.dx - b.dx).abs() < 0.001) {
-      final double x = a.dx;
-      if (x < rect.left || x > rect.right) {
-        return false;
-      }
-      final double top = math.min(a.dy, b.dy);
-      final double bottom = math.max(a.dy, b.dy);
-      return bottom >= rect.top && top <= rect.bottom;
-    }
-    if ((a.dy - b.dy).abs() < 0.001) {
-      final double y = a.dy;
-      if (y < rect.top || y > rect.bottom) {
-        return false;
-      }
-      final double left = math.min(a.dx, b.dx);
-      final double right = math.max(a.dx, b.dx);
-      return right >= rect.left && left <= rect.right;
-    }
-    return false;
-  }
-
   bool _positionOverlapsAnyNode(
     Offset position, {
     String? movingNodeId,
@@ -5297,74 +3899,7 @@ class CanvasLogic {
   }
 
   String _nodeDescriptor(NodeModel node) {
-    return '#${nodes.indexOf(node) + 1}${_branchLabelForNode(node.id)} ${node.title}';
-  }
-
-  String descriptorForNode(NodeModel node) => _nodeDescriptor(node);
-
-  String _branchLabelForNode(String nodeId) {
-    return _branchLabelsByNodeId()[nodeId] ?? 'A';
-  }
-
-  Map<String, String> _branchLabelsByNodeId() {
-    final Map<String, String> labels = <String, String>{
-      for (final NodeModel node in nodes) node.id: 'A',
-    };
-    final List<NodeModel> orderedNodes =
-        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
-
-    for (final NodeModel mergeNode in orderedNodes) {
-      final List<NodeModel> parents = _immediateParents(mergeNode.id);
-      if (parents.length < 2) {
-        continue;
-      }
-
-      final List<NodeModel> orderedParents = List<NodeModel>.from(parents)
-        ..sort((NodeModel a, NodeModel b) {
-          final int xCompare = a.position.dx.compareTo(b.position.dx);
-          if (xCompare != 0) {
-            return xCompare;
-          }
-          return nodes.indexOf(a).compareTo(nodes.indexOf(b));
-        });
-      final Map<String, Set<String>> ancestorSets = <String, Set<String>>{
-        for (final NodeModel parent in orderedParents)
-          parent.id: _collectAncestorsInclusive(parent.id),
-      };
-      Set<String>? commonAncestors;
-      for (final Set<String> ancestorSet in ancestorSets.values) {
-        commonAncestors = commonAncestors == null
-            ? Set<String>.from(ancestorSet)
-            : commonAncestors.intersection(ancestorSet);
-      }
-      final Set<String> shared = commonAncestors ?? const <String>{};
-
-      for (int index = 0; index < orderedParents.length; index++) {
-        final NodeModel parent = orderedParents[index];
-        final String letter = _branchLetter(index);
-        final Set<String> uniqueNodes = Set<String>.from(
-          ancestorSets[parent.id] ?? const <String>{},
-        )..removeAll(shared);
-        for (final String uniqueNodeId in uniqueNodes) {
-          labels[uniqueNodeId] = letter;
-        }
-      }
-    }
-
-    return labels;
-  }
-
-  String _branchLetter(int index) {
-    if (index < 0) {
-      return 'A';
-    }
-    String value = '';
-    int current = index;
-    do {
-      value = String.fromCharCode(65 + (current % 26)) + value;
-      current = (current ~/ 26) - 1;
-    } while (current >= 0);
-    return value;
+    return '#${nodes.indexOf(node) + 1} ${node.title}';
   }
 
   int? _matchingInputPortForOutputPort(
