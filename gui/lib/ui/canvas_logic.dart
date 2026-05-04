@@ -11,34 +11,22 @@ import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/add_remove_markers_node.dart';
-import '../nodes/amplitude_features_node.dart';
-import '../nodes/bandpass_node.dart';
 import '../nodes/bridge_detector_node.dart';
-import '../nodes/channel_exclusion_node.dart';
 import '../nodes/channel_coordinates_node.dart';
-import '../nodes/debug_output_node.dart';
+import '../nodes/edit_channels_and_markers_node.dart';
 import '../nodes/edit_channels_node.dart';
-import '../nodes/eye_blinks_node.dart';
-import '../nodes/export_edf_node.dart';
-import '../nodes/fooof_node.dart';
-import '../nodes/impedances_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
-import '../nodes/matrix_transform_nodes.dart';
-import '../nodes/machine_learning_nodes.dart';
-import '../nodes/multimodal_nodes.dart';
+import '../nodes/node_registry.dart';
 import '../nodes/node_type.dart';
 import '../nodes/psd_node.dart';
-import '../nodes/publish_node.dart';
-import '../nodes/recode_markers_node.dart';
 import '../nodes/realign_node.dart';
-import '../nodes/resample_node.dart';
 import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
-import '../nodes/spectral_features_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/project_file_save.dart';
+import '../platform/recent_project_path.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
 
@@ -71,6 +59,69 @@ class RunActivity {
       detail: detail ?? this.detail,
     );
   }
+}
+
+enum RunJobState {
+  done,
+  failed,
+}
+
+class RunJobEntry {
+  const RunJobEntry({
+    required this.label,
+    required this.detail,
+    required this.state,
+    required this.finishedAt,
+    required this.elapsed,
+  });
+
+  final String label;
+  final String detail;
+  final RunJobState state;
+  final DateTime finishedAt;
+  final Duration elapsed;
+}
+
+class VisualizationSourceRef {
+  const VisualizationSourceRef({
+    required this.key,
+    required this.datasetId,
+    required this.datasetLabel,
+    required this.materializeFromNodeId,
+    required this.sourceDescriptor,
+  });
+
+  final String key;
+  final String datasetId;
+  final String datasetLabel;
+  final String materializeFromNodeId;
+  final String sourceDescriptor;
+
+  String get displayLabel => '$datasetLabel [$sourceDescriptor]';
+}
+
+class _MemoryRowSummary {
+  const _MemoryRowSummary({
+    required this.nodeId,
+    required this.nodeDescriptor,
+    required this.nodeTitle,
+    required this.datasetId,
+    required this.datasetLabel,
+    required this.processingLabel,
+    required this.inRam,
+    required this.onDisk,
+    required this.precisionLabel,
+  });
+
+  final String nodeId;
+  final String nodeDescriptor;
+  final String nodeTitle;
+  final String datasetId;
+  final String datasetLabel;
+  final String processingLabel;
+  final bool inRam;
+  final bool onDisk;
+  final String precisionLabel;
 }
 
 class _DatasetUndoSnapshot {
@@ -292,6 +343,151 @@ class _CanvasUndoSnapshot {
   }
 }
 
+class _MemoryRowWidget extends StatelessWidget {
+  const _MemoryRowWidget({
+    required this.row,
+    required this.supportsDisk,
+    this.onLoadFromDisk,
+    this.onReleaseRam,
+    this.onSaveToDisk,
+    this.onPurgeDisk,
+  });
+
+  final _MemoryRowSummary row;
+  final bool supportsDisk;
+  final Future<void> Function()? onLoadFromDisk;
+  final Future<void> Function()? onReleaseRam;
+  final Future<void> Function()? onSaveToDisk;
+  final Future<void> Function()? onPurgeDisk;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '${row.nodeDescriptor} • ${row.datasetLabel}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            _MemoryInfoPill(
+              label: 'Processing',
+              value: row.processingLabel,
+              color: switch (row.processingLabel) {
+                'Done' => const Color(0xFF43C26B),
+                'Ready' => const Color(0xFF5CC8FF),
+                'Stale' => const Color(0xFFFFB347),
+                'Running' => const Color(0xFF7FE36A),
+                'Waiting' => const Color(0xFFC0CAD4),
+                _ => const Color(0xFF8C98A4),
+              },
+            ),
+            _MemoryInfoPill(
+              label: 'RAM',
+              value: row.inRam ? 'Loaded' : 'Not loaded',
+              color: row.inRam
+                  ? const Color(0xFF5CC8FF)
+                  : const Color(0xFF8C98A4),
+            ),
+            _MemoryInfoPill(
+              label: 'Disk',
+              value: row.onDisk ? 'Saved' : 'Not saved',
+              color: row.onDisk
+                  ? const Color(0xFF43C26B)
+                  : const Color(0xFF8C98A4),
+            ),
+            _MemoryInfoPill(
+              label: 'Precision',
+              value: row.precisionLabel,
+              color: const Color(0xFFD0B56E),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            OutlinedButton(
+              onPressed: onLoadFromDisk == null ? null : () => onLoadFromDisk!(),
+              child: const Text('Load from disk'),
+            ),
+            OutlinedButton(
+              onPressed: onReleaseRam == null ? null : () => onReleaseRam!(),
+              child: const Text('Purge RAM'),
+            ),
+            if (supportsDisk)
+              OutlinedButton(
+                onPressed: onSaveToDisk == null ? null : () => onSaveToDisk!(),
+                child: const Text('Save to disk'),
+              ),
+            if (supportsDisk)
+              OutlinedButton(
+                onPressed: onPurgeDisk == null ? null : () => onPurgeDisk!(),
+                child: const Text('Purge disk'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _MemoryInfoPill extends StatelessWidget {
+  const _MemoryInfoPill({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: color.withValues(alpha: 0.5),
+        ),
+      ),
+      child: RichText(
+        text: TextSpan(
+          children: <TextSpan>[
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+              ),
+            ),
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 Map<String, dynamic> _deepCloneJsonMap(Map<dynamic, dynamic> source) {
   return <String, dynamic>{
     for (final MapEntry<dynamic, dynamic> entry in source.entries)
@@ -313,41 +509,9 @@ class CanvasLogic {
   CanvasLogic();
 
   /// Registry of available node types in the sidebar.
-  final List<NodeType> availableNodes = <NodeType>[
-    ImportNodeType(),
-    ChannelCoordinatesNodeType(),
-    ChannelExclusionNodeType(),
-    EditChannelsNodeType(),
-    BridgeDetectorNodeType(),
-    ResampleNodeType(),
-    BandpassNodeType(),
-    AmplitudeFeaturesNodeType(),
-    PSDNodeType(),
-    FooofNodeType(),
-    SpectralFeaturesNodeType(),
-    MicrostatesNodeType(),
-    PCANodeType(),
-    ICANodeType(),
-    EigenvalueDecompositionNodeType(),
-    SourceReconstructionNodeType(),
-    DetectPeaksNodeType(),
-    InterbeatIntervalNodeType(),
-    HeartRateVariabilityNodeType(),
-    KMeansNodeType(),
-    CNNNodeType(),
-    AddRemoveMarkersNodeType(),
-    InteractiveArtifactDetectionNodeType(),
-    RecodeMarkersNodeType(),
-    SegmentationNodeType(),
-    EyeBlinksNodeType(),
-    SleepStagingNodeType(),
-    RealignNodeType(),
-    ImpedancesNodeType(),
-    VisualizationNodeType(),
-    DebugOutputNodeType(),
-    ExportNodeType(),
-    PublishNodeType(),
-  ];
+  late final List<NodeType> availableNodes = NodeRegistry.entries
+      .map((NodeRegistryEntry entry) => entry.create())
+      .toList(growable: false);
 
   final List<NodeModel> nodes = <NodeModel>[];
   final Map<String, Dataset> datasets = <String, Dataset>{};
@@ -361,9 +525,15 @@ class CanvasLogic {
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
   final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
+  final ValueNotifier<List<RunJobEntry>> recentRunJobs =
+      ValueNotifier<List<RunJobEntry>>(const <RunJobEntry>[]);
+  final Set<String> _runWaitingNodeIds = <String>{};
+  String? _runActiveNodeId;
+  DateTime? _runStartedAt;
   final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
       <String, Map<String, DatasetArtifactSnapshot>>{};
   final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
+  String? _currentBrainStoryPath;
 
   String? selectedNodeId;
   final Set<String> selectedNodeIds = <String>{};
@@ -494,6 +664,11 @@ class CanvasLogic {
     selectedNodeIds.clear();
     selectedConnectionIndex = null;
     keyboardFocusedNodeId = null;
+    recentRunJobs.value = const <RunJobEntry>[];
+    runActivity.value = null;
+    _runWaitingNodeIds.clear();
+    _runActiveNodeId = null;
+    _runStartedAt = null;
     _clearPendingConnection();
   }
 
@@ -543,6 +718,94 @@ class CanvasLogic {
       dataset.ram['source.filename'] = sourceName;
       _markAllNodes(dataset.id, DatasetState.notReady);
       _refreshDatasetAvailability(dataset.id);
+    }
+  }
+
+  Future<void> removeDataset(String datasetId) async {
+    final MapEntry<String, Dataset>? entry = datasets.entries.cast<MapEntry<String, Dataset>?>().firstWhere(
+      (MapEntry<String, Dataset>? item) => item?.value.id == datasetId,
+      orElse: () => null,
+    );
+    if (entry == null) {
+      return;
+    }
+
+    _recordUndo('remove dataset');
+    datasets.remove(entry.key);
+
+    for (final NodeModel node in nodes) {
+      node.datasetStates.remove(datasetId);
+
+      final List<dynamic>? selected = node.params['selectedDatasetIds'] as List<dynamic>?;
+      if (selected != null) {
+        node.params['selectedDatasetIds'] = selected
+            .where((dynamic value) => value?.toString() != datasetId)
+            .toList(growable: false);
+      }
+
+      if (node.type is ImportNodeType) {
+        final Map<String, dynamic> aliases = Map<String, dynamic>.from(
+          node.params['datasetAliases'] as Map? ?? const <String, dynamic>{},
+        );
+        if (aliases.remove(datasetId) != null) {
+          node.params['datasetAliases'] = aliases;
+        }
+      }
+
+      final Map<String, dynamic> channelEditsByDataset = Map<String, dynamic>.from(
+        node.params['channelEditsByDataset'] as Map? ?? const <String, dynamic>{},
+      );
+      if (channelEditsByDataset.remove(datasetId) != null) {
+        node.params['channelEditsByDataset'] = channelEditsByDataset;
+      }
+
+      final List<dynamic> markers =
+          (node.params['markers'] as List<dynamic>? ?? const <dynamic>[]);
+      if (markers.isNotEmpty) {
+        node.params['markers'] = markers
+            .where((dynamic marker) => marker is! Map || marker['datasetId'] != datasetId)
+            .toList(growable: false);
+      }
+
+      for (final String key in <String>[
+        'artifactExemplars',
+        'artifactCandidates',
+        'artifactTemplates',
+      ]) {
+        final List<dynamic> values =
+            (node.params[key] as List<dynamic>? ?? const <dynamic>[]);
+        if (values.isNotEmpty) {
+          node.params[key] = values
+              .where((dynamic item) => item is! Map || item['datasetId'] != datasetId)
+              .toList(growable: false);
+        }
+      }
+    }
+
+    for (final String nodeId in _nodeRamSnapshots.keys.toList(growable: false)) {
+      final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[nodeId];
+      if (snapshots?.remove(datasetId) != null && (snapshots?.isEmpty ?? false)) {
+        _nodeRamSnapshots.remove(nodeId);
+      }
+    }
+
+    for (final String nodeId in _nodeDiskSnapshotIds.keys.toList(growable: false)) {
+      final Set<String>? diskIds = _nodeDiskSnapshotIds[nodeId];
+      if (diskIds?.remove(datasetId) ?? false) {
+        await deleteNodeSnapshotFromDisk(nodeId: nodeId, datasetId: datasetId);
+        if (diskIds!.isEmpty) {
+          _nodeDiskSnapshotIds.remove(nodeId);
+        }
+      }
+    }
+
+    for (final NodeModel node in nodes) {
+      if (node.type is ImportNodeType) {
+        ImportNodeType.applyDatasetAliases(node.params, datasets.values);
+      }
+    }
+    for (final Dataset remaining in datasets.values) {
+      _refreshDatasetAvailability(remaining.id);
     }
   }
 
@@ -751,8 +1014,11 @@ class CanvasLogic {
         return 'Ocular-event marker detection was configured to emit blink, vertical saccade, and horizontal saccade markers.';
       case 'Interactive Artifact Detection':
         return 'Artifact exemplars were labeled interactively in the time-domain viewer, evolving templates were built by aligned averaging, and candidate artifact matches were reviewed and accepted or rejected within the workflow.';
+      case 'Edit Markers':
       case 'Add/Remove Markers':
         return 'Manual marker edits were incorporated into the analysis graph.';
+      case 'Edit Channels and Markers':
+        return 'Manual channel edits and marker edits were incorporated together into the analysis graph.';
       case 'PCA':
       case 'ICA':
       case 'Eigenvalue Decomposition':
@@ -890,6 +1156,9 @@ class CanvasLogic {
       targetPath: location.path,
       jsonPayload: jsonPayload,
     );
+    if (savedPath != null) {
+      await _rememberBrainStoryPath(savedPath);
+    }
     if (context.mounted) {
       _showStatusSnackBar(
         context,
@@ -914,13 +1183,11 @@ class CanvasLogic {
     }
 
     try {
-      final String jsonPayload = await file.readAsString();
-      final Map<String, dynamic> jsonMap =
-          Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
-      _recordUndo('load BrainStory');
-      importProjectJson(jsonMap);
-      await _refreshDiskSnapshotFlagsForLoadedProject();
-      _normalizeNodeStatesAfterProjectLoad();
+      await _loadBrainStoryJsonPayload(await file.readAsString());
+      final String path = file.path.trim();
+      if (path.isNotEmpty) {
+        await _rememberBrainStoryPath(path);
+      }
       if (context.mounted) {
         _showStatusSnackBar(
           context,
@@ -934,6 +1201,20 @@ class CanvasLogic {
           'Could not load BrainStory project: $error',
         );
       }
+    }
+  }
+
+  Future<bool> restoreLastBrainStory() async {
+    final String? path = await readRecentBrainStoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return false;
+    }
+    try {
+      await _loadBrainStoryFromPath(path);
+      return true;
+    } catch (_) {
+      await writeRecentBrainStoryPath(null);
+      return false;
     }
   }
 
@@ -974,6 +1255,34 @@ class CanvasLogic {
         );
       },
     );
+  }
+
+  Future<void> _loadBrainStoryFromPath(String path) async {
+    final String normalizedPath = path.trim();
+    if (normalizedPath.isEmpty) {
+      return;
+    }
+    final String jsonPayload = await XFile(normalizedPath).readAsString();
+    await _loadBrainStoryJsonPayload(jsonPayload);
+    await _rememberBrainStoryPath(normalizedPath);
+  }
+
+  Future<void> _loadBrainStoryJsonPayload(String jsonPayload) async {
+    final Map<String, dynamic> jsonMap =
+        Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+    _recordUndo('load BrainStory');
+    importProjectJson(jsonMap);
+    await _refreshDiskSnapshotFlagsForLoadedProject();
+    _normalizeNodeStatesAfterProjectLoad();
+  }
+
+  Future<void> _rememberBrainStoryPath(String path) async {
+    final String normalizedPath = path.trim();
+    if (normalizedPath.isEmpty || normalizedPath == _currentBrainStoryPath) {
+      return;
+    }
+    _currentBrainStoryPath = normalizedPath;
+    await writeRecentBrainStoryPath(normalizedPath);
   }
 
   String generateMethodsDescription() {
@@ -1192,6 +1501,7 @@ class CanvasLogic {
   Widget sidebar({
     required double width,
     required VoidCallback publish,
+    required VoidCallback memory,
     required VoidCallback export,
     required VoidCallback load,
     required VoidCallback clear,
@@ -1243,6 +1553,17 @@ class CanvasLogic {
               child: ElevatedButton(
                 onPressed: publish,
                 child: const Text('Publish'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: memory,
+                child: const Text('Memory'),
               ),
             ),
           ),
@@ -1508,116 +1829,154 @@ class CanvasLogic {
             update: update,
           );
         },
-        onDelete: () {
-          selectedNodeId = node.id;
-          selectedNodeIds
-            ..clear()
-            ..add(node.id);
-          deleteSelected();
-          update();
-        },
-        onEditParams: () {
-          _openNodeEditor(
+        onContextMenuAt: (Offset globalPosition) {
+          showNodeContextMenu(
             context: context,
             node: node,
+            globalPosition: globalPosition,
             update: update,
+            openVisualizationWindow: openVisualizationWindow,
           );
-        },
-        onRunThis: () async {
-          final Set<String> datasetIds = _datasetsForNode(node);
-          if (await promptLoadFromDiskInsteadOfRun(
-            context: context,
-            node: node,
-            datasetIds: datasetIds,
-            update: update,
-          )) {
-            return;
-          }
-          try {
-            await prepareRunUi('Running ${node.title}');
-            await runThisStep(node.id);
-            update();
-            if (node.type is VisualizationNodeType &&
-                visualizationDisplayMode(node) == 'window') {
-              openVisualizationWindow(node);
-            }
-            if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                _lastRunDatasetCount == 0
-                    ? 'No datasets matched ${node.title}.'
-                    : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
-              );
-            }
-          } catch (error) {
-            if (context.mounted) {
-              _showStatusSnackBar(context, 'Run failed: $error');
-            }
-          } finally {
-            finishRunUi();
-          }
-        },
-        onRunFromStart: () async {
-          final Set<String> datasetIds = _datasetsForNode(node);
-          if (await promptLoadFromDiskInsteadOfRun(
-            context: context,
-            node: node,
-            datasetIds: datasetIds,
-            update: update,
-          )) {
-            return;
-          }
-          try {
-            await prepareRunUi('Running pipeline to ${node.title}');
-            await runFromStart(node.id);
-            update();
-            if (node.type is VisualizationNodeType &&
-                visualizationDisplayMode(node) == 'window') {
-              openVisualizationWindow(node);
-            }
-            if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                _lastRunDatasetCount == 0
-                    ? 'No datasets matched ${node.title}.'
-                    : 'Ran pipeline to ${node.title} for $_lastRunDatasetCount dataset(s).',
-              );
-            }
-          } catch (error) {
-            if (context.mounted) {
-              _showStatusSnackBar(context, 'Run failed: $error');
-            }
-          } finally {
-            finishRunUi();
-          }
-        },
-        onRunToEnd: () async {
-          try {
-            await prepareRunUi('Running ${node.title} to pipeline end');
-            await runToEnd(node.id);
-            update();
-            if (node.type is VisualizationNodeType &&
-                visualizationDisplayMode(node) == 'window') {
-              openVisualizationWindow(node);
-            }
-            if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                _lastRunDatasetCount == 0
-                    ? 'No datasets matched ${node.title}.'
-                    : 'Ran ${node.title} to pipeline end for $_lastRunDatasetCount dataset(s).',
-              );
-            }
-          } catch (error) {
-            if (context.mounted) {
-              _showStatusSnackBar(context, 'Run failed: $error');
-            }
-          } finally {
-            finishRunUi();
-          }
         },
       );
     }).toList();
+  }
+
+  Future<void> showNodeContextMenu({
+    required BuildContext context,
+    required NodeModel node,
+    required Offset globalPosition,
+    required VoidCallback update,
+    required void Function(NodeModel node) openVisualizationWindow,
+  }) async {
+    final String? choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        globalPosition.dx + 1,
+        globalPosition.dy + 1,
+      ),
+      items: const <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(value: 'run_this', child: Text('Run This Step')),
+        PopupMenuItem<String>(value: 'run_start', child: Text('Run From Start')),
+        PopupMenuItem<String>(value: 'edit', child: Text('Edit Parameters')),
+        PopupMenuDivider(),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Text('Delete Node', style: TextStyle(color: Colors.red)),
+        ),
+      ],
+    );
+    if (!context.mounted) {
+      return;
+    }
+
+    switch (choice) {
+      case 'run_this':
+        final Set<String> datasetIds = _datasetsForNode(node);
+        if (await promptLoadFromDiskInsteadOfRun(
+          context: context,
+          node: node,
+          datasetIds: datasetIds,
+          update: update,
+        )) {
+          return;
+        }
+        if (!context.mounted) {
+          return;
+        }
+        bool succeeded = false;
+        String? finalDetail;
+        try {
+          await prepareRunUi('Running ${node.title}');
+          await runThisStep(node.id);
+          succeeded = true;
+          finalDetail = _lastRunDatasetCount == 0
+              ? 'No datasets matched ${node.title}.'
+              : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
+          finalDetail = _decorateRunDetailWithSkips(finalDetail);
+          update();
+          if (node.type is VisualizationNodeType &&
+              visualizationDisplayMode(node) == 'window') {
+            openVisualizationWindow(node);
+          }
+          if (context.mounted) {
+            _showStatusSnackBar(context, finalDetail);
+          }
+        } catch (error) {
+          finalDetail = 'Run failed: $error';
+          if (context.mounted) {
+            _showStatusSnackBar(context, finalDetail);
+          }
+        } finally {
+          finishRunUi(
+            succeeded: succeeded,
+            detail: finalDetail,
+          );
+        }
+        return;
+      case 'run_start':
+        final Set<String> datasetIds = _datasetsForNode(node);
+        if (await promptLoadFromDiskInsteadOfRun(
+          context: context,
+          node: node,
+          datasetIds: datasetIds,
+          update: update,
+        )) {
+          return;
+        }
+        if (!context.mounted) {
+          return;
+        }
+        bool succeeded = false;
+        String? finalDetail;
+        try {
+          await prepareRunUi('Running pipeline to ${node.title}');
+          await runFromStart(node.id);
+          succeeded = true;
+          finalDetail = _lastRunDatasetCount == 0
+              ? 'No datasets matched ${node.title}.'
+              : 'Ran pipeline to ${node.title} for $_lastRunDatasetCount dataset(s).';
+          finalDetail = _decorateRunDetailWithSkips(finalDetail);
+          update();
+          if (node.type is VisualizationNodeType &&
+              visualizationDisplayMode(node) == 'window') {
+            openVisualizationWindow(node);
+          }
+          if (context.mounted) {
+            _showStatusSnackBar(context, finalDetail);
+          }
+        } catch (error) {
+          finalDetail = 'Run failed: $error';
+          if (context.mounted) {
+            _showStatusSnackBar(context, finalDetail);
+          }
+        } finally {
+          finishRunUi(
+            succeeded: succeeded,
+            detail: finalDetail,
+          );
+        }
+        return;
+      case 'edit':
+        _openNodeEditor(
+          context: context,
+          node: node,
+          update: update,
+        );
+        return;
+      case 'delete':
+        selectedNodeId = node.id;
+        selectedNodeIds
+          ..clear()
+          ..add(node.id);
+        deleteSelected();
+        update();
+        return;
+      case null:
+        return;
+    }
   }
 
   void _handleNodeTap(NodeModel node) {
@@ -1715,24 +2074,32 @@ class CanvasLogic {
             params: params,
             update: update,
           );
+          bool succeeded = false;
+          String? finalDetail;
           try {
             await prepareRunUi('Running ${node.title}');
             await runThisStep(node.id);
+            succeeded = true;
+            finalDetail = _lastRunDatasetCount == 0
+                ? 'No datasets matched ${node.title}.'
+                : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
             update();
             if (context.mounted) {
               _showStatusSnackBar(
                 context,
-                _lastRunDatasetCount == 0
-                    ? 'No datasets matched ${node.title}.'
-                    : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
+                finalDetail,
               );
             }
           } catch (error) {
+            finalDetail = 'Run failed: $error';
             if (context.mounted) {
-              _showStatusSnackBar(context, 'Run failed: $error');
+              _showStatusSnackBar(context, finalDetail);
             }
           } finally {
-            finishRunUi();
+            finishRunUi(
+              succeeded: succeeded,
+              detail: finalDetail,
+            );
           }
         },
         datasetActions: _datasetActionsForNode(
@@ -1790,9 +2157,8 @@ class CanvasLogic {
   }
 
   Future<List<Dataset>> datasetsForVisualizationNode(String nodeId) async {
-    return materializedDatasetViewsForNode(
-      nodeId,
-      sourceDatasetsForVisualizationNode(nodeId),
+    return materializedDatasetViewsForSourceRefs(
+      visualizationSourceRefsForNode(nodeId),
     );
   }
 
@@ -1810,6 +2176,61 @@ class CanvasLogic {
     return matchingDatasets;
   }
 
+  List<VisualizationSourceRef> visualizationSourceRefsForNode(String nodeId) {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null) {
+      return const <VisualizationSourceRef>[];
+    }
+
+    final List<VisualizationSourceRef> refs = <VisualizationSourceRef>[];
+    if (node.type is VisualizationNodeType) {
+      final List<NodeModel> parents = _immediateParents(node.id)
+          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
+          .toList(growable: false)
+        ..sort(
+          (NodeModel a, NodeModel b) =>
+              _nodeDescriptor(a).compareTo(_nodeDescriptor(b)),
+        );
+      for (final NodeModel parent in parents) {
+        final Set<String> datasetIds = _datasetsForNode(parent);
+        final List<Dataset> matchingDatasets = datasets.values
+            .where((Dataset dataset) => datasetIds.contains(dataset.id))
+            .toList(growable: false)
+          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+        for (final Dataset dataset in matchingDatasets) {
+          refs.add(
+            VisualizationSourceRef(
+              key: '${parent.id}|${dataset.id}',
+              datasetId: dataset.id,
+              datasetLabel: dataset.label,
+              materializeFromNodeId: parent.id,
+              sourceDescriptor: _nodeDescriptor(parent),
+            ),
+          );
+        }
+      }
+      return refs;
+    }
+
+    final Set<String> datasetIds = _datasetsForNode(node);
+    final List<Dataset> matchingDatasets = datasets.values
+        .where((Dataset dataset) => datasetIds.contains(dataset.id))
+        .toList(growable: false)
+      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    for (final Dataset dataset in matchingDatasets) {
+      refs.add(
+        VisualizationSourceRef(
+          key: '${node.id}|${dataset.id}',
+          datasetId: dataset.id,
+          datasetLabel: dataset.label,
+          materializeFromNodeId: node.id,
+          sourceDescriptor: _nodeDescriptor(node),
+        ),
+      );
+    }
+    return refs;
+  }
+
   Future<List<Dataset>> materializedDatasetViewsForNode(
     String nodeId,
     List<Dataset> sources,
@@ -1819,6 +2240,34 @@ class CanvasLogic {
       views.add(await materializedDatasetViewForNode(nodeId, source));
     }
     return views;
+  }
+
+  Future<List<Dataset>> materializedDatasetViewsForSourceRefs(
+    List<VisualizationSourceRef> sources,
+  ) async {
+    final List<Dataset> views = <Dataset>[];
+    for (final VisualizationSourceRef source in sources) {
+      views.add(await materializedDatasetViewForSourceRef(source));
+    }
+    return views;
+  }
+
+  Future<Dataset> materializedDatasetViewForSourceRef(
+    VisualizationSourceRef source,
+  ) async {
+    final Dataset? dataset = _datasetsById()[source.datasetId];
+    if (dataset == null) {
+      return Dataset(source.datasetId, label: source.displayLabel);
+    }
+    final Dataset view = await materializedDatasetViewForNode(
+      source.materializeFromNodeId,
+      dataset,
+    );
+    view.label = source.displayLabel;
+    view.ram['viewer.sourceKey'] = source.key;
+    view.ram['viewer.sourceDescriptor'] = source.sourceDescriptor;
+    view.ram['viewer.baseDatasetLabel'] = source.datasetLabel;
+    return view;
   }
 
   Future<Dataset> materializedDatasetViewForNode(String nodeId, Dataset source) async {
@@ -1882,7 +2331,9 @@ class CanvasLogic {
 
   bool isVisualizationNode(NodeModel? node) => node?.type is VisualizationNodeType;
 
-  bool isMarkerEditNode(NodeModel? node) => node?.type is AddRemoveMarkersNodeType;
+  bool isMarkerEditNode(NodeModel? node) =>
+      node?.type is AddRemoveMarkersNodeType ||
+      node?.type is EditChannelsAndMarkersNodeType;
 
   bool canVisualizeNode(NodeModel? node) {
     if (node == null) {
@@ -2002,8 +2453,11 @@ class CanvasLogic {
   }
 
   int _lastRunDatasetCount = 0;
+  int _lastSkippedNodeCount = 0;
 
   Future<void> prepareRunUi(String label) async {
+    _lastSkippedNodeCount = 0;
+    _runStartedAt = DateTime.now();
     runActivity.value = RunActivity(
       label: label,
       detail: 'Preparing run state...',
@@ -2015,7 +2469,39 @@ class CanvasLogic {
     await _yieldToUi(extraDelayMs: 24);
   }
 
-  void finishRunUi() {
+  String _decorateRunDetailWithSkips(String detail) {
+    if (_lastSkippedNodeCount <= 0) {
+      return detail;
+    }
+    final String noun =
+        _lastSkippedNodeCount == 1 ? 'node result' : 'node results';
+    return '$detail Reused $_lastSkippedNodeCount completed $noun.';
+  }
+
+  void finishRunUi({
+    bool succeeded = true,
+    String? detail,
+  }) {
+    final RunActivity? current = runActivity.value;
+    if (current != null) {
+      final Duration elapsed = _runStartedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_runStartedAt!);
+      final List<RunJobEntry> nextJobs = <RunJobEntry>[
+        RunJobEntry(
+          label: current.label,
+          detail: (detail ?? current.detail).trim(),
+          state: succeeded ? RunJobState.done : RunJobState.failed,
+          finishedAt: DateTime.now(),
+          elapsed: elapsed,
+        ),
+        ...recentRunJobs.value,
+      ];
+      recentRunJobs.value = nextJobs.take(6).toList(growable: false);
+    }
+    _runWaitingNodeIds.clear();
+    _runActiveNodeId = null;
+    _runStartedAt = null;
     runActivity.value = null;
   }
 
@@ -2041,16 +2527,6 @@ class CanvasLogic {
   }) async {
     await _runNodeSet(
       _collectAncestorsInclusive(nodeId),
-      datasetIds: datasetIds,
-    );
-  }
-
-  Future<void> runToEnd(
-    String nodeId, {
-    Set<String>? datasetIds,
-  }) async {
-    await _runNodeSet(
-      _collectDescendantsInclusive(nodeId),
       datasetIds: datasetIds,
     );
   }
@@ -2085,6 +2561,11 @@ class CanvasLogic {
       return;
     }
 
+    _runWaitingNodeIds
+      ..clear()
+      ..addAll(orderedNodes.map((NodeModel node) => node.id));
+    _runActiveNodeId = null;
+
     for (final Dataset dataset in targetDatasets) {
       await setRunDetail('Preparing ${dataset.label}...');
       for (final NodeModel node in orderedNodes) {
@@ -2093,11 +2574,15 @@ class CanvasLogic {
         }
 
         if (node.datasetStates[dataset.id] == DatasetState.done) {
+          _lastSkippedNodeCount += 1;
+          _runWaitingNodeIds.remove(node.id);
           await setRunDetail('Skipping ${node.title} for ${dataset.label} (already done)...');
           await _restoreMaterializedOutputIfNeeded(node, dataset);
           continue;
         }
 
+        _runWaitingNodeIds.remove(node.id);
+        _runActiveNodeId = node.id;
         node.datasetStates[dataset.id] = DatasetState.ready;
         try {
           dataset.ram.remove('artifact.lastChangeSet');
@@ -2123,6 +2608,10 @@ class CanvasLogic {
               ? DatasetState.ready
               : DatasetState.notReady;
           rethrow;
+        } finally {
+          if (_runActiveNodeId == node.id) {
+            _runActiveNodeId = null;
+          }
         }
       }
     }
@@ -2652,6 +3141,274 @@ class CanvasLogic {
     _clearPendingConnection();
   }
 
+  Future<String> persistViewerEdits({
+    required String viewerNodeId,
+    required Dataset dataset,
+    List<Map<String, dynamic>>? markerEdits,
+    Map<String, dynamic>? channelEditConfig,
+    Map<String, dynamic>? interactiveArtifactParams,
+    bool runAfterSave = false,
+  }) async {
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode == null) {
+      return 'The visualized node is no longer available.';
+    }
+    final NodeModel? sourceNode = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (sourceNode == null) {
+      return 'Could not resolve the source branch for this visualizer.';
+    }
+
+    final bool hasMarkerEdits = markerEdits != null;
+    final bool hasChannelEdits = channelEditConfig != null &&
+        EditChannelsNodeType.hasMeaningfulChanges(channelEditConfig);
+    final bool hasInteractiveEdits = interactiveArtifactParams != null;
+    if (!hasMarkerEdits && !hasChannelEdits && !hasInteractiveEdits) {
+      return 'No unsaved viewer edits were found.';
+    }
+
+    _recordUndo(
+      'save viewer edits',
+      datasetArtifactIds: <String>{dataset.id},
+    );
+
+    final NodeModel? insertBeforeNode =
+        viewerNode.type is VisualizationNodeType ? viewerNode : null;
+    NodeModel anchorNode = sourceNode;
+    NodeModel? lastCreatedNode;
+    final List<String> createdNodeTitles = <String>[];
+    final List<Map<String, dynamic>>? markerEditsValue = markerEdits;
+    final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
+    final Map<String, dynamic>? interactiveArtifactParamsValue =
+        interactiveArtifactParams;
+
+    if (!hasInteractiveEdits && hasChannelEdits && hasMarkerEdits) {
+      lastCreatedNode = _spawnViewerEditNode(
+        sourceNode: anchorNode,
+        insertBeforeNode: insertBeforeNode,
+        type: EditChannelsAndMarkersNodeType(),
+        datasetId: dataset.id,
+        params: <String, dynamic>{
+          'markers': markerEditsValue,
+          'applyEmptyMarkerSet': true,
+          'channelEditsByDataset': <String, dynamic>{
+            dataset.id: channelEditConfigValue,
+          },
+        },
+      );
+      anchorNode = lastCreatedNode;
+      createdNodeTitles.add(lastCreatedNode.title);
+    } else {
+      if (hasChannelEdits) {
+        lastCreatedNode = _spawnViewerEditNode(
+          sourceNode: anchorNode,
+          insertBeforeNode: insertBeforeNode,
+          type: EditChannelsNodeType(),
+          datasetId: dataset.id,
+          params: <String, dynamic>{
+            'channelEditsByDataset': <String, dynamic>{
+              dataset.id: channelEditConfigValue,
+            },
+          },
+        );
+        anchorNode = lastCreatedNode;
+        createdNodeTitles.add(lastCreatedNode.title);
+      }
+      if (hasInteractiveEdits) {
+        lastCreatedNode = _spawnViewerEditNode(
+          sourceNode: anchorNode,
+          insertBeforeNode: insertBeforeNode,
+          type: InteractiveArtifactDetectionNodeType(),
+          datasetId: dataset.id,
+          params: Map<String, dynamic>.from(interactiveArtifactParamsValue!),
+        );
+        anchorNode = lastCreatedNode;
+        createdNodeTitles.add(lastCreatedNode.title);
+      }
+      if (hasMarkerEdits) {
+        lastCreatedNode = _spawnViewerEditNode(
+          sourceNode: anchorNode,
+          insertBeforeNode: insertBeforeNode,
+          type: AddRemoveMarkersNodeType(),
+          datasetId: dataset.id,
+          params: <String, dynamic>{
+            'markers': markerEditsValue,
+            'applyEmptyMarkerSet': true,
+          },
+        );
+        anchorNode = lastCreatedNode;
+        createdNodeTitles.add(lastCreatedNode.title);
+      }
+    }
+
+    if (lastCreatedNode == null) {
+      return 'No viewer edits were persisted.';
+    }
+
+    if (insertBeforeNode != null) {
+      _seedNodeDatasetStates(insertBeforeNode);
+    }
+    // Keep the current visualizer anchored to the node the user opened,
+    // even when saving spawns one or more downstream edit nodes.
+    selectedNodeId = viewerNode.id;
+    selectedNodeIds
+      ..clear()
+      ..add(viewerNode.id);
+    selectedConnectionIndex = null;
+    _clearPendingConnection();
+
+    if (!runAfterSave) {
+      return _viewerEditSaveMessage(
+        createdNodeTitles: createdNodeTitles,
+        ranNodes: false,
+      );
+    }
+
+    bool succeeded = false;
+    String? finalDetail;
+    try {
+      await prepareRunUi('Running ${lastCreatedNode.title}');
+      await runFromStart(lastCreatedNode.id, datasetIds: <String>{dataset.id});
+      succeeded = true;
+      finalDetail = _viewerEditSaveMessage(
+        createdNodeTitles: createdNodeTitles,
+        ranNodes: true,
+      );
+      finalDetail = _decorateRunDetailWithSkips(finalDetail);
+      return finalDetail;
+    } catch (error) {
+      finalDetail = 'Save and run failed: $error';
+      rethrow;
+    } finally {
+      finishRunUi(
+        succeeded: succeeded,
+        detail: finalDetail,
+      );
+    }
+  }
+
+  String _viewerEditSaveMessage({
+    required List<String> createdNodeTitles,
+    required bool ranNodes,
+  }) {
+    final String createdSummary = createdNodeTitles.length == 1
+        ? createdNodeTitles.first
+        : createdNodeTitles.join(' -> ');
+    return ranNodes
+        ? 'Created and ran $createdSummary.'
+        : 'Created $createdSummary.';
+  }
+
+  NodeModel? _viewerEditSourceNodeForDataset(String viewerNodeId, Dataset dataset) {
+    final String? sourceKey = dataset.ram['viewer.sourceKey']?.toString();
+    if (sourceKey != null && sourceKey.contains('|')) {
+      final String sourceNodeId = sourceKey.split('|').first;
+      final NodeModel? sourceNode = _findNode(sourceNodeId);
+      if (sourceNode != null) {
+        return sourceNode;
+      }
+    }
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode == null) {
+      return null;
+    }
+    if (viewerNode.type is VisualizationNodeType) {
+      final List<NodeModel> parents = _immediateParents(viewerNode.id)
+          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
+          .toList(growable: false);
+      if (parents.isNotEmpty) {
+        return parents.first;
+      }
+      return null;
+    }
+    return viewerNode;
+  }
+
+  NodeModel _spawnViewerEditNode({
+    required NodeModel sourceNode,
+    required NodeType type,
+    required String datasetId,
+    required Map<String, dynamic> params,
+    NodeModel? insertBeforeNode,
+  }) {
+    final NodeModel node = _buildNode(
+      type: type,
+      position: _viewerEditSpawnPosition(
+        sourceNode: sourceNode,
+        insertBeforeNode: insertBeforeNode,
+      ),
+      params: <String, dynamic>{
+        ...type.defaultParams,
+        ...params,
+        'selectedDatasetIds': <String>[datasetId],
+      },
+    );
+    nodes.add(node);
+
+    if (insertBeforeNode != null) {
+      connections.removeWhere(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == sourceNode.id &&
+            connection['toNode'] == insertBeforeNode.id,
+      );
+    }
+
+    final _PortConnection? fromConnection =
+        _firstMatchingPortConnection(sourceNode, node);
+    if (fromConnection != null) {
+      connections.add(<String, dynamic>{
+        'fromNode': sourceNode.id,
+        'fromPort': fromConnection.fromPortIndex,
+        'toNode': node.id,
+        'toPort': fromConnection.toPortIndex,
+      });
+    }
+
+    if (insertBeforeNode != null) {
+      final _PortConnection? toConnection =
+          _firstMatchingPortConnection(node, insertBeforeNode);
+      if (toConnection != null) {
+        connections.add(<String, dynamic>{
+          'fromNode': node.id,
+          'fromPort': toConnection.fromPortIndex,
+          'toNode': insertBeforeNode.id,
+          'toPort': toConnection.toPortIndex,
+        });
+      }
+    }
+
+    _seedNodeDatasetStates(node);
+
+    return node;
+  }
+
+  Offset _viewerEditSpawnPosition({
+    required NodeModel sourceNode,
+    required NodeModel? insertBeforeNode,
+  }) {
+    final Offset desired = insertBeforeNode == null
+        ? Offset(
+            sourceNode.position.dx,
+            sourceNode.position.dy + _cardHeight + _spawnGap,
+          )
+        : Offset(
+            (sourceNode.position.dx + insertBeforeNode.position.dx) / 2,
+            (sourceNode.position.dy + insertBeforeNode.position.dy) / 2,
+          );
+    return _nearestAvailablePosition(desired);
+  }
+
+  void _seedNodeDatasetStates(NodeModel node) {
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
+    for (final Dataset dataset in datasets.values) {
+      node.datasetStates[dataset.id] = availableDatasetIds.contains(dataset.id)
+          ? DatasetState.ready
+          : DatasetState.notReady;
+    }
+  }
+
   void _cacheVisualizationEditOutput(
     NodeModel node,
     Dataset dataset, {
@@ -2974,16 +3731,123 @@ class CanvasLogic {
     required NodeModel node,
     required VoidCallback update,
   }) async {
+    bool succeeded = false;
+    String? finalDetail;
     try {
       await prepareRunUi(runLabel);
       await action();
+      succeeded = true;
       update();
-      return _lastRunDatasetCount == 0
+      finalDetail = _lastRunDatasetCount == 0
           ? 'No datasets matched ${node.title}.'
           : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
+      finalDetail = _decorateRunDetailWithSkips(finalDetail);
+      return finalDetail;
+    } catch (error) {
+      finalDetail = 'Run failed: $error';
+      rethrow;
     } finally {
-      finishRunUi();
+      finishRunUi(
+        succeeded: succeeded,
+        detail: finalDetail,
+      );
     }
+  }
+
+  Future<List<_MemoryRowSummary>> _memoryRows() async {
+    final List<_MemoryRowSummary> rows = <_MemoryRowSummary>[];
+    for (final NodeModel node in nodes) {
+      for (final Dataset dataset in datasets.values) {
+        final bool inRam = _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
+        bool onDisk = _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
+        final DatasetState state =
+            node.datasetStates[dataset.id] ?? DatasetState.notReady;
+        final bool hasRun =
+            state == DatasetState.done || state == DatasetState.stale;
+        if (!inRam && !onDisk && !hasRun) {
+          continue;
+        }
+        if (!onDisk && supportsNodeSnapshotDiskStore) {
+          onDisk = await hasNodeSnapshotOnDisk(
+            nodeId: node.id,
+            datasetId: dataset.id,
+          );
+          if (onDisk) {
+            _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+          }
+        }
+        final DatasetArtifactSnapshot? snapshot = _nodeRamSnapshots[node.id]?[dataset.id];
+        rows.add(
+          _MemoryRowSummary(
+            nodeId: node.id,
+            nodeDescriptor: _nodeDescriptor(node),
+            nodeTitle: node.title,
+            datasetId: dataset.id,
+            datasetLabel: dataset.label,
+            processingLabel: _statusLabel(node) ?? 'Not ready',
+            inRam: inRam,
+            onDisk: onDisk,
+            precisionLabel: _memoryPrecisionLabel(
+              node: node,
+              dataset: dataset,
+              snapshot: snapshot,
+            ),
+          ),
+        );
+      }
+    }
+    rows.sort((_MemoryRowSummary a, _MemoryRowSummary b) {
+      final int nodeCompare = a.nodeDescriptor.compareTo(b.nodeDescriptor);
+      if (nodeCompare != 0) {
+        return nodeCompare;
+      }
+      return a.datasetLabel.compareTo(b.datasetLabel);
+    });
+    return rows;
+  }
+
+  String _memoryPrecisionLabel({
+    required NodeModel node,
+    required Dataset dataset,
+    required DatasetArtifactSnapshot? snapshot,
+  }) {
+    final Set<BrainStoryArtifactKind> kinds = snapshot == null
+        ? _artifactKindsForNodeOutputs(node, dataset)
+        : _artifactKindsForSnapshotOutputs(node, snapshot);
+    final bool hasNumeric = kinds.any((BrainStoryArtifactKind kind) {
+      switch (kind) {
+        case BrainStoryArtifactKind.timeSeries:
+        case BrainStoryArtifactKind.segmentedTimeSeries:
+        case BrainStoryArtifactKind.spectrum:
+        case BrainStoryArtifactKind.fooofResult:
+        case BrainStoryArtifactKind.bridgeDetection:
+        case BrainStoryArtifactKind.timeFrequency:
+        case BrainStoryArtifactKind.matrixTransformation:
+        case BrainStoryArtifactKind.channelCoordinates:
+          return true;
+        case BrainStoryArtifactKind.markers:
+        case BrainStoryArtifactKind.markerChange:
+        case BrainStoryArtifactKind.featureTable:
+          return false;
+        default:
+          return false;
+      }
+    });
+    final bool hasMarkers = kinds.contains(BrainStoryArtifactKind.markers);
+    final bool hasTable = kinds.contains(BrainStoryArtifactKind.featureTable);
+    if (hasNumeric && (hasMarkers || hasTable)) {
+      return '64-bit float + metadata';
+    }
+    if (hasNumeric) {
+      return '64-bit float';
+    }
+    if (hasTable) {
+      return 'Text table';
+    }
+    if (hasMarkers) {
+      return 'Marker metadata';
+    }
+    return 'Pending';
   }
 
   Future<bool> _nodeHasLoadableDiskCache({
@@ -3497,10 +4361,17 @@ class CanvasLogic {
   }
 
   NodeType? _nodeTypeByTitle(String title) {
+    final String normalizedTitle = switch (title) {
+      'Add/Remove Markers' => 'Edit Markers',
+      _ => title,
+    };
     for (final NodeType type in availableNodes) {
-      if (type.title == title) {
+      if (type.title == normalizedTitle) {
         return type;
       }
+    }
+    if (normalizedTitle == 'Channel Coordinates') {
+      return ChannelCoordinatesNodeType();
     }
     return null;
   }
@@ -3542,11 +4413,19 @@ class CanvasLogic {
   }
 
   String? _statusLabel(NodeModel node) {
+    if (_runActiveNodeId == node.id) {
+      return 'Running';
+    }
+    if (_runWaitingNodeIds.contains(node.id)) {
+      return 'Waiting';
+    }
     switch (node.visualState) {
       case DatasetState.notReady:
         return null;
       case DatasetState.ready:
         return 'Ready';
+      case DatasetState.partial:
+        return 'Partial';
       case DatasetState.done:
         return 'Done';
       case DatasetState.stale:
@@ -3798,7 +4677,11 @@ class CanvasLogic {
         targetPosition,
         movingNodeId: draggedNode.id,
       );
-      if (nextPosition != draggedNode.position) {
+      final bool inserted = _insertNodeIntoConnectionIfPossible(
+        draggedNode,
+        nextPosition,
+      );
+      if (!inserted && nextPosition != draggedNode.position) {
         _recordUndo('move node');
         draggedNode.position = nextPosition;
       }
@@ -3839,6 +4722,301 @@ class CanvasLogic {
       }
     }
     selectedNodeId = draggedNode.id;
+  }
+
+  Future<void> showMemoryManagerDialog(
+    BuildContext context, {
+    required VoidCallback update,
+  }) async {
+    Future<List<_MemoryRowSummary>> loadRows() => _memoryRows();
+
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        Future<List<_MemoryRowSummary>> rowsFuture = loadRows();
+
+        Future<void> refresh(StateSetter setDialogState) async {
+          setDialogState(() {
+            rowsFuture = loadRows();
+          });
+          update();
+        }
+
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setDialogState) {
+            return AlertDialog(
+              backgroundColor: Colors.grey.shade900,
+              title: const Text(
+                'Memory',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SizedBox(
+                width: 980,
+                height: 560,
+                child: FutureBuilder<List<_MemoryRowSummary>>(
+                  future: rowsFuture,
+                  builder: (
+                    BuildContext context,
+                    AsyncSnapshot<List<_MemoryRowSummary>> snapshot,
+                  ) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(
+                        child: CircularProgressIndicator(),
+                      );
+                    }
+                    final List<_MemoryRowSummary> rows =
+                        snapshot.data ?? const <_MemoryRowSummary>[];
+                    if (rows.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No node outputs are available yet.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      );
+                    }
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text(
+                          'See what each node is holding in RAM or on disk, and move cached outputs around without opening each node one-by-one.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                        const SizedBox(height: 14),
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: rows.length,
+                            separatorBuilder: (_, __) => Divider(
+                              height: 18,
+                              color: Colors.white.withValues(alpha: 0.10),
+                            ),
+                            itemBuilder: (BuildContext context, int index) {
+                              final _MemoryRowSummary row = rows[index];
+                              return _MemoryRowWidget(
+                                row: row,
+                                supportsDisk: supportsNodeSnapshotDiskStore,
+                                onLoadFromDisk: row.onDisk
+                                    ? () async {
+                                        final NodeModel? node = _findNode(row.nodeId);
+                                        if (node == null) return;
+                                        final String message =
+                                            await _loadNodeSnapshotsToRam(
+                                          node: node,
+                                          datasetIds: <String>{row.datasetId},
+                                          update: update,
+                                        );
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text(message)),
+                                          );
+                                        }
+                                        await refresh(setDialogState);
+                                      }
+                                    : null,
+                                onReleaseRam: row.inRam
+                                    ? () async {
+                                        final NodeModel? node = _findNode(row.nodeId);
+                                        if (node == null) return;
+                                        final String message =
+                                            await _releaseNodeSnapshotsFromRam(
+                                          node: node,
+                                          datasetIds: <String>{row.datasetId},
+                                          update: update,
+                                        );
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text(message)),
+                                          );
+                                        }
+                                        await refresh(setDialogState);
+                                      }
+                                    : null,
+                                onSaveToDisk: supportsNodeSnapshotDiskStore && row.inRam
+                                    ? () async {
+                                        final NodeModel? node = _findNode(row.nodeId);
+                                        if (node == null) return;
+                                        final String message =
+                                            await _saveNodeSnapshotsToDisk(
+                                          node: node,
+                                          datasetIds: <String>{row.datasetId},
+                                          update: update,
+                                        );
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text(message)),
+                                          );
+                                        }
+                                        await refresh(setDialogState);
+                                      }
+                                    : null,
+                                onPurgeDisk: supportsNodeSnapshotDiskStore && row.onDisk
+                                    ? () async {
+                                        final NodeModel? node = _findNode(row.nodeId);
+                                        if (node == null) return;
+                                        final String message =
+                                            await _deleteNodeSnapshotsFromDisk(
+                                          node: node,
+                                          datasetIds: <String>{row.datasetId},
+                                          update: update,
+                                        );
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text(message)),
+                                          );
+                                        }
+                                        await refresh(setDialogState);
+                                      }
+                                    : null,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  bool _insertNodeIntoConnectionIfPossible(
+    NodeModel draggedNode,
+    Offset nextPosition,
+  ) {
+    final Rect nodeRect = Rect.fromLTWH(
+      nextPosition.dx,
+      nextPosition.dy,
+      _cardWidth,
+      _cardHeight,
+    );
+    final int? connectionIndex = _connectionIndexIntersectingRect(nodeRect);
+    if (connectionIndex == null ||
+        connectionIndex < 0 ||
+        connectionIndex >= connections.length) {
+      return false;
+    }
+
+    final Map<String, dynamic> connection =
+        Map<String, dynamic>.from(connections[connectionIndex]);
+    final String? fromNodeId = connection['fromNode']?.toString();
+    final String? toNodeId = connection['toNode']?.toString();
+    if (fromNodeId == null || toNodeId == null) {
+      return false;
+    }
+    final NodeModel? fromNode = _findNode(fromNodeId);
+    final NodeModel? toNode = _findNode(toNodeId);
+    if (fromNode == null ||
+        toNode == null ||
+        fromNode.id == draggedNode.id ||
+        toNode.id == draggedNode.id) {
+      return false;
+    }
+
+    final _PortConnection? upstream =
+        _firstMatchingPortConnection(fromNode, draggedNode);
+    final _PortConnection? downstream =
+        _firstMatchingPortConnection(draggedNode, toNode);
+    if (upstream == null ||
+        downstream == null) {
+      return false;
+    }
+
+    _recordUndo('insert node');
+    draggedNode.position = nextPosition;
+    connections.removeAt(connectionIndex);
+    connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': fromNode.id,
+        'fromPort': upstream.fromPortIndex,
+        'toNode': draggedNode.id,
+        'toPort': upstream.toPortIndex,
+      },
+      <String, dynamic>{
+        'fromNode': draggedNode.id,
+        'fromPort': downstream.fromPortIndex,
+        'toNode': toNode.id,
+        'toPort': downstream.toPortIndex,
+      },
+    ]);
+
+    for (final Dataset dataset in datasets.values) {
+      _refreshDatasetAvailability(dataset.id);
+      if (toNode.datasetStates[dataset.id] == DatasetState.done) {
+        toNode.datasetStates[dataset.id] = DatasetState.stale;
+      }
+    }
+    return true;
+  }
+
+  int? _connectionIndexIntersectingRect(Rect rect) {
+    final List<Offset> probePoints = <Offset>[
+      rect.center,
+      rect.topCenter,
+      rect.bottomCenter,
+      rect.centerLeft,
+      rect.centerRight,
+    ];
+    for (final Offset point in probePoints) {
+      final int? index = _connectionIndexAt(point);
+      if (index != null) {
+        return index;
+      }
+    }
+    const double corridorPadding = 20.0;
+    final Offset center = rect.center;
+    int? bestIndex;
+    double? bestDistance;
+    for (int index = connections.length - 1; index >= 0; index--) {
+      final Map<String, dynamic> connection = connections[index];
+      final NodeModel? fromNode = _findNode(connection['fromNode'] as String);
+      final NodeModel? toNode = _findNode(connection['toNode'] as String);
+      if (fromNode == null || toNode == null) {
+        continue;
+      }
+      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
+      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
+      final Offset end = _inputAnchor(fromNode, toNode);
+      final Rect corridor = Rect.fromLTRB(
+        math.min(start.dx, end.dx) - corridorPadding,
+        math.min(start.dy, end.dy) - corridorPadding,
+        math.max(start.dx, end.dx) + corridorPadding,
+        math.max(start.dy, end.dy) + corridorPadding,
+      );
+      if (!corridor.overlaps(rect)) {
+        continue;
+      }
+      final bool preferVertical = (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
+      final List<Offset> points = buildConnectionPolyline(
+        start: start,
+        end: end,
+        preferVertical: preferVertical,
+        gridWidth: _gridWidth,
+        gridHeight: _gridHeight,
+        obstacles: _connectionObstacles(fromNode, toNode),
+      );
+      double distance = double.infinity;
+      for (int pointIndex = 1; pointIndex < points.length; pointIndex++) {
+        distance = math.min(
+          distance,
+          _distanceToSegment(center, points[pointIndex - 1], points[pointIndex]),
+        );
+      }
+      if (bestDistance == null || distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
   }
 
   bool _groupMoveOverlapsAnyNode(
@@ -3899,7 +5077,74 @@ class CanvasLogic {
   }
 
   String _nodeDescriptor(NodeModel node) {
-    return '#${nodes.indexOf(node) + 1} ${node.title}';
+    return '#${nodes.indexOf(node) + 1}${_branchLabelForNode(node.id)} ${node.title}';
+  }
+
+  String descriptorForNode(NodeModel node) => _nodeDescriptor(node);
+
+  String _branchLabelForNode(String nodeId) {
+    return _branchLabelsByNodeId()[nodeId] ?? 'A';
+  }
+
+  Map<String, String> _branchLabelsByNodeId() {
+    final Map<String, String> labels = <String, String>{
+      for (final NodeModel node in nodes) node.id: 'A',
+    };
+    final List<NodeModel> orderedNodes =
+        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
+
+    for (final NodeModel mergeNode in orderedNodes) {
+      final List<NodeModel> parents = _immediateParents(mergeNode.id);
+      if (parents.length < 2) {
+        continue;
+      }
+
+      final List<NodeModel> orderedParents = List<NodeModel>.from(parents)
+        ..sort((NodeModel a, NodeModel b) {
+          final int xCompare = a.position.dx.compareTo(b.position.dx);
+          if (xCompare != 0) {
+            return xCompare;
+          }
+          return nodes.indexOf(a).compareTo(nodes.indexOf(b));
+        });
+      final Map<String, Set<String>> ancestorSets = <String, Set<String>>{
+        for (final NodeModel parent in orderedParents)
+          parent.id: _collectAncestorsInclusive(parent.id),
+      };
+      Set<String>? commonAncestors;
+      for (final Set<String> ancestorSet in ancestorSets.values) {
+        commonAncestors = commonAncestors == null
+            ? Set<String>.from(ancestorSet)
+            : commonAncestors.intersection(ancestorSet);
+      }
+      final Set<String> shared = commonAncestors ?? const <String>{};
+
+      for (int index = 0; index < orderedParents.length; index++) {
+        final NodeModel parent = orderedParents[index];
+        final String letter = _branchLetter(index);
+        final Set<String> uniqueNodes = Set<String>.from(
+          ancestorSets[parent.id] ?? const <String>{},
+        )..removeAll(shared);
+        for (final String uniqueNodeId in uniqueNodes) {
+          labels[uniqueNodeId] = letter;
+        }
+      }
+    }
+
+    return labels;
+  }
+
+  String _branchLetter(int index) {
+    if (index < 0) {
+      return 'A';
+    }
+    String value = '';
+    int current = index;
+    do {
+      value = String.fromCharCode(65 + (current % 26)) + value;
+      current = (current ~/ 26) - 1;
+    } while (current >= 0);
+    return value;
   }
 
   int? _matchingInputPortForOutputPort(

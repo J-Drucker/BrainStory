@@ -2,9 +2,8 @@ import 'node_type.dart';
 
 import 'import_node.dart';
 import 'bridge_detector_node.dart';
-import 'channel_exclusion_node.dart';
-import 'channel_coordinates_node.dart';
 import 'edit_channels_node.dart';
+import 'edit_channels_and_markers_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
 import 'impedances_node.dart';
@@ -80,8 +79,6 @@ class NodeRegistry {
   static final List<NodeRegistryEntry> entries = [
     // Input
     NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
-    NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelCoordinatesNodeType()),
-    NodeRegistryEntry(group: NodeGroup.import, create: () => ChannelExclusionNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => EditChannelsNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => BridgeDetectorNodeType()),
     NodeRegistryEntry(group: NodeGroup.import, create: () => ResampleNodeType()),
@@ -132,6 +129,10 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
       create: () => AddRemoveMarkersNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.markerFunctions,
+      create: () => EditChannelsAndMarkersNodeType(),
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,

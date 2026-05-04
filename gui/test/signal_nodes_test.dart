@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -7,11 +8,12 @@ import 'package:brainstory_gui/model/dataset.dart';
 import 'package:brainstory_gui/model/dataset_artifact_snapshot.dart';
 import 'package:brainstory_gui/model/dataset_state.dart';
 import 'package:brainstory_gui/model/node.dart';
+import 'package:brainstory_gui/nodes/add_remove_markers_node.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
 import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_coordinates_node.dart';
-import 'package:brainstory_gui/nodes/channel_exclusion_node.dart';
 import 'package:brainstory_gui/nodes/edit_channels_node.dart';
+import 'package:brainstory_gui/nodes/edit_channels_and_markers_node.dart';
 import 'package:brainstory_gui/nodes/amplitude_features_node.dart';
 import 'package:brainstory_gui/nodes/export_edf_node.dart';
 import 'package:brainstory_gui/nodes/eye_blinks_node.dart';
@@ -27,8 +29,11 @@ import 'package:brainstory_gui/nodes/resample_node.dart';
 import 'package:brainstory_gui/nodes/segmentation_node.dart';
 import 'package:brainstory_gui/nodes/sleep_staging_node.dart';
 import 'package:brainstory_gui/nodes/spectral_features_node.dart';
+import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/platform/ant_cnt_import.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
+import 'package:brainstory_gui/ui/visualization_panel.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -43,6 +48,243 @@ void main() {
     expect(logic.canUndo, isTrue);
     expect(logic.undoLast(), 'add Import');
     expect(logic.nodes, isEmpty);
+  });
+
+  test('run UI records recent jobs when a run finishes', () {
+    final CanvasLogic logic = CanvasLogic();
+
+    logic.runActivity.value = const RunActivity(
+      label: 'Running Import',
+      detail: 'Preparing run state...',
+    );
+    logic.finishRunUi(
+      succeeded: true,
+      detail: 'Ran Import for 1 dataset(s).',
+    );
+
+    expect(logic.runActivity.value, isNull);
+    expect(logic.recentRunJobs.value, hasLength(1));
+    expect(logic.recentRunJobs.value.first.label, 'Running Import');
+    expect(logic.recentRunJobs.value.first.detail, 'Ran Import for 1 dataset(s).');
+    expect(logic.recentRunJobs.value.first.state, RunJobState.done);
+  });
+
+  test('removeDataset removes project dataset state and cached references', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset keep = Dataset('keep', label: 'Keep');
+    final Dataset drop = Dataset('drop', label: 'Drop');
+    logic.datasets['keep-path'] = keep;
+    logic.datasets['drop-path'] = drop;
+
+    logic.addNode(ImportNodeType());
+    final NodeModel importNode = logic.nodes.single;
+    importNode.params['selectedDatasetIds'] = <String>[keep.id, drop.id];
+    importNode.params['datasetAliases'] = <String, dynamic>{
+      keep.id: 'Keep alias',
+      drop.id: 'Drop alias',
+    };
+    importNode.datasetStates[keep.id] = DatasetState.ready;
+    importNode.datasetStates[drop.id] = DatasetState.done;
+
+    await logic.removeDataset(drop.id);
+
+    expect(logic.datasets.values.map((Dataset dataset) => dataset.id), <String>[keep.id]);
+    expect(importNode.datasetStates.containsKey(drop.id), isFalse);
+    expect(importNode.params['selectedDatasetIds'], <String>[keep.id]);
+    expect(
+      (importNode.params['datasetAliases'] as Map<String, dynamic>).containsKey(drop.id),
+      isFalse,
+    );
+  });
+
+  test('node visual state becomes partial when some available datasets are done', () {
+    final NodeModel node = NodeModel(
+      id: 'node-1',
+      type: ImportNodeType(),
+      position: const Offset(0, 0),
+      params: <String, dynamic>{},
+    );
+
+    node.datasetStates['dataset-a'] = DatasetState.done;
+    node.datasetStates['dataset-b'] = DatasetState.ready;
+    node.datasetStates['dataset-c'] = DatasetState.notReady;
+
+    expect(node.visualState, DatasetState.partial);
+
+    node.datasetStates['dataset-b'] = DatasetState.done;
+    expect(node.visualState, DatasetState.done);
+  });
+
+  test('node descriptors assign branch letters only within split-rejoin regions', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(PSDNodeType());
+    logic.addNode(VisualizationNodeType());
+
+    final NodeModel importNode = logic.nodes[0]
+      ..position = const Offset(0, 0);
+    final NodeModel leftBranchNode = logic.nodes[1]
+      ..position = const Offset(-120, 140);
+    final NodeModel rightBranchNode = logic.nodes[2]
+      ..position = const Offset(120, 140);
+    final NodeModel mergeNode = logic.nodes[3]
+      ..position = const Offset(0, 280);
+
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': leftBranchNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': rightBranchNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': leftBranchNode.id,
+        'fromPort': 0,
+        'toNode': mergeNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': rightBranchNode.id,
+        'fromPort': 0,
+        'toNode': mergeNode.id,
+        'toPort': 0,
+      },
+    ]);
+
+    expect(logic.descriptorForNode(importNode), '#1A Import');
+    expect(logic.descriptorForNode(leftBranchNode), '#2A Bandpass Filter');
+    expect(logic.descriptorForNode(rightBranchNode), '#3B PSD');
+    expect(logic.descriptorForNode(mergeNode), '#4A EEG Visualization');
+  });
+
+  test('visualization source refs keep same dataset distinct across pathways', () async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(VisualizationNodeType());
+
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel bandpassNode = logic.nodes[1];
+    final NodeModel visualizationNode = logic.nodes[2];
+
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': bandpassNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': visualizationNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': bandpassNode.id,
+        'fromPort': 0,
+        'toNode': visualizationNode.id,
+        'toPort': 0,
+      },
+    ]);
+
+    final Dataset dataset = Dataset('dataset-1', label: 'PVT.set');
+    dataset.timeSeries = TimeSeriesData(
+      samples: const <double>[0.0, 1.0, 0.5, -0.5],
+      sampleRate: 1000.0,
+      source: 'synthetic_signal',
+    );
+    logic.datasets[dataset.label] = dataset;
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+    bandpassNode.datasetStates[dataset.id] = DatasetState.done;
+
+    final List<VisualizationSourceRef> refs =
+        logic.visualizationSourceRefsForNode(visualizationNode.id);
+    expect(refs, hasLength(2));
+    expect(refs.map((VisualizationSourceRef ref) => ref.datasetId).toSet(),
+        <String>{dataset.id});
+    expect(
+      refs.map((VisualizationSourceRef ref) => ref.materializeFromNodeId).toSet(),
+      <String>{importNode.id, bandpassNode.id},
+    );
+    expect(
+      refs.map((VisualizationSourceRef ref) => ref.sourceDescriptor).toSet().length,
+      2,
+    );
+
+    final List<Dataset> views =
+        await logic.materializedDatasetViewsForSourceRefs(refs);
+    expect(views, hasLength(2));
+    expect(
+      views.map((Dataset view) => view.ram['viewer.sourceKey']).toSet().length,
+      2,
+    );
+    expect(
+      views.every((Dataset view) => view.label.contains('[') && view.label.contains(']')),
+      isTrue,
+    );
+    expect(views.every((Dataset view) => view.timeSeries != null), isTrue);
+  });
+
+  testWidgets('visualization surface starts with no datasets selected', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(VisualizationNodeType());
+
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel visualizationNode = logic.nodes[1];
+    logic.connections.add(
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': visualizationNode.id,
+        'toPort': 0,
+      },
+    );
+
+    final Dataset dataset = Dataset('dataset-1', label: 'PVT.set');
+    dataset.timeSeries = TimeSeriesData(
+      samples: const <double>[0.0, 1.0, 0.5, -0.5],
+      sampleRate: 1000.0,
+      source: 'synthetic_signal',
+    );
+    logic.datasets[dataset.label] = dataset;
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+
+    final VisualizationSourceRef sourceRef =
+        logic.visualizationSourceRefsForNode(visualizationNode.id).single;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VisualizationSurface(
+            logic: logic,
+            nodeId: visualizationNode.id,
+            onChanged: null,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('No dataset selected'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilterChip>(
+            find.widgetWithText(FilterChip, sourceRef.displayLabel),
+          )
+          .selected,
+      isFalse,
+    );
   });
 
   test('artifact identity and change sets serialize cleanly', () {
@@ -312,7 +554,7 @@ void main() {
     expect(siblingView.timeSeries, isNotNull);
   });
 
-  test('canvas undo reverses saved marker edits from visualization', () {
+  test('persistViewerEdits spawns a downstream edit markers node', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example');
     dataset.timeSeries = TimeSeriesData(
@@ -323,11 +565,12 @@ void main() {
     logic.datasets['dataset-1'] = dataset;
     logic.addNode(ImportNodeType());
     final String sourceNodeId = logic.nodes.single.id;
+    logic.nodes.single.datasetStates[dataset.id] = DatasetState.done;
 
-    logic.applyMarkersFromVisualization(
-      nodeId: sourceNodeId,
+    final String message = await logic.persistViewerEdits(
+      viewerNodeId: sourceNodeId,
       dataset: dataset,
-      rawMarkers: <Map<String, dynamic>>[
+      markerEdits: <Map<String, dynamic>>[
         <String, dynamic>{
           'datasetId': dataset.id,
           'label': 'blink',
@@ -338,16 +581,28 @@ void main() {
       ],
     );
 
-    expect(dataset.timeSeries?.markers, hasLength(1));
-    expect(logic.nodes.map((NodeModel node) => node.title), contains('Add/Remove Markers'));
-
-    expect(logic.undoLast(), 'save marker edits');
-
+    expect(message, 'Created Edit Markers.');
     expect(dataset.timeSeries?.markers, isEmpty);
-    expect(logic.nodes.map((NodeModel node) => node.title), isNot(contains('Add/Remove Markers')));
+    expect(logic.nodes.map((NodeModel node) => node.title), contains('Edit Markers'));
+    expect(logic.nodes, hasLength(2));
+
+    final NodeModel editNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+    );
+
+    expect(logic.selectedNodeId, sourceNodeId);
+    expect(editNode.datasetStates[dataset.id], DatasetState.ready);
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == sourceNodeId &&
+            connection['toNode'] == editNode.id,
+      ),
+      isTrue,
+    );
   });
 
-  test('visualizer channel drop materializes the generated edit node output', () async {
+  test('persistViewerEdits creates a combined edit node for channel and marker drafts', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example');
     dataset.timeSeries = TimeSeriesData(
@@ -360,34 +615,132 @@ void main() {
     );
     logic.datasets['dataset-1'] = dataset;
     logic.addNode(ImportNodeType());
-    final String sourceNodeId = logic.nodes.single.id;
+    final NodeModel sourceNode = logic.nodes.single;
+    sourceNode.datasetStates[dataset.id] = DatasetState.done;
 
-    logic.applyChannelEditsFromVisualization(
-      nodeId: sourceNodeId,
+    final String message = await logic.persistViewerEdits(
+      viewerNodeId: sourceNode.id,
       dataset: dataset,
-      datasetConfig: <String, dynamic>{
+      markerEdits: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'datasetId': dataset.id,
+          'label': 'blink',
+          'onsetMicros': 1000,
+          'durationMicros': 500,
+          'markerType': MarkerType.artifact,
+        },
+      ],
+      channelEditConfig: <String, dynamic>{
         'edits': <String, dynamic>{
           '1': <String, dynamic>{
             'rename': '',
             'remove': true,
             'removeMode': 'delete',
           },
-        },
+      },
         'newChannels': <Map<String, dynamic>>[],
         'visibleChannelIndices': <int>[1],
       },
     );
 
-    final NodeModel editNode = logic.nodes.firstWhere(
-      (NodeModel node) => node.title == 'Edit Channels',
-    );
-    final Dataset materialized =
-        await logic.materializedDatasetViewForNode(editNode.id, dataset);
+    expect(message, 'Created Edit Channels and Markers.');
+    expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Cz']);
 
-    expect(editNode.title, 'Edit Channels');
-    expect(dataset.timeSeries!.channelLabels, <String>['Fz']);
+    final NodeModel editNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is EditChannelsAndMarkersNodeType,
+    );
+    final Dataset materialized = Dataset(dataset.id, label: 'Materialized')
+      ..timeSeries = TimeSeriesData.fromJson(dataset.timeSeries!.toJson());
+    await editNode.type.run(materialized, editNode.params);
+
     expect(materialized.timeSeries!.channelLabels, <String>['Fz']);
-    expect(materialized.timeSeries!.channelSamples, hasLength(1));
+    expect(materialized.timeSeries!.markers, hasLength(1));
+    expect(materialized.timeSeries!.markers.first.label, 'blink');
+  });
+
+  test('persistViewerEdits rewires a visualization node through the spawned edit node', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example');
+    dataset.timeSeries = TimeSeriesData(
+      samples: <double>[0, 1, 0, -1],
+      sampleRate: 1000,
+      channelLabels: const <String>['Cz'],
+    );
+    logic.datasets['dataset-1'] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(VisualizationNodeType());
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel visualizationNode = logic.nodes[1];
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+    logic.connections.add(
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': visualizationNode.id,
+        'toPort': 0,
+      },
+    );
+
+    final VisualizationSourceRef sourceRef =
+        logic.visualizationSourceRefsForNode(visualizationNode.id).single;
+    final Dataset view =
+        await logic.materializedDatasetViewForSourceRef(sourceRef);
+
+    final String message = await logic.persistViewerEdits(
+      viewerNodeId: visualizationNode.id,
+      dataset: view,
+      markerEdits: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'datasetId': dataset.id,
+          'label': 'blink',
+          'onsetMicros': 1000,
+          'durationMicros': 500,
+          'markerType': MarkerType.artifact,
+        },
+      ],
+    );
+
+    final NodeModel editNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+    );
+    expect(message, 'Created Edit Markers.');
+    expect(logic.selectedNodeId, visualizationNode.id);
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == importNode.id &&
+            connection['toNode'] == editNode.id,
+      ),
+      isTrue,
+    );
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == editNode.id &&
+            connection['toNode'] == visualizationNode.id,
+      ),
+      isTrue,
+    );
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == importNode.id &&
+            connection['toNode'] == visualizationNode.id,
+      ),
+      isFalse,
+    );
+
+    final VisualizationSourceRef rewiredSource =
+        logic.visualizationSourceRefsForNode(visualizationNode.id).single;
+
+    expect(rewiredSource.materializeFromNodeId, editNode.id);
+    expect(
+      AddRemoveMarkersNodeType.markersForDataset(
+        dataset.id,
+        editNode.params['markers'] as List<dynamic>,
+      ).map((TimeMarker marker) => marker.label),
+      <String>['blink'],
+    );
   });
 
   test('channel coordinates parse millimeter table and match decorated labels', () {
@@ -644,6 +997,33 @@ time,Fz,Cz
     );
   });
 
+  test('Edit Channels can assign standard coordinates and average rereference', () async {
+    final Dataset dataset = Dataset('edit-channels-meta', label: 'Edit Meta');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[1, 4],
+        <double>[3, 8],
+      ],
+      sampleRate: 100.0,
+      channelLabels: const <String>['Fpz - AVG', 'Cz'],
+    );
+
+    await EditChannelsNodeType().run(dataset, <String, dynamic>{
+      'channelEditsByDataset': <String, dynamic>{
+        dataset.id: <String, dynamic>{
+          'coordinateImportMode': EditChannelsNodeType.coordinateImportStandard,
+          'rereferenceMode': EditChannelsNodeType.rereferenceAverage,
+        },
+      },
+    });
+
+    expect(dataset.timeSeries!.channelSamples[0], <double>[-1, -2]);
+    expect(dataset.timeSeries!.channelSamples[1], <double>[1, 2]);
+    expect(dataset.timeSeries!.channelCoordinates.keys, contains('Fpz - AVG'));
+    expect(dataset.timeSeries!.channelCoordinates.keys, contains('Cz'));
+    expect(dataset.timeSeries!.channelCoordinates['Fpz - AVG']!.units, 'mm');
+  });
+
   test('loadDatasetSignal imports the sample EDF fixture', () async {
     final ParsedSignalData parsed = await loadDatasetSignal(
       '..\\tests\\Zhao_Alex_2024-09-24_16-47-37_highpass_Segment_0.edf',
@@ -825,6 +1205,107 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(parsed.channelSamples.last.first, closeTo(channelTwo.first, 0.05));
   });
 
+  test('parseEdfBytes extracts EDF+ annotation markers', () {
+    String field(String value, int width) {
+      final String trimmed =
+          value.length > width ? value.substring(0, width) : value;
+      return trimmed.padRight(width);
+    }
+
+    Uint8List buildAnnotatedEdfBytes() {
+      const int numSignals = 2;
+      const int numRecords = 2;
+      const double recordDurationSeconds = 1.0;
+      const int dataSamplesPerRecord = 1;
+      const int annotationSamplesPerRecord = 32;
+      const int headerBytes = 256 + (numSignals * 256);
+
+      final StringBuffer header = StringBuffer()
+        ..write(field('0', 8))
+        ..write(field('BrainStory', 80))
+        ..write(field('BrainStory', 80))
+        ..write(field('01.01.26', 8))
+        ..write(field('01.01.01', 8))
+        ..write(field('$headerBytes', 8))
+        ..write(field('', 44))
+        ..write(field('$numRecords', 8))
+        ..write(field(recordDurationSeconds.toStringAsFixed(1), 8))
+        ..write(field('$numSignals', 4));
+
+      for (final String label in <String>['C3', 'EDF Annotations']) {
+        header.write(field(label, 16));
+      }
+      for (int i = 0; i < numSignals; i++) {
+        header.write(field('', 80));
+      }
+      for (int i = 0; i < numSignals; i++) {
+        header.write(field(i == 0 ? 'uV' : '', 8));
+      }
+      header
+        ..write(field('-100', 8))
+        ..write(field('-1', 8));
+      header
+        ..write(field('100', 8))
+        ..write(field('1', 8));
+      header
+        ..write(field('-32768', 8))
+        ..write(field('-32768', 8));
+      header
+        ..write(field('32767', 8))
+        ..write(field('32767', 8));
+      for (int i = 0; i < numSignals; i++) {
+        header.write(field('', 80));
+      }
+      header
+        ..write(field('$dataSamplesPerRecord', 8))
+        ..write(field('$annotationSamplesPerRecord', 8));
+      for (int i = 0; i < numSignals; i++) {
+        header.write(field('', 32));
+      }
+
+      final BytesBuilder builder = BytesBuilder();
+      builder.add(ascii.encode(header.toString()));
+
+      List<int> annotationRecord(String tal) {
+        final List<int> bytes = ascii.encode(tal);
+        return <int>[
+          ...bytes,
+          ...List<int>.filled(
+            (annotationSamplesPerRecord * 2) - bytes.length,
+            0,
+          ),
+        ];
+      }
+
+      final ByteData signalData = ByteData(numRecords * 2);
+      signalData.setInt16(0, 100, Endian.little);
+      signalData.setInt16(2, 200, Endian.little);
+
+      builder.add(signalData.buffer.asUint8List(0, 2));
+      builder.add(annotationRecord('+0\x14Stim\x14\x00'));
+      builder.add(signalData.buffer.asUint8List(2, 2));
+      builder.add(annotationRecord('+1\x150.5\x14Bad Segment\x14\x00'));
+
+      return builder.toBytes();
+    }
+
+    final ParsedSignalData parsed = parseEdfBytes(
+      buildAnnotatedEdfBytes(),
+      sourceDescription: 'annotated.edf',
+    );
+
+    expect(parsed.channelLabels, <String>['C3']);
+    expect(parsed.channelSamples.single.length, 2);
+    expect(parsed.markers, hasLength(2));
+    expect(parsed.markers.first.label, 'Stim');
+    expect(parsed.markers.first.markerType, MarkerType.event);
+    expect(parsed.markers.first.onsetMicros, 0);
+    expect(parsed.markers.last.label, 'Bad Segment');
+    expect(parsed.markers.last.markerType, MarkerType.artifact);
+    expect(parsed.markers.last.onsetMicros, 1000000);
+    expect(parsed.markers.last.durationMicros, 500000);
+  });
+
   test('resolveEdfExportFile builds a filename next to the source file', () {
     final Dataset dataset = Dataset(
       '1',
@@ -936,6 +1417,15 @@ Mk2=Artifact,Bad Segment,11,5,0
       segment.anchorTimeSeconds,
       closeTo(0.5, 0.0001),
     );
+    final Map<String, dynamic> averages = Map<String, dynamic>.from(
+      dataset.ram['segmentation.precomputedConditionAverages'] as Map? ??
+          const <String, dynamic>{},
+    );
+    expect(averages, contains('Pulse'));
+    final Map<String, dynamic> pulseAverage =
+        Map<String, dynamic>.from(averages['Pulse'] as Map);
+    expect(pulseAverage['segmentCount'], 1);
+    expect(pulseAverage['sampleCount'], 200);
   });
 
   test('segmented snapshots materialize source-window samples for persistence', () async {
@@ -1208,6 +1698,39 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
   });
 
+  test('interactive artifact edit backend can compute templates without candidates', () {
+    final List<double> samples = List<double>.filled(512, 0.0);
+    const List<double> blinkShape = <double>[0.0, 1.0, 4.0, 7.0, 4.0, 1.0, 0.0];
+    for (int index = 0; index < blinkShape.length; index++) {
+      samples[100 + index] = blinkShape[index];
+      samples[300 + index] = blinkShape[index];
+    }
+
+    final ArtifactDetectionComputation computation =
+        InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
+      datasetId: 'interactive',
+      timeSeries: TimeSeriesData(
+        samples: samples,
+        sampleRate: 100.0,
+      ),
+      exemplars: const <ArtifactExemplarData>[
+        ArtifactExemplarData(
+          id: 'e1',
+          datasetId: 'interactive',
+          label: 'blink',
+          onsetMicros: 1000000,
+          durationMicros: 70000,
+        ),
+      ],
+      existingCandidates: const <ArtifactCandidateData>[],
+      threshold: 0.75,
+      enableTemplateMatching: false,
+    );
+
+    expect(computation.templates, hasLength(1));
+    expect(computation.candidates, isEmpty);
+  });
+
   test('interactive artifact template preview summarizes multichannel templates', () {
     final ArtifactDetectionComputation computation =
         InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
@@ -1239,6 +1762,39 @@ Mk2=Artifact,Bad Segment,11,5,0
       <double>[0, 4, 0.5, 12.5],
     );
     expect(computation.templates.first.previewChannels, hasLength(2));
+    expect(computation.templates.first.peakTopomapValues, <double>[-0.5, -1.5]);
+  });
+
+  test('interactive artifact topomap snapshot centers channel baselines', () {
+    final ArtifactDetectionComputation computation =
+        InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
+      datasetId: 'interactive',
+      timeSeries: TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[100, 102, 100, 100],
+          <double>[10, 10, 14, 10],
+        ],
+        sampleRate: 100.0,
+        channelLabels: const <String>['Fz', 'Cz'],
+      ),
+      exemplars: const <ArtifactExemplarData>[
+        ArtifactExemplarData(
+          id: 'e1',
+          datasetId: 'interactive',
+          label: 'blink',
+          onsetMicros: 0,
+          durationMicros: 40000,
+        ),
+      ],
+      existingCandidates: const <ArtifactCandidateData>[],
+      threshold: 0.75,
+    );
+
+    expect(computation.templates, hasLength(1));
+    expect(
+      computation.templates.first.peakTopomapValues,
+      <double>[-0.5, 3.0],
+    );
   });
 
   test('interactive artifact detection node merges accepted markers into output', () async {
@@ -1452,32 +2008,6 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
 
     expect(marker.applicableChannels(4), <int>[1, 1, 1, 1]);
-  });
-
-  test('channel exclusion mark bad adds a full-duration artifact marker with channel mask', () async {
-    final Dataset dataset = Dataset('channel-exclusion', label: 'QC');
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: <List<double>>[
-        List<double>.filled(100, 1.0),
-        List<double>.filled(100, 2.0),
-        List<double>.filled(100, 3.0),
-      ],
-      sampleRate: 100.0,
-      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
-    );
-
-    await ChannelExclusionNodeType().run(dataset, <String, dynamic>{
-      'selectedChannels': <String>['Cz'],
-      'action': 'mark_bad',
-    });
-
-    final TimeSeriesData? result = dataset.timeSeries;
-    expect(result, isNotNull);
-    final TimeMarker badChannel = result!.markers.last;
-    expect(badChannel.label, 'bad channel');
-    expect(badChannel.markerType, MarkerType.artifact);
-    expect(badChannel.durationMicros, 1000000);
-    expect(badChannel.channelMask, <int>[0, 1, 0]);
   });
 
   test('marker change serializes add/remove/change rows', () {
