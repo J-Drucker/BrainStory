@@ -21,11 +21,15 @@ class PSDNodeType extends NodeType {
     'fLow': 1.0,
     'fHigh': 40.0,
     'outputMode': 'averaged', // 'segments' or 'averaged'
+    'windowing': 'hamming',
+    'windowLengthSec': 2.0,
+    'windowOverlapPercent': 50,
   };
 
   @override
   List<PortSpec> get inputs => const [
     PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'segments', type: PortType.metadata),
   ];
 
   @override
@@ -35,61 +39,166 @@ class PSDNodeType extends NodeType {
 
   @override
   Widget buildBody(
-      Map<String, dynamic> params, {
-        required Map<String, Dataset> datasets,
-        required void Function(void Function()) setState,
-      }) {
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
     params.putIfAbsent('fLow', () => 1.0);
     params.putIfAbsent('fHigh', () => 40.0);
     params.putIfAbsent('outputMode', () => 'averaged');
+    params.putIfAbsent('windowing', () => 'hamming');
+    params.putIfAbsent('windowLengthSec', () => 2.0);
+    params.putIfAbsent('windowOverlapPercent', () => 50);
+
+    Widget compactRadio({required String label, required String value}) {
+      return RadioListTile<String>(
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+        title: Text(label),
+        value: value,
+      );
+    }
+
+    Widget optionColumn({
+      required String title,
+      required List<Widget> children,
+      double? width,
+    }) {
+      return SizedBox(
+        width: width,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ...children,
+          ],
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('Frequency range (Hz)',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: NodeParamTextField(
-                params: params,
-                paramKey: 'fLow',
-                labelText: 'Lowest',
-                keyboardType: TextInputType.number,
-                parser: (String value, dynamic previous) =>
-                    double.tryParse(value) ?? previous,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: NodeParamTextField(
-                params: params,
-                paramKey: 'fHigh',
-                labelText: 'Highest',
-                keyboardType: TextInputType.number,
-                parser: (String value, dynamic previous) =>
-                    double.tryParse(value) ?? previous,
-              ),
-            ),
-          ],
+      children: <Widget>[
+        const Text(
+          'Frequency Range',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        const SizedBox(height: 20),
-        const Text('Output', style: TextStyle(fontWeight: FontWeight.bold)),
-        NodeParamDropdownField<String>(
-          params: params,
-          paramKey: 'outputMode',
-          labelText: 'Mode',
-          options: const <NodeDropdownOption<String>>[
-            NodeDropdownOption<String>(
-              value: 'segments',
-              label: 'As segments',
-            ),
-            NodeDropdownOption<String>(
-              value: 'averaged',
-              label: 'Averaged',
-            ),
-          ],
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              optionColumn(
+                title: 'Lowest',
+                width: 88,
+                children: <Widget>[
+                  NodeParamTextField(
+                    params: params,
+                    paramKey: 'fLow',
+                    labelText: 'Hz',
+                    keyboardType: TextInputType.number,
+                    parser: (String value, dynamic previous) =>
+                        double.tryParse(value) ?? previous,
+                  ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              optionColumn(
+                title: 'Highest',
+                width: 88,
+                children: <Widget>[
+                  NodeParamTextField(
+                    params: params,
+                    paramKey: 'fHigh',
+                    labelText: 'Hz',
+                    keyboardType: TextInputType.number,
+                    parser: (String value, dynamic previous) =>
+                        double.tryParse(value) ?? previous,
+                  ),
+                ],
+              ),
+              const SizedBox(width: 16),
+              optionColumn(
+                title: 'Output',
+                width: 132,
+                children: <Widget>[
+                  RadioGroup<String>(
+                    groupValue: params['outputMode']?.toString() ?? 'averaged',
+                    onChanged: (String? value) {
+                      if (value == null) return;
+                      setState(() {
+                        params['outputMode'] = value;
+                      });
+                    },
+                    child: Column(
+                      children: <Widget>[
+                        compactRadio(label: 'As segments', value: 'segments'),
+                        compactRadio(label: 'Averaged', value: 'averaged'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 16),
+              optionColumn(
+                title: 'Windowing',
+                width: 126,
+                children: <Widget>[
+                  RadioGroup<String>(
+                    groupValue: params['windowing']?.toString() ?? 'hamming',
+                    onChanged: (String? value) {
+                      if (value == null) return;
+                      setState(() {
+                        params['windowing'] = value;
+                      });
+                    },
+                    child: Column(
+                      children: <Widget>[
+                        compactRadio(label: 'None', value: 'none'),
+                        compactRadio(label: 'Unweighted', value: 'unweighted'),
+                        compactRadio(label: 'Hamming', value: 'hamming'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 16),
+              optionColumn(
+                title: 'Length',
+                width: 112,
+                children: <Widget>[
+                  NodeParamTextField(
+                    params: params,
+                    paramKey: 'windowLengthSec',
+                    labelText: 'sec',
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    parser: (String value, dynamic previous) =>
+                        double.tryParse(value) ?? previous,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Overlap',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  NodeParamTextField(
+                    params: params,
+                    paramKey: 'windowOverlapPercent',
+                    labelText: '%',
+                    keyboardType: TextInputType.number,
+                    parser: (String value, dynamic previous) =>
+                        int.tryParse(value) ?? previous,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -97,34 +206,38 @@ class PSDNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
-    final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries == null) {
-      // No signal loaded yet
-      return;
-    }
-    final List<double> samples = timeSeries.primaryChannel;
-    if (samples.isEmpty) {
+    final SegmentedTimeSeriesData? segmented = dataset.segmentedTimeSeries;
+    if (segmented == null || segmented.segments.isEmpty) {
+      // PSD operates on explicit analysis windows. Run equal-window
+      // segmentation upstream first.
       dataset.spectrum = null;
       return;
     }
-    final double fs = timeSeries.sampleRate;
 
     final fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
     final fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
     final mode = (params['outputMode'] ?? 'averaged').toString();
-    final SpectrumResult spectrum = computeSpectrum(
-      samples,
-      sampleRate: fs,
+    final bool deferAverageToDownstream =
+        params['deferAverageToDownstream'] == true;
+    final bool averageInThisNode =
+        mode != 'segments' && !deferAverageToDownstream;
+    final SpectrumResult spectrum;
+    final String source;
+    spectrum = computeSegmentedSpectrum(
+      segmented,
       fLow: fLow,
       fHigh: fHigh,
-      averageSegments: mode != 'segments',
+      averageWithinSegment: true,
+      averageAcrossSegments: averageInThisNode,
     );
+    source = segmented.source;
 
     dataset.spectrum = FrequencySpectrumData(
       frequencies: spectrum.freqs,
       power: spectrum.power,
+      segmentPowers: spectrum.segmentPowers,
       segmentCount: spectrum.segmentCount,
-      source: timeSeries.source,
+      source: source,
     );
   }
 }
@@ -133,11 +246,13 @@ class SpectrumResult {
   const SpectrumResult({
     required this.freqs,
     required this.power,
+    this.segmentPowers = const <List<double>>[],
     required this.segmentCount,
   });
 
   final List<double> freqs;
   final List<double> power;
+  final List<List<double>> segmentPowers;
   final int segmentCount;
 }
 
@@ -149,7 +264,12 @@ SpectrumResult computeSpectrum(
   required bool averageSegments,
 }) {
   if (samples.isEmpty) {
-    return const SpectrumResult(freqs: <double>[], power: <double>[], segmentCount: 0);
+    return const SpectrumResult(
+      freqs: <double>[],
+      power: <double>[],
+      segmentPowers: <List<double>>[],
+      segmentCount: 0,
+    );
   }
 
   final int segmentLength = _largestPowerOfTwo(
@@ -160,7 +280,11 @@ SpectrumResult computeSpectrum(
   final List<List<double>> spectra = <List<double>>[];
   final List<double> freqs = <double>[];
 
-  for (int start = 0; start + segmentLength <= samples.length; start += hopLength) {
+  for (
+    int start = 0;
+    start + segmentLength <= samples.length;
+    start += hopLength
+  ) {
     final List<double> windowed = _hannWindow(
       samples.sublist(start, start + segmentLength),
     );
@@ -175,10 +299,6 @@ SpectrumResult computeSpectrum(
       freqs.addAll(segmentSpectrum.freqs);
     }
     spectra.add(segmentSpectrum.power);
-
-    if (!averageSegments) {
-      break;
-    }
   }
 
   if (spectra.isEmpty) {
@@ -195,6 +315,7 @@ SpectrumResult computeSpectrum(
     return SpectrumResult(
       freqs: single.freqs,
       power: single.power,
+      segmentPowers: <List<double>>[single.power],
       segmentCount: 1,
     );
   }
@@ -203,7 +324,8 @@ SpectrumResult computeSpectrum(
     return SpectrumResult(
       freqs: freqs,
       power: spectra.first,
-      segmentCount: 1,
+      segmentPowers: spectra,
+      segmentCount: spectra.length,
     );
   }
 
@@ -220,7 +342,87 @@ SpectrumResult computeSpectrum(
   return SpectrumResult(
     freqs: freqs,
     power: averagedPower,
+    segmentPowers: spectra,
     segmentCount: spectra.length,
+  );
+}
+
+SpectrumResult computeSegmentedSpectrum(
+  SegmentedTimeSeriesData segmented, {
+  required double fLow,
+  required double fHigh,
+  required bool averageWithinSegment,
+  bool averageAcrossSegments = true,
+}) {
+  final List<SpectrumResult> spectra = <SpectrumResult>[];
+  for (final SignalSegmentData segment in segmented.segments) {
+    final List<List<double>> channels = segmented.channelSamplesForSegment(
+      segment,
+    );
+    if (channels.isEmpty || channels.first.isEmpty) {
+      continue;
+    }
+    final SpectrumResult spectrum = computeSpectrum(
+      channels.first,
+      sampleRate: segmented.sampleRate,
+      fLow: fLow,
+      fHigh: fHigh,
+      averageSegments: averageWithinSegment,
+    );
+    if (spectrum.freqs.isNotEmpty && spectrum.power.isNotEmpty) {
+      spectra.add(spectrum);
+    }
+  }
+  if (spectra.isEmpty) {
+    return const SpectrumResult(
+      freqs: <double>[],
+      power: <double>[],
+      segmentPowers: <List<double>>[],
+      segmentCount: 0,
+    );
+  }
+  final List<double> freqs = spectra.first.freqs;
+  final int binCount = freqs.length;
+  final List<double> power = List<double>.filled(binCount, 0.0);
+  final List<List<double>> segmentPowers = <List<double>>[];
+  int includedSpectra = 0;
+  int sourceSegmentCount = 0;
+  for (final SpectrumResult spectrum in spectra) {
+    if (spectrum.freqs.length != binCount ||
+        spectrum.power.length != binCount) {
+      continue;
+    }
+    for (int index = 0; index < binCount; index++) {
+      power[index] += spectrum.power[index];
+    }
+    segmentPowers.add(spectrum.power);
+    includedSpectra++;
+    sourceSegmentCount += math.max(1, spectrum.segmentCount);
+  }
+  if (includedSpectra == 0) {
+    return const SpectrumResult(
+      freqs: <double>[],
+      power: <double>[],
+      segmentPowers: <List<double>>[],
+      segmentCount: 0,
+    );
+  }
+  if (!averageAcrossSegments) {
+    return SpectrumResult(
+      freqs: freqs,
+      power: segmentPowers.first,
+      segmentPowers: segmentPowers,
+      segmentCount: sourceSegmentCount,
+    );
+  }
+  for (int index = 0; index < power.length; index++) {
+    power[index] /= includedSpectra;
+  }
+  return SpectrumResult(
+    freqs: freqs,
+    power: power,
+    segmentPowers: segmentPowers,
+    segmentCount: sourceSegmentCount,
   );
 }
 
@@ -255,6 +457,7 @@ SpectrumResult _singleSidedSpectrum(
   return SpectrumResult(
     freqs: freqs,
     power: power,
+    segmentPowers: <List<double>>[power],
     segmentCount: 1,
   );
 }

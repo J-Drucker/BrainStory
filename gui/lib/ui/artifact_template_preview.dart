@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
+import '../nodes/interactive_artifact_detection_node.dart';
 import 'topomap_view.dart';
 
 Color artifactTemplateColor(String label) {
@@ -34,16 +35,25 @@ class ArtifactTemplatePreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool hasTopomapData = templates.any(
-      (ArtifactTemplateSummary template) => _templateTopomapPoints(
-        template,
-        channelLabels: channelLabels,
-        channelCoordinates: channelCoordinates,
-      ).length >= 3,
+    final List<List<TopomapPointValue>> templatePointSets =
+        templates
+            .map(
+              (ArtifactTemplateSummary template) => _templateTopomapPoints(
+                template,
+                channelLabels: channelLabels,
+                channelCoordinates: channelCoordinates,
+              ),
+            )
+            .toList(growable: false);
+    final bool hasTopomapData =
+        templatePointSets.any((List<TopomapPointValue> points) => points.length >= 3);
+    final TopomapColorScale sharedScale = _artifactTemplateTopomapScale();
+    final TopomapValueBounds sharedBounds = _artifactTemplateSharedBounds(
+      templatePointSets,
     );
 
     return Container(
-      height: hasTopomapData ? 188 : 132,
+      height: hasTopomapData ? 308 : 132,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(10),
@@ -65,33 +75,26 @@ class ArtifactTemplatePreview extends StatelessWidget {
             child: hasTopomapData
                 ? LayoutBuilder(
                     builder: (BuildContext context, BoxConstraints constraints) {
+                      final double cardWidth = templates.length == 1
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth * 0.78).clamp(220.0, 260.0).toDouble();
                       return ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: templates.length,
                         separatorBuilder: (_, __) => const SizedBox(width: 10),
                         itemBuilder: (BuildContext context, int index) {
                           final ArtifactTemplateSummary template = templates[index];
-                          final List<TopomapPointValue> points = _templateTopomapPoints(
-                            template,
-                            channelLabels: channelLabels,
-                            channelCoordinates: channelCoordinates,
-                          );
+                          final List<TopomapPointValue> points = templatePointSets[index];
                           if (points.length < 3) {
                             return SizedBox(
-                              width: math.min(180, constraints.maxWidth),
+                              width: cardWidth,
                               child: _ArtifactTemplateWaveformFallback(
                                 templates: <ArtifactTemplateSummary>[template],
                               ),
                             );
                           }
-                          final TopomapColorScale scale = _artifactTemplateTopomapScale(
-                            template.label,
-                          );
-                          final TopomapValueBounds bounds = _artifactTemplateTopomapBounds(
-                            points.map((TopomapPointValue point) => point.value),
-                          );
                           return SizedBox(
-                            width: math.min(180, constraints.maxWidth),
+                            width: cardWidth,
                             child: DecoratedBox(
                               decoration: BoxDecoration(
                                 color: Colors.white.withValues(alpha: 0.03),
@@ -129,9 +132,10 @@ class ArtifactTemplatePreview extends StatelessWidget {
                                           '${template.label}:${template.exemplarCount}:${template.sampleCount}:${points.map((TopomapPointValue point) => point.value.toStringAsFixed(3)).join(',')}',
                                         ),
                                         points: points,
-                                        scale: scale,
-                                        bounds: bounds,
+                                        scale: sharedScale,
+                                        bounds: sharedBounds,
                                         showLabels: false,
+                                        sampleDensity: 2.0,
                                       ),
                                     ),
                                   ],
@@ -151,30 +155,45 @@ class ArtifactTemplatePreview extends StatelessWidget {
   }
 }
 
-TopomapColorScale _artifactTemplateTopomapScale(String label) {
+TopomapColorScale _artifactTemplateTopomapScale() {
   return TopomapColorScale(
     colors: <Color>[
       const Color(0xFF143D8F),
       const Color(0xFF2EC4FF),
       const Color(0xFFFFF4B0),
-      artifactTemplateColor(label),
+      const Color(0xFFFF8C42),
       const Color(0xFFFF4D6D),
     ],
     legendLabel: '',
+    sigmoidStrength: 1.35,
   );
 }
 
-TopomapValueBounds _artifactTemplateTopomapBounds(
-  Iterable<double> values,
+TopomapValueBounds _artifactTemplateSharedBounds(
+  List<List<TopomapPointValue>> templatePointSets,
 ) {
-  double maxAbs = 0.0;
-  for (final double value in values) {
-    maxAbs = math.max(maxAbs, value.abs());
+  final List<double> values = templatePointSets
+      .expand(
+        (List<TopomapPointValue> points) =>
+            points.map((TopomapPointValue point) => point.value),
+      )
+      .toList(growable: false);
+  if (values.isEmpty) {
+    return const TopomapValueBounds(min: -1, max: 1);
   }
-  if (maxAbs <= 0) {
-    maxAbs = 1.0;
+
+  double minValue = values.first;
+  double maxValue = values.first;
+  for (final double value in values.skip(1)) {
+    minValue = math.min(minValue, value);
+    maxValue = math.max(maxValue, value);
   }
-  return TopomapValueBounds(min: -maxAbs, max: maxAbs);
+
+  if (minValue == maxValue) {
+    final double pad = minValue == 0 ? 1.0 : minValue.abs() * 0.25;
+    return TopomapValueBounds(min: minValue - pad, max: maxValue + pad);
+  }
+  return TopomapValueBounds(min: minValue, max: maxValue);
 }
 
 List<TopomapPointValue> _templateTopomapPoints(

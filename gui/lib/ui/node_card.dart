@@ -35,12 +35,7 @@ class NodeCard extends StatelessWidget {
   final void Function()? onTap;
   final void Function()? onDoubleTap;
   final void Function(int portIndex)? onOutputTap;
-
-  final void Function()? onRunThis;
-  final void Function()? onRunFromStart;
-  final void Function()? onRunToEnd;
-  final void Function()? onEditParams;
-  final void Function()? onDelete;
+  final void Function(Offset globalPosition)? onContextMenuAt;
 
   final Color color;
 
@@ -62,11 +57,7 @@ class NodeCard extends StatelessWidget {
     this.onTap,
     this.onDoubleTap,
     this.onOutputTap,
-    this.onRunThis,
-    this.onRunFromStart,
-    this.onRunToEnd,
-    this.onEditParams,
-    this.onDelete,
+    this.onContextMenuAt,
   });
 
   @override
@@ -80,7 +71,9 @@ class NodeCard extends StatelessWidget {
           final bool showOutputHandles =
               hovering || selectedOutputPortIndex != null;
           final bool hasVisibleOutputHandles =
-              showOutputHandles && outputHandles.isNotEmpty && onOutputTap != null;
+              showOutputHandles &&
+              outputHandles.isNotEmpty &&
+              onOutputTap != null;
           return MouseRegion(
             onEnter: (_) => setHoverState(() => hovering = true),
             onExit: (_) => setHoverState(() => hovering = false),
@@ -90,11 +83,17 @@ class NodeCard extends StatelessWidget {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: <Widget>[
+                  if (statusLabel != null)
+                    Positioned(
+                      left: 0,
+                      top: -18,
+                      child: _NodeStatusStrip(label: statusLabel!),
+                    ),
                   GestureDetector(
                     onTap: onTap,
                     onDoubleTap: onDoubleTap,
                     onSecondaryTapDown: (details) {
-                      _showContextMenu(context, details.globalPosition);
+                      onContextMenuAt?.call(details.globalPosition);
                     },
                     child: Draggable(
                       dragAnchorStrategy: childDragAnchorStrategy,
@@ -107,13 +106,15 @@ class NodeCard extends StatelessWidget {
                       child: _buildCard(),
                     ),
                   ),
-                  ..._buildOutputHandles(showOutputHandles: hasVisibleOutputHandles),
+                  ..._buildOutputHandles(
+                    showOutputHandles: hasVisibleOutputHandles,
+                  ),
                 ],
               ),
             ),
           );
         },
-        ),
+      ),
     );
   }
 
@@ -148,32 +149,35 @@ class NodeCard extends StatelessWidget {
           ),
           child: Stack(
             children: <Widget>[
-            Positioned(
-              left: 8,
-              top: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF30343A),
-                  borderRadius: BorderRadius.circular(4),
-                  boxShadow: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x44000000),
-                      blurRadius: 4,
-                      offset: Offset(0, 1.5),
+              Positioned(
+                left: 8,
+                top: 6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF30343A),
+                    borderRadius: BorderRadius.circular(4),
+                    boxShadow: const <BoxShadow>[
+                      BoxShadow(
+                        color: Color(0x44000000),
+                        blurRadius: 4,
+                        offset: Offset(0, 1.5),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    '$nodeNumber',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
                     ),
-                  ],
-                ),
-                child: Text(
-                  '$nodeNumber',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
-            ),
               Positioned.fill(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(12, 16, 12, 22),
@@ -193,19 +197,6 @@ class NodeCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (statusLabel != null) ...<Widget>[
-                        const SizedBox(height: 3),
-                        Text(
-                          statusLabel!,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 10,
-                            height: 1.0,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -225,76 +216,84 @@ class NodeCard extends StatelessWidget {
     const double handleWidth = 58;
     const double handleHeight = 22;
     const double handleGap = 8;
-    final int visualSlotCount =
-        outputHandles.length.isOdd ? outputHandles.length + 1 : outputHandles.length;
+    final int visualSlotCount = outputHandles.length.isOdd
+        ? outputHandles.length + 1
+        : outputHandles.length;
     final double totalWidth =
         (visualSlotCount * handleWidth) + ((visualSlotCount - 1) * handleGap);
     final double startLeft = (width - totalWidth) / 2;
     final List<int> visualSlots = outputHandles.length.isOdd
         ? List<int>.generate(
             outputHandles.length,
-            (int index) => index >= (outputHandles.length / 2).floor() ? index + 1 : index,
+            (int index) =>
+                index >= (outputHandles.length / 2).floor() ? index + 1 : index,
             growable: false,
           )
-        : List<int>.generate(outputHandles.length, (int index) => index, growable: false);
+        : List<int>.generate(
+            outputHandles.length,
+            (int index) => index,
+            growable: false,
+          );
 
-    return outputHandles.asMap().entries.map((MapEntry<int, NodeOutputHandleViewData> entry) {
-      final int visualIndex = entry.key;
-      final NodeOutputHandleViewData handle = entry.value;
-      final double left = startLeft + (visualSlots[visualIndex] * (handleWidth + handleGap));
-      return Positioned(
-        left: left,
-        top: height - 4,
-        child: _NodeOutputHandle(
-          width: handleWidth,
-          height: handleHeight,
-          data: handle,
-          selected: selectedOutputPortIndex == handle.portIndex,
-          onTap: () => onOutputTap?.call(handle.portIndex),
-        ),
-      );
-    }).toList(growable: false);
+    return outputHandles
+        .asMap()
+        .entries
+        .map((MapEntry<int, NodeOutputHandleViewData> entry) {
+          final int visualIndex = entry.key;
+          final NodeOutputHandleViewData handle = entry.value;
+          final double left =
+              startLeft +
+              (visualSlots[visualIndex] * (handleWidth + handleGap));
+          return Positioned(
+            left: left,
+            top: height - 4,
+            child: _NodeOutputHandle(
+              width: handleWidth,
+              height: handleHeight,
+              data: handle,
+              selected: selectedOutputPortIndex == handle.portIndex,
+              onTap: () => onOutputTap?.call(handle.portIndex),
+            ),
+          );
+        })
+        .toList(growable: false);
   }
+}
 
-  void _showContextMenu(BuildContext context, Offset pos) async {
-    final choice = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        pos.dx,
-        pos.dy,
-        pos.dx + 1,
-        pos.dy + 1,
+class _NodeStatusStrip extends StatelessWidget {
+  const _NodeStatusStrip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = switch (label) {
+      'Done' => const Color(0xFF43C26B),
+      'Ready' => const Color(0xFF5CC8FF),
+      'Partial' => const Color(0xFFC7D85A),
+      'Stale' => const Color(0xFFFFB347),
+      'Running' => const Color(0xFF7FE36A),
+      'Waiting' => const Color(0xFFC0CAD4),
+      'Input locked' => const Color(0xFFFFD166),
+      _ => const Color(0xFF8C98A4),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.9)),
       ),
-      items: [
-        const PopupMenuItem(value: 'run_this', child: Text('Run This Step')),
-        const PopupMenuItem(value: 'run_start', child: Text('Run From Start')),
-        const PopupMenuItem(value: 'run_end', child: Text('Run To End')),
-        const PopupMenuItem(value: 'edit', child: Text('Edit Parameters')),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'delete',
-          child: Text('Delete Node', style: TextStyle(color: Colors.red)),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          height: 1.0,
         ),
-      ],
+      ),
     );
-
-    switch (choice) {
-      case 'run_this':
-        onRunThis?.call();
-        break;
-      case 'run_start':
-        onRunFromStart?.call();
-        break;
-      case 'run_end':
-        onRunToEnd?.call();
-        break;
-      case 'edit':
-        onEditParams?.call();
-        break;
-      case 'delete':
-        onDelete?.call();
-        break;
-    }
   }
 }
 
@@ -337,8 +336,8 @@ class _NodeOutputHandleState extends State<_NodeOutputHandle> {
           color: emphasized
               ? Colors.white
               : widget.data.filled
-                  ? Colors.black.withValues(alpha: 0.18)
-                  : widget.data.color.withValues(alpha: 0.8),
+              ? Colors.black.withValues(alpha: 0.18)
+              : widget.data.color.withValues(alpha: 0.8),
           width: emphasized ? 2 : 1,
         ),
         boxShadow: emphasized

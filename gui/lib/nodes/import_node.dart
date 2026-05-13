@@ -37,6 +37,9 @@ class ImportNodeType extends NodeType {
   NodeCategory get category => NodeCategory.import;
 
   @override
+  NodeStoragePolicy get defaultStoragePolicy => NodeStoragePolicy.preferDisk;
+
+  @override
   String get subcategory => 'Subcategory 1';
 
   @override
@@ -577,6 +580,14 @@ ParsedSignalData parseEdfBytes(
   final ByteData data = ByteData.sublistView(bytes);
   final _EdfHeader header = _parseEdfHeader(bytes);
   final List<_EdfSignalHeader> signals = _parseEdfSignalHeaders(bytes, header);
+  final Map<int, _EdfSignalHeader> annotationSignalsByIndex =
+      <int, _EdfSignalHeader>{};
+  for (int signalIndex = 0; signalIndex < signals.length; signalIndex++) {
+    final _EdfSignalHeader signal = signals[signalIndex];
+    if (signal.label.toLowerCase().contains('annotation')) {
+      annotationSignalsByIndex[signalIndex] = signal;
+    }
+  }
   final List<_EdfSignalHeader> dataSignals = signals
       .where(
         (_EdfSignalHeader signal) =>
@@ -614,6 +625,7 @@ ParsedSignalData parseEdfBytes(
     selectedSignals.length,
     (_) => List<double>.filled(totalSamples, 0.0),
   );
+  final List<TimeMarker> markers = <TimeMarker>[];
 
   final List<int> outputIndexes = List<int>.filled(selectedSignals.length, 0);
   for (int record = 0; record < header.numDataRecords; record++) {
@@ -631,6 +643,18 @@ ParsedSignalData parseEdfBytes(
               signal.toPhysicalValue(rawValue);
         }
       }
+      final _EdfSignalHeader? annotationSignal =
+          annotationSignalsByIndex[signalIndex];
+      if (annotationSignal != null) {
+        markers.addAll(
+          _parseEdfAnnotationRecord(
+            bytes.sublist(
+              signalStart,
+              signalStart + (annotationSignal.samplesPerRecord * 2),
+            ),
+          ),
+        );
+      }
 
       signalByteOffset += signal.samplesPerRecord * 2;
     }
@@ -645,7 +669,112 @@ ParsedSignalData parseEdfBytes(
     sourceDescription: selectedSignals.length == 1
         ? '$sourceDescription [${selectedSignals.first.label}]'
         : '$sourceDescription [${selectedSignals.first.label} + ${selectedSignals.length - 1} more]',
+    markers: markers,
   );
+}
+
+List<TimeMarker> _parseEdfAnnotationRecord(List<int> recordBytes) {
+  final Uint8List normalized = _normalizeEdfAnnotationBytes(
+    Uint8List.fromList(recordBytes),
+  );
+  if (normalized.isEmpty) {
+    return const <TimeMarker>[];
+  }
+  final List<TimeMarker> markers = <TimeMarker>[];
+  final List<int> current = <int>[];
+  for (final int byte in normalized) {
+    if (byte == 0) {
+      if (current.isNotEmpty) {
+        markers.addAll(_parseEdfTalEntry(current));
+        current.clear();
+      }
+      continue;
+    }
+    current.add(byte);
+  }
+  if (current.isNotEmpty) {
+    markers.addAll(_parseEdfTalEntry(current));
+  }
+  return markers;
+}
+
+Uint8List _normalizeEdfAnnotationBytes(Uint8List bytes) {
+  int oddZeroCount = 0;
+  int oddCount = 0;
+  for (int index = 1; index < bytes.length; index += 2) {
+    oddCount++;
+    if (bytes[index] == 0) {
+      oddZeroCount++;
+    }
+  }
+  if (oddCount > 0 && oddZeroCount / oddCount > 0.9) {
+    return Uint8List.fromList(
+      <int>[
+        for (int index = 0; index < bytes.length; index += 2) bytes[index],
+      ],
+    );
+  }
+  return bytes;
+}
+
+List<TimeMarker> _parseEdfTalEntry(List<int> entryBytes) {
+  final String entry = latin1.decode(entryBytes, allowInvalid: true);
+  if (entry.trim().isEmpty) {
+    return const <TimeMarker>[];
+  }
+  final List<String> fields = entry.split(String.fromCharCode(20));
+  if (fields.isEmpty) {
+    return const <TimeMarker>[];
+  }
+  final String timingField = fields.first;
+  final List<String> timingParts = timingField.split(String.fromCharCode(21));
+  final double? onsetSeconds = double.tryParse(timingParts.first.trim());
+  if (onsetSeconds == null) {
+    return const <TimeMarker>[];
+  }
+  final double durationSeconds = timingParts.length > 1
+      ? (double.tryParse(timingParts[1].trim()) ?? 0.0)
+      : 0.0;
+  final int onsetMicros = (onsetSeconds * 1000000.0).round();
+  final int durationMicros = math.max(0, (durationSeconds * 1000000.0).round());
+
+  final List<String> annotations = fields
+      .skip(1)
+      .map((String field) => field.trim())
+      .where((String field) => field.isNotEmpty)
+      .toList(growable: false);
+  if (annotations.isEmpty) {
+    return const <TimeMarker>[];
+  }
+
+  return annotations.map((String label) {
+    return TimeMarker(
+      onsetMicros: onsetMicros,
+      durationMicros: durationMicros,
+      label: label,
+      markerType: _edfAnnotationMarkerType(label, durationMicros: durationMicros),
+      attributes: const <String, dynamic>{
+        'brainstory.importSource': 'edf_annotation',
+      },
+    );
+  }).toList(growable: false);
+}
+
+String _edfAnnotationMarkerType(
+  String label, {
+  required int durationMicros,
+}) {
+  final String lowerLabel = label.toLowerCase();
+  if (lowerLabel.contains('artifact') ||
+      lowerLabel.contains('bad') ||
+      lowerLabel.contains('blink') ||
+      lowerLabel.contains('motion')) {
+    return MarkerType.artifact;
+  }
+  if (durationMicros > 0) {
+    return MarkerType.segment;
+  }
+  return MarkerType.event;
 }
 
 Map<String, Map<String, String>> _parseIniSections(String text) {

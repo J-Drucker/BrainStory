@@ -14,29 +14,32 @@ class SegmentationNodeType extends NodeType {
   NodeCategory get category => NodeCategory.markerFunctions;
 
   @override
-      Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'mode': 'events',
-        'includedMarkers': <String, dynamic>{},
-        'eventWindowStartMs': -200.0,
-        'eventWindowStopMs': 800.0,
-        'eventBaselineStartMs': -200.0,
-        'eventBaselineStopMs': 0.0,
-        'blockConcatenate': false,
-        'blockInvert': false,
-        'equalWindowWidthMs': 1000.0,
-        'equalWindowOverlapPercent': 0.0,
-      };
+  Map<String, dynamic> get defaultParams => <String, dynamic>{
+    'mode': 'events',
+    'includedMarkers': <String, dynamic>{},
+    'eventWindowStartMs': -200.0,
+    'eventWindowStopMs': 800.0,
+    'eventApplyBaseline': false,
+    'eventBaselineConfigured': false,
+    'eventBaselineStartMs': -200.0,
+    'eventBaselineStopMs': 0.0,
+    'blockConcatenate': false,
+    'blockInvert': false,
+    'equalWindowWidthMs': 1000.0,
+    'equalWindowOverlapPercent': 0.0,
+    'windowMarkerName': 'FFT Window',
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-        PortSpec(name: 'markers', type: PortType.markers),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'markers', type: PortType.markers),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'segments', type: PortType.metadata),
-      ];
+    PortSpec(name: 'segments', type: PortType.metadata),
+  ];
 
   @override
   Widget buildBody(
@@ -48,20 +51,27 @@ class SegmentationNodeType extends NodeType {
     params.putIfAbsent('includedMarkers', () => <String, dynamic>{});
     params.putIfAbsent('eventWindowStartMs', () => -200.0);
     params.putIfAbsent('eventWindowStopMs', () => 800.0);
+    params.putIfAbsent('eventApplyBaseline', () => false);
+    params.putIfAbsent('eventBaselineConfigured', () => false);
     params.putIfAbsent('eventBaselineStartMs', () => -200.0);
     params.putIfAbsent('eventBaselineStopMs', () => 0.0);
     params.putIfAbsent('blockConcatenate', () => false);
     params.putIfAbsent('blockInvert', () => false);
     params.putIfAbsent('equalWindowWidthMs', () => 1000.0);
     params.putIfAbsent('equalWindowOverlapPercent', () => 0.0);
+    params.putIfAbsent('windowMarkerName', () => 'FFT Window');
 
     final List<Dataset> datasetList = datasets.values.toList()
       ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
     final List<dynamic> selectedIds =
         params['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[];
-    final Dataset? activeDataset = _resolveActiveDataset(datasetList, selectedIds);
+    final Dataset? activeDataset = _resolveActiveDataset(
+      datasetList,
+      selectedIds,
+    );
     final TimeSeriesData? timeSeries = activeDataset?.timeSeries;
-    final List<TimeMarker> markers = timeSeries?.markers ?? const <TimeMarker>[];
+    final List<TimeMarker> markers =
+        timeSeries?.markers ?? const <TimeMarker>[];
 
     return SizedBox(
       width: 760,
@@ -84,20 +94,14 @@ class SegmentationNodeType extends NodeType {
                     value: 'events',
                     title: 'Events',
                     description: 'Create segments around marker events.',
-                    options: _eventOptions(
-                      params: params,
-                      setState: setState,
-                    ),
+                    options: _eventOptions(params: params, setState: setState),
                   ),
                   const Divider(height: 24),
                   _SegmentationModeSection(
                     value: 'blocks',
                     title: 'Blocks',
                     description: 'Create segments from included marker spans.',
-                    options: _blockOptions(
-                      params: params,
-                      setState: setState,
-                    ),
+                    options: _blockOptions(params: params, setState: setState),
                   ),
                   const Divider(height: 24),
                   _SegmentationModeSection(
@@ -129,11 +133,13 @@ class SegmentationNodeType extends NodeType {
                 const SizedBox(height: 14),
                 _RightPanelSection(
                   title: 'Include / Exclude Markers',
+                  height: 320,
                   child: _MarkerSelectionPanel(
                     dataset: activeDataset,
                     markers: markers,
-                    includedMarkers:
-                        Map<String, dynamic>.from(params['includedMarkers'] as Map? ?? <String, dynamic>{}),
+                    includedMarkers: Map<String, dynamic>.from(
+                      params['includedMarkers'] as Map? ?? <String, dynamic>{},
+                    ),
                     onChanged: (Map<String, dynamic> nextMap) => setState(() {
                       params['includedMarkers'] = nextMap;
                     }),
@@ -157,17 +163,28 @@ class SegmentationNodeType extends NodeType {
     }
 
     final String mode = (params['mode'] ?? 'events').toString();
-    final Map<String, dynamic> includedMarkers =
-        Map<String, dynamic>.from(params['includedMarkers'] as Map? ?? <String, dynamic>{});
+    final Map<String, dynamic> includedMarkers = Map<String, dynamic>.from(
+      params['includedMarkers'] as Map? ?? <String, dynamic>{},
+    );
     final List<SignalSegmentData> segments;
 
     switch (mode) {
       case 'equal_windows':
-        segments = _buildEqualWindowSegments(
+        final String windowMarkerName =
+            params['windowMarkerName']?.toString().trim().isNotEmpty == true
+            ? params['windowMarkerName'].toString().trim()
+            : 'FFT Window';
+        segments = _buildEventSegments(
           timeSeries: timeSeries,
-          widthMs: (params['equalWindowWidthMs'] as num?)?.toDouble() ?? 1000.0,
-          overlapPercent:
-              (params['equalWindowOverlapPercent'] as num?)?.toDouble() ?? 0.0,
+          includedMarkers: <String, dynamic>{
+            markerKeyForKindAndLabel(
+              kind: MarkerType.window,
+              label: windowMarkerName,
+            ): true,
+          },
+          windowStartMs: 0.0,
+          windowStopMs:
+              (params['equalWindowWidthMs'] as num?)?.toDouble() ?? 1000.0,
         );
         break;
       case 'blocks':
@@ -180,7 +197,7 @@ class SegmentationNodeType extends NodeType {
         break;
       case 'events':
       default:
-        segments = _buildEventSegments(
+        final List<SignalSegmentData> eventSegments = _buildEventSegments(
           timeSeries: timeSeries,
           includedMarkers: includedMarkers,
           windowStartMs:
@@ -188,6 +205,17 @@ class SegmentationNodeType extends NodeType {
           windowStopMs:
               (params['eventWindowStopMs'] as num?)?.toDouble() ?? 800.0,
         );
+        segments = params['eventApplyBaseline'] as bool? ?? false
+            ? _baselineCorrectEventSegments(
+                timeSeries: timeSeries,
+                segments: eventSegments,
+                baselineStartMs:
+                    (params['eventBaselineStartMs'] as num?)?.toDouble() ??
+                    -200.0,
+                baselineStopMs:
+                    (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0,
+              )
+            : eventSegments;
         break;
     }
 
@@ -198,10 +226,15 @@ class SegmentationNodeType extends NodeType {
       source: timeSeries.source,
       sourceTimeSeries: timeSeries,
     );
+    dataset.ram['segmentation.precomputedConditionAverages'] =
+        _precomputeConditionAverages(segmented: dataset.segmentedTimeSeries!);
     dataset.ram['segmentation.config'] = Map<String, dynamic>.from(params);
   }
 
-  Dataset? _resolveActiveDataset(List<Dataset> datasets, List<dynamic> selectedIds) {
+  Dataset? _resolveActiveDataset(
+    List<Dataset> datasets,
+    List<dynamic> selectedIds,
+  ) {
     if (datasets.isEmpty) {
       return null;
     }
@@ -214,6 +247,80 @@ class SegmentationNodeType extends NodeType {
     }
     return datasets.first;
   }
+}
+
+Map<String, dynamic> _precomputeConditionAverages({
+  required SegmentedTimeSeriesData segmented,
+}) {
+  final Map<String, List<SignalSegmentData>> segmentsByLabel =
+      <String, List<SignalSegmentData>>{};
+  for (final SignalSegmentData segment in segmented.segments) {
+    segmentsByLabel
+        .putIfAbsent(segment.label, () => <SignalSegmentData>[])
+        .add(segment);
+  }
+
+  final Map<String, dynamic> averages = <String, dynamic>{};
+  for (final MapEntry<String, List<SignalSegmentData>> entry
+      in segmentsByLabel.entries) {
+    final List<List<List<double>>> materialized = entry.value
+        .map(segmented.channelSamplesForSegment)
+        .where((List<List<double>> samples) => samples.isNotEmpty)
+        .toList(growable: false);
+    if (materialized.isEmpty) {
+      continue;
+    }
+    final int channelCount = materialized
+        .map((List<List<double>> segmentChannels) => segmentChannels.length)
+        .reduce(math.min);
+    if (channelCount == 0) {
+      continue;
+    }
+    final int sampleCount = materialized
+        .map(
+          (List<List<double>> segmentChannels) => segmentChannels
+              .take(channelCount)
+              .map((List<double> channel) => channel.length)
+              .reduce(math.min),
+        )
+        .reduce(math.min);
+    if (sampleCount == 0) {
+      continue;
+    }
+
+    final List<List<double>> meanChannels = List<List<double>>.generate(
+      channelCount,
+      (int channelIndex) => List<double>.filled(sampleCount, 0.0),
+      growable: false,
+    );
+    for (final List<List<double>> segmentChannels in materialized) {
+      for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+        final List<double> channel = segmentChannels[channelIndex];
+        for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+          meanChannels[channelIndex][sampleIndex] += channel[sampleIndex];
+        }
+      }
+    }
+
+    final double denominator = materialized.length.toDouble();
+    for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+      for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        meanChannels[channelIndex][sampleIndex] /= denominator;
+      }
+    }
+
+    averages[entry.key] = <String, dynamic>{
+      'segmentCount': materialized.length,
+      'sampleCount': sampleCount,
+      'channelCount': channelCount,
+      'sampleRate': segmented.sampleRate,
+      'channelLabels': segmented.channelLabels
+          .take(channelCount)
+          .toList(growable: false),
+      'meanChannels': meanChannels,
+    };
+  }
+  return averages;
 }
 
 List<SignalSegmentData> _buildEventSegments({
@@ -251,52 +358,77 @@ List<SignalSegmentData> _buildEventSegments({
   return segments;
 }
 
-List<SignalSegmentData> _buildEqualWindowSegments({
+List<SignalSegmentData> _baselineCorrectEventSegments({
   required TimeSeriesData timeSeries,
-  required double widthMs,
-  required double overlapPercent,
+  required List<SignalSegmentData> segments,
+  required double baselineStartMs,
+  required double baselineStopMs,
 }) {
-  final double sampleRate = timeSeries.sampleRate;
-  final int sampleCount = timeSeries.sampleCount;
-  if (sampleCount <= 0) {
-    return const <SignalSegmentData>[];
+  if (timeSeries.channels.isEmpty || timeSeries.sampleRate <= 0) {
+    return segments;
   }
+  return segments
+      .map(
+        (SignalSegmentData segment) => _baselineCorrectEventSegment(
+          timeSeries: timeSeries,
+          segment: segment,
+          baselineStartMs: baselineStartMs,
+          baselineStopMs: baselineStopMs,
+        ),
+      )
+      .toList(growable: false);
+}
 
-  final int widthSamples =
-      math.max(1, ((widthMs / 1000.0) * sampleRate).round());
-  final double overlapFraction = (overlapPercent / 100.0).clamp(0.0, 0.95);
-  final int stepSamples =
-      math.max(1, (widthSamples * (1.0 - overlapFraction)).round());
-  final List<SignalSegmentData> segments = <SignalSegmentData>[];
-
-  for (int startIndex = 0; startIndex + widthSamples <= sampleCount; startIndex += stepSamples) {
-    final int stopIndex = startIndex + widthSamples;
-    final SignalSegmentData? segment = _extractSegment(
-      timeSeries: timeSeries,
-      startIndex: startIndex,
-      stopIndex: stopIndex,
-      label: 'Window ${segments.length + 1}',
-      kind: 'window',
-    );
-    if (segment != null) {
-      segments.add(segment);
-    }
+SignalSegmentData _baselineCorrectEventSegment({
+  required TimeSeriesData timeSeries,
+  required SignalSegmentData segment,
+  required double baselineStartMs,
+  required double baselineStopMs,
+}) {
+  final int? start = segment.sourceStartSample;
+  final int? stop = segment.sourceStopSampleExclusive;
+  if (start == null || stop == null || stop <= start) {
+    return segment;
   }
-
-  if (segments.isEmpty && sampleCount > 0) {
-    final SignalSegmentData? segment = _extractSegment(
-      timeSeries: timeSeries,
-      startIndex: 0,
-      stopIndex: sampleCount,
-      label: 'Window 1',
-      kind: 'window',
-    );
-    if (segment != null) {
-      segments.add(segment);
-    }
-  }
-
-  return segments;
+  final double anchorSeconds =
+      segment.anchorTimeSeconds ?? segment.startSeconds;
+  final int baselineStart =
+      ((anchorSeconds + baselineStartMs / 1000.0) * timeSeries.sampleRate)
+          .round()
+          .clamp(0, timeSeries.sampleCount);
+  final int baselineStop =
+      ((anchorSeconds + baselineStopMs / 1000.0) * timeSeries.sampleRate)
+          .round()
+          .clamp(0, timeSeries.sampleCount);
+  final int anchorIndex = (anchorSeconds * timeSeries.sampleRate).round().clamp(
+    start,
+    stop - 1,
+  );
+  final bool useBaselineWindow = baselineStop > baselineStart;
+  final List<List<double>> correctedChannels = timeSeries.channels
+      .map((List<double> channel) {
+        final List<double> values = channel.sublist(start, stop);
+        double baselineValue;
+        if (useBaselineWindow) {
+          double sum = 0.0;
+          for (int index = baselineStart; index < baselineStop; index++) {
+            sum += channel[index];
+          }
+          baselineValue = sum / (baselineStop - baselineStart);
+        } else {
+          baselineValue = channel[anchorIndex];
+        }
+        return List<double>.generate(
+          values.length,
+          (int index) => values[index] - baselineValue,
+          growable: false,
+        );
+      })
+      .toList(growable: false);
+  return segment.copyWith(
+    channelSamples: correctedChannels,
+    clearSourceWindow: true,
+  );
 }
 
 List<SignalSegmentData> _buildBlockSegments({
@@ -310,17 +442,24 @@ List<SignalSegmentData> _buildBlockSegments({
     return const <SignalSegmentData>[];
   }
 
-  final List<TimeMarker> selectedMarkers = timeSeries.markers
-      .where((TimeMarker marker) => _markerIncluded(marker, includedMarkers))
-      .toList(growable: false)
-    ..sort((TimeMarker a, TimeMarker b) => a.timeSeconds.compareTo(b.timeSeconds));
+  final List<TimeMarker> selectedMarkers =
+      timeSeries.markers
+          .where(
+            (TimeMarker marker) => _markerIncluded(marker, includedMarkers),
+          )
+          .toList(growable: false)
+        ..sort(
+          (TimeMarker a, TimeMarker b) =>
+              a.timeSeconds.compareTo(b.timeSeconds),
+        );
 
   final List<_SampleInterval> blockIntervals = <_SampleInterval>[];
   for (int index = 0; index + 1 < selectedMarkers.length; index += 2) {
     final int startIndex =
         (selectedMarkers[index].timeSeconds * timeSeries.sampleRate).round();
     final int stopIndex =
-        (selectedMarkers[index + 1].timeSeconds * timeSeries.sampleRate).round();
+        (selectedMarkers[index + 1].timeSeconds * timeSeries.sampleRate)
+            .round();
     final _SampleInterval? interval = _boundedInterval(
       startIndex: startIndex,
       stopIndex: stopIndex,
@@ -340,10 +479,7 @@ List<SignalSegmentData> _buildBlockSegments({
 
   if (concatenate) {
     return <SignalSegmentData>[
-      _concatenateIntervals(
-        timeSeries: timeSeries,
-        intervals: intervals,
-      ),
+      _concatenateIntervals(timeSeries: timeSeries, intervals: intervals),
     ];
   }
 
@@ -374,7 +510,11 @@ SignalSegmentData _concatenateIntervals({
   );
 
   for (final _SampleInterval interval in intervals) {
-    for (int channelIndex = 0; channelIndex < timeSeries.channelCount; channelIndex++) {
+    for (
+      int channelIndex = 0;
+      channelIndex < timeSeries.channelCount;
+      channelIndex++
+    ) {
       channelSamples[channelIndex].addAll(
         timeSeries.channels[channelIndex].sublist(
           interval.startIndex,
@@ -394,7 +534,7 @@ SignalSegmentData _concatenateIntervals({
 }
 
 bool _markerIncluded(TimeMarker marker, Map<String, dynamic> includedMarkers) {
-  return (includedMarkers[markerKeyForMarker(marker)] as bool?) ?? true;
+  return (includedMarkers[markerKeyForMarker(marker)] as bool?) ?? false;
 }
 
 SignalSegmentData? _extractSegment({
@@ -435,10 +575,7 @@ _SampleInterval? _boundedInterval({
   if (boundedStop <= boundedStart) {
     return null;
   }
-  return _SampleInterval(
-    startIndex: boundedStart,
-    stopIndex: boundedStop,
-  );
+  return _SampleInterval(startIndex: boundedStart, stopIndex: boundedStop);
 }
 
 List<_SampleInterval> _invertIntervals(
@@ -452,7 +589,10 @@ List<_SampleInterval> _invertIntervals(
   }
 
   final List<_SampleInterval> ordered = List<_SampleInterval>.from(intervals)
-    ..sort((_SampleInterval a, _SampleInterval b) => a.startIndex.compareTo(b.startIndex));
+    ..sort(
+      (_SampleInterval a, _SampleInterval b) =>
+          a.startIndex.compareTo(b.startIndex),
+    );
   final List<_SampleInterval> inverted = <_SampleInterval>[];
   int cursor = 0;
   for (final _SampleInterval interval in ordered) {
@@ -464,18 +604,13 @@ List<_SampleInterval> _invertIntervals(
     cursor = math.max(cursor, interval.stopIndex);
   }
   if (cursor < sampleCount) {
-    inverted.add(
-      _SampleInterval(startIndex: cursor, stopIndex: sampleCount),
-    );
+    inverted.add(_SampleInterval(startIndex: cursor, stopIndex: sampleCount));
   }
   return inverted;
 }
 
 class _SampleInterval {
-  const _SampleInterval({
-    required this.startIndex,
-    required this.stopIndex,
-  });
+  const _SampleInterval({required this.startIndex, required this.stopIndex});
 
   final int startIndex;
   final int stopIndex;
@@ -496,7 +631,9 @@ class _SegmentationModeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final RadioGroupRegistry<String>? radioGroup = RadioGroup.maybeOf<String>(context);
+    final RadioGroupRegistry<String>? radioGroup = RadioGroup.maybeOf<String>(
+      context,
+    );
     final String? groupValue = radioGroup?.groupValue;
     final bool active = value == groupValue;
     final Color textColor = active ? Colors.black : Colors.black45;
@@ -514,9 +651,7 @@ class _SegmentationModeSection extends StatelessWidget {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    Radio<String>(
-                      value: value,
-                    ),
+                    Radio<String>(value: value),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -533,17 +668,11 @@ class _SegmentationModeSection extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(left: 44),
                   child: DefaultTextStyle(
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 14,
-                    ),
+                    style: TextStyle(color: textColor, fontSize: 14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text(
-                          description,
-                          style: TextStyle(color: textColor),
-                        ),
+                        Text(description, style: TextStyle(color: textColor)),
                         const SizedBox(height: 10),
                         ...options,
                       ],
@@ -588,13 +717,28 @@ List<Widget> _eventOptions({
       ],
     ),
     const SizedBox(height: 10),
+    CheckboxListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      value: params['eventApplyBaseline'] as bool? ?? false,
+      title: const Text('Baseline-correct segment artifact'),
+      subtitle: const Text(
+        'If off, segments preserve source signal values. Visualization still baseline-corrects for display.',
+      ),
+      onChanged: (bool? value) => setState(() {
+        params['eventApplyBaseline'] = value ?? false;
+      }),
+    ),
+    const SizedBox(height: 6),
     Row(
       children: <Widget>[
         Expanded(
           child: _NumericOptionField(
             label: 'Baseline start (ms)',
-            value: (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0,
+            value:
+                (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0,
             onChanged: (double value) => setState(() {
+              params['eventBaselineConfigured'] = true;
               params['eventBaselineStartMs'] = value;
             }),
           ),
@@ -605,6 +749,7 @@ List<Widget> _eventOptions({
             label: 'Baseline stop (ms)',
             value: (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0,
             onChanged: (double value) => setState(() {
+              params['eventBaselineConfigured'] = true;
               params['eventBaselineStopMs'] = value;
             }),
           ),
@@ -654,6 +799,15 @@ List<Widget> _equalWindowOptions({
   required void Function(void Function()) setState,
 }) {
   return <Widget>[
+    NodeParamTextField(
+      params: params,
+      paramKey: 'windowMarkerName',
+      labelText: 'Window marker name',
+      helperText: 'Auto-created marker label for these windows.',
+      parser: (String text, dynamic previous) =>
+          text.trim().isEmpty ? previous : text,
+    ),
+    const SizedBox(height: 10),
     _NumericOptionField(
       label: 'Width (ms)',
       value: (params['equalWindowWidthMs'] as num?)?.toDouble() ?? 1000.0,
@@ -749,25 +903,22 @@ class _RightPanelSection extends StatelessWidget {
   const _RightPanelSection({
     required this.title,
     required this.child,
+    this.height = 220,
   });
 
   final String title;
   final Widget child;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 220,
+      height: height,
       width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           Divider(height: 1, color: Colors.grey.shade400),
           const SizedBox(height: 8),
@@ -784,10 +935,7 @@ class _RightPanelSection extends StatelessWidget {
 }
 
 class _MarkerOverview extends StatelessWidget {
-  const _MarkerOverview({
-    required this.dataset,
-    required this.markers,
-  });
+  const _MarkerOverview({required this.dataset, required this.markers});
 
   final Dataset? dataset;
   final List<TimeMarker> markers;
@@ -795,9 +943,7 @@ class _MarkerOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (dataset == null) {
-      return const Center(
-        child: Text('No dataset available.'),
-      );
+      return const Center(child: Text('No dataset available.'));
     }
 
     final TimeSeriesData? timeSeries = dataset!.timeSeries;
@@ -810,11 +956,11 @@ class _MarkerOverview extends StatelessWidget {
     final double durationSeconds = timeSeries.sampleCount > 0
         ? timeSeries.sampleCount / timeSeries.sampleRate
         : markers.isEmpty
-            ? 1.0
-            : markers
-                    .map((TimeMarker marker) => marker.timeSeconds)
-                    .reduce(math.max) +
-                1.0;
+        ? 1.0
+        : markers
+                  .map((TimeMarker marker) => marker.timeSeconds)
+                  .reduce(math.max) +
+              1.0;
 
     return CustomPaint(
       painter: _MarkerOverviewPainter(
@@ -850,7 +996,11 @@ class _MarkerOverviewPainter extends CustomPainter {
     for (int i = 0; i < markers.length; i++) {
       final TimeMarker marker = markers[i];
       final double x =
-          (marker.timeSeconds / math.max(durationSeconds, 0.001)).clamp(0.0, 1.0) * size.width;
+          (marker.timeSeconds / math.max(durationSeconds, 0.001)).clamp(
+            0.0,
+            1.0,
+          ) *
+          size.width;
       final Paint markerPaint = Paint()
         ..color = _markerColor(i, marker)
         ..strokeWidth = 3;
@@ -885,9 +1035,7 @@ class _MarkerSelectionPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (dataset == null) {
-      return const Center(
-        child: Text('No dataset available.'),
-      );
+      return const Center(child: Text('No dataset available.'));
     }
     if (markers.isEmpty) {
       return const Center(
@@ -896,36 +1044,77 @@ class _MarkerSelectionPanel extends StatelessWidget {
     }
 
     final List<_MarkerLabelSummary> groups = _summarizeMarkersByLabel(markers);
-    return ListView.builder(
-      itemCount: groups.length,
-      itemBuilder: (BuildContext context, int index) {
-        final _MarkerLabelSummary group = groups[index];
-        final String key = group.key;
-        final bool included = (includedMarkers[key] as bool?) ?? true;
-        return CheckboxListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          value: included,
-          secondary: Container(
-            width: 10,
-            height: 10,
-            decoration: BoxDecoration(
-              color: _markerColor(index, group.sampleMarker),
-              shape: BoxShape.circle,
+    final int selectedCount = groups
+        .where(
+          (_MarkerLabelSummary group) =>
+              (includedMarkers[group.key] as bool?) ?? false,
+        )
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Text(
+              '$selectedCount / ${groups.length} selected',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
+            const Spacer(),
+            TextButton(
+              onPressed: () {
+                onChanged(<String, dynamic>{
+                  for (final _MarkerLabelSummary group in groups)
+                    group.key: true,
+                });
+              },
+              child: const Text('Select all'),
+            ),
+            const SizedBox(width: 4),
+            TextButton(
+              onPressed: () => onChanged(<String, dynamic>{}),
+              child: const Text('Unselect all'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Expanded(
+          child: ListView.builder(
+            itemCount: groups.length,
+            itemBuilder: (BuildContext context, int index) {
+              final _MarkerLabelSummary group = groups[index];
+              final String key = group.key;
+              final bool included = (includedMarkers[key] as bool?) ?? false;
+              return CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                value: included,
+                secondary: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _markerColor(index, group.sampleMarker),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                title: Text(group.label, style: const TextStyle(fontSize: 13)),
+                subtitle: Text(
+                  '${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}',
+                ),
+                onChanged: (bool? value) {
+                  final Map<String, dynamic> nextMap =
+                      Map<String, dynamic>.from(includedMarkers);
+                  if (value == true) {
+                    nextMap[key] = true;
+                  } else {
+                    nextMap.remove(key);
+                  }
+                  onChanged(nextMap);
+                },
+              );
+            },
           ),
-          title: Text(
-            group.label,
-            style: const TextStyle(fontSize: 13),
-          ),
-          subtitle: Text('${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}'),
-          onChanged: (bool? value) {
-            final Map<String, dynamic> nextMap = Map<String, dynamic>.from(includedMarkers);
-            nextMap[key] = value ?? true;
-            onChanged(nextMap);
-          },
-        );
-      },
+        ),
+      ],
     );
   }
 }
@@ -947,7 +1136,8 @@ class _MarkerLabelSummary {
 }
 
 List<_MarkerLabelSummary> _summarizeMarkersByLabel(List<TimeMarker> markers) {
-  final Map<String, _MarkerLabelSummary> grouped = <String, _MarkerLabelSummary>{};
+  final Map<String, _MarkerLabelSummary> grouped =
+      <String, _MarkerLabelSummary>{};
   for (final TimeMarker marker in markers) {
     final String key = markerKeyForMarker(marker);
     final _MarkerLabelSummary? existing = grouped[key];
@@ -969,7 +1159,9 @@ List<_MarkerLabelSummary> _summarizeMarkersByLabel(List<TimeMarker> markers) {
       );
     }
   }
-  final List<_MarkerLabelSummary> summaries = grouped.values.toList(growable: false);
+  final List<_MarkerLabelSummary> summaries = grouped.values.toList(
+    growable: false,
+  );
   summaries.sort((_MarkerLabelSummary a, _MarkerLabelSummary b) {
     final int kindCompare = a.kind.compareTo(b.kind);
     if (kindCompare != 0) {

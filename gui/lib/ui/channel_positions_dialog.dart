@@ -238,12 +238,12 @@ class _AxisToggleBar extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: selected
-                        ? spec.scale.endColor.withValues(alpha: 0.22)
+                        ? spec.scale.palette.last.withValues(alpha: 0.22)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
                       color: selected
-                          ? spec.scale.endColor.withValues(alpha: 0.7)
+                          ? spec.scale.palette.last.withValues(alpha: 0.7)
                           : Colors.white.withValues(alpha: 0.08),
                     ),
                   ),

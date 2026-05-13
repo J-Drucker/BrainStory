@@ -1,0 +1,17 @@
+function,keyboard_current,keyboard_recommendation,keyboard_notes,keyboard_mouse_current,keyboard_mouse_recommendation,keyboard_mouse_notes,touchscreen_current,touchscreen_recommendation,touchscreen_notes
+switch_focus_between_panels,Tab cycles panels,Keep Tab and add visible focus ring,"Change to Alt+1, Alt+2, ...",Mouse click changes focus,Keep click-to-focus,,Not implemented,Use edge tabs or explicit focus chips,
+select_node,Arrow keys move focus and Enter selects focused node,Keep and add clearer selected-state text,,Click selects node,Keep as primary path,,Tap selects node,Support single tap plus visible selection halo,
+open_visualizer,Enter on selected/focused node,Keep Enter for open visualizer,,Double click opens visualizer,Keep double click and maybe add context menu item,,Not implemented,Use double tap or dedicated open button,
+open_parameter_panel,Ctrl+Enter opens params,Keep,,Context menu and edit actions exist,Keep and add visible edit button on hover,,Not implemented,Use long press or explicit gear button,
+create_connection,Not surfaced for keyboard yet,Add port-to-port keyboard workflow later,,Mouse node and port interaction is primary,Keep and clarify with hover states,,Not implemented,Drag from visible port handles later,
+move_canvas_view,Arrow-key node focus exists but canvas pan is limited,Add keyboard pan with Shift+Arrows later,,Mouse wheel and scrollbars work,Keep,,Not implemented,Use one-finger pan,
+zoom_time_span,No direct keyboard shortcut,Add +/- for time span later,Ctrl+Left/Right,Scale pills exist,Keep pills and add wheel+modifier later,,Not implemented,Pinch or dedicated chips,
+scroll_time_window,Indirect only,Add left/right shortcuts for time window later,Left/Right,Horizontal scrollbar and timeline exist,Keep and add Shift+wheel if desired,,Not implemented,One-finger horizontal scrub or bottom mini-map,
+scale_y_range,No direct keyboard shortcut,Add shortcut cycling later,Ctrl+Up/Down,Scale pills exist,Keep,,Not implemented,Two-finger vertical scale or chips,
+scale_channel_spacing,No direct keyboard shortcut,Add shortcut cycling later,,Scale pills exist,Keep,,Not implemented,Two-finger spacing gesture or chips,
+toggle_data_visibility,No keyboard shortcut,Add D toggle later,Alt+mnemonic,Button exists,Keep,,Not implemented,Tap toggle chip,
+toggle_marker_visibility,No keyboard shortcut,Add M toggle later,Alt+mnemonic,Button exists,Keep,,Not implemented,Tap toggle chip,
+toggle_remove_dc,No keyboard shortcut,Add C toggle later,Alt+mnemonic,Button exists,Keep,,Not implemented,Tap toggle chip,
+jump_to_marker,No keyboard shortcut,Add marker-list navigation later,,Clicking marker entries jumps to centered marker,Keep,,Not implemented,Tap marker entry to jump,
+edit_markers,No keyboard workflow yet,Add focused-marker rename/create later,,Click/drag in edit mode works,Keep and refine,,Not implemented,Drag-to-create markers later,
+interactive_artifact_review,No keyboard workflow yet,Add accept/reject shortcuts later,,Mouse workflow exists,Keep,,Not implemented,Tap cards plus swipe actions later

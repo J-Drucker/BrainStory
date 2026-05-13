@@ -59,20 +59,60 @@ class DatasetPanel extends StatelessWidget {
                 final ds = datasets[index];
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Column(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      Text(
-                        ds.label,
-                        style: const TextStyle(color: Colors.white),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (datasetSourceName(ds) != ds.label)
-                        Text(
-                          datasetSourceName(ds),
-                          style: const TextStyle(color: Colors.white54, fontSize: 12),
-                          overflow: TextOverflow.ellipsis,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              ds.label,
+                              style: const TextStyle(color: Colors.white),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (datasetSourceName(ds) != ds.label)
+                              Text(
+                                datasetSourceName(ds),
+                                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
                         ),
+                      ),
+                      IconButton(
+                        tooltip: 'Remove dataset',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.close, color: Colors.white54, size: 18),
+                        onPressed: () async {
+                          final bool? confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (BuildContext dialogContext) {
+                              return AlertDialog(
+                                title: const Text('Remove dataset?'),
+                                content: Text(
+                                  'Remove ${ds.label} from this BrainStory project? Cached outputs tied to it will also be removed.',
+                                ),
+                                actions: <Widget>[
+                                  TextButton(
+                                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                                    child: const Text('Remove'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                          if (confirmed != true) {
+                            return;
+                          }
+                          await logic.removeDataset(ds.id);
+                          onChanged();
+                        },
+                      ),
                     ],
                   ),
                 );

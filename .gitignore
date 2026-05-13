@@ -1,0 +1,23 @@
+# BrainStory runtime artifacts
+gui/.brainstory_cache/
+
+# Local tool state
+.dart-tool-home/
+.dart_tool/
+
+# Build outputs
+engine/target/
+gui/build/
+
+# Local scratch files
+tmp_*.dart
+*.tmp
+
+# Local data/project files used during manual testing
+tests/*.edf
+tests/*.fdt
+tests/*.set
+tests/*.tsv
+tests/*.bst
+tests/swez/
+tests/swez

@@ -202,6 +202,7 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     required List<ArtifactExemplarData> exemplars,
     required List<ArtifactCandidateData> existingCandidates,
     double threshold = 0.78,
+    bool enableTemplateMatching = true,
   }) {
     final List<ArtifactTemplateSummary> templates = <ArtifactTemplateSummary>[];
     final List<ArtifactCandidateData> nextCandidates = <ArtifactCandidateData>[];
@@ -246,19 +247,24 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
             _summarizeTemplateChannels(template.channelSamples),
           ),
           previewChannels: _decimateTemplateChannelsPreview(template.channelSamples),
+          peakTopomapValues: _peakGfpChannelSnapshot(
+            _baselineCenterTemplateChannels(template.channelSamples),
+          ),
         ),
       );
-      nextCandidates.addAll(
-        _detectCandidatesForTemplate(
-          datasetId: datasetId,
-          signal: workingSignal,
-          sampleRate: timeSeries.sampleRate,
-          template: template,
-          threshold: threshold,
-          exemplars: entry.value,
-          existingById: existingById,
-        ),
-      );
+      if (enableTemplateMatching) {
+        nextCandidates.addAll(
+          _detectCandidatesForTemplate(
+            datasetId: datasetId,
+            signal: workingSignal,
+            sampleRate: timeSeries.sampleRate,
+            template: template,
+            threshold: threshold,
+            exemplars: entry.value,
+            existingById: existingById,
+          ),
+        );
+      }
     }
 
     nextCandidates.sort(
@@ -485,6 +491,7 @@ class ArtifactTemplateSummary {
     this.durationMicros = 0,
     this.previewSamples = const <double>[],
     this.previewChannels = const <List<double>>[],
+    this.peakTopomapValues = const <double>[],
   });
 
   final String datasetId;
@@ -494,6 +501,7 @@ class ArtifactTemplateSummary {
   final int durationMicros;
   final List<double> previewSamples;
   final List<List<double>> previewChannels;
+  final List<double> peakTopomapValues;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -504,6 +512,7 @@ class ArtifactTemplateSummary {
       'durationMicros': durationMicros,
       'previewSamples': previewSamples,
       'previewChannels': previewChannels,
+      'peakTopomapValues': peakTopomapValues,
     };
   }
 
@@ -524,6 +533,10 @@ class ArtifactTemplateSummary {
                 .toList(growable: false),
           )
           .toList(growable: false),
+      peakTopomapValues:
+          (json['peakTopomapValues'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
     );
   }
 }
@@ -679,6 +692,59 @@ List<List<double>> _decimateTemplateChannelsPreview(
           targetPoints: targetPoints,
         ),
       )
+      .toList(growable: false);
+}
+
+List<List<double>> _baselineCenterTemplateChannels(List<List<double>> channels) {
+  return channels.map((List<double> channel) {
+    if (channel.isEmpty) {
+      return const <double>[];
+    }
+    double mean = 0.0;
+    for (final double value in channel) {
+      mean += value;
+    }
+    mean /= channel.length;
+    return channel
+        .map((double value) => value - mean)
+        .toList(growable: false);
+  }).toList(growable: false);
+}
+
+List<double> _peakGfpChannelSnapshot(List<List<double>> channels) {
+  if (channels.isEmpty) {
+    return const <double>[];
+  }
+  final int sampleCount = channels
+      .map((List<double> channel) => channel.length)
+      .fold<int>(channels.first.length, math.min);
+  if (sampleCount == 0) {
+    return const <double>[];
+  }
+
+  int bestIndex = 0;
+  double bestGfp = double.negativeInfinity;
+  for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+    double mean = 0.0;
+    for (final List<double> channel in channels) {
+      mean += channel[sampleIndex];
+    }
+    mean /= channels.length;
+
+    double variance = 0.0;
+    for (final List<double> channel in channels) {
+      final double centered = channel[sampleIndex] - mean;
+      variance += centered * centered;
+    }
+    final double gfp = math.sqrt(variance / channels.length);
+    if (gfp > bestGfp) {
+      bestGfp = gfp;
+      bestIndex = sampleIndex;
+    }
+  }
+
+  return channels
+      .map((List<double> channel) => channel[bestIndex])
       .toList(growable: false);
 }
 

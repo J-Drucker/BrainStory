@@ -9,7 +9,6 @@ import 'fooof_node.dart';
 import 'impedances_node.dart';
 import 'machine_learning_nodes.dart';
 import 'multimodal_nodes.dart';
-import 'interactive_artifact_detection_node.dart';
 import 'psd_node.dart';
 import 'publish_node.dart';
 import 'recode_markers_node.dart';
@@ -58,10 +57,7 @@ class NodeRegistryEntry {
   final NodeGroup group;
   final NodeType Function() create;
 
-  NodeRegistryEntry({
-    required this.group,
-    required this.create,
-  });
+  NodeRegistryEntry({required this.group, required this.create});
 }
 
 /// Central 3-level hierarchy:
@@ -79,17 +75,41 @@ class NodeRegistry {
   static final List<NodeRegistryEntry> entries = [
     // Input
     NodeRegistryEntry(group: NodeGroup.import, create: () => ImportNodeType()),
-    NodeRegistryEntry(group: NodeGroup.import, create: () => EditChannelsNodeType()),
-    NodeRegistryEntry(group: NodeGroup.import, create: () => BridgeDetectorNodeType()),
-    NodeRegistryEntry(group: NodeGroup.import, create: () => ResampleNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.import,
+      create: () => EditChannelsNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.import,
+      create: () => BridgeDetectorNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.import,
+      create: () => ResampleNodeType(),
+    ),
 
     // Signal processing
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => BandpassNodeType()),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => AmplitudeFeaturesNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => BandpassNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => AmplitudeFeaturesNodeType(),
+    ),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => FooofNodeType()),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => SpectralFeaturesNodeType()),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => MicrostatesNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => FooofNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => SpectralFeaturesNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => MicrostatesNodeType(),
+    ),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PCANodeType()),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => ICANodeType()),
     NodeRegistryEntry(
@@ -136,10 +156,6 @@ class NodeRegistry {
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
-      create: () => InteractiveArtifactDetectionNodeType(),
-    ),
-    NodeRegistryEntry(
-      group: NodeGroup.markerFunctions,
       create: () => RecodeMarkersNodeType(),
     ),
     NodeRegistryEntry(
@@ -160,10 +176,25 @@ class NodeRegistry {
     ),
 
     // Endpoints
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ImpedancesNodeType()),
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => VisualizationNodeType()),
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => DebugOutputNodeType()),
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => ExportNodeType()),
-    NodeRegistryEntry(group: NodeGroup.endpoints, create: () => PublishNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.endpoints,
+      create: () => ImpedancesNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.endpoints,
+      create: () => VisualizationNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.endpoints,
+      create: () => DebugOutputNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.endpoints,
+      create: () => ExportNodeType(),
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.endpoints,
+      create: () => PublishNodeType(),
+    ),
   ];
 }

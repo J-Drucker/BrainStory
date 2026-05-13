@@ -25,13 +25,16 @@ class ResampleNodeType extends NodeType {
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  String get executionChunkingStrategy => 'by channel';
 
   @override
   Widget buildBody(
@@ -101,6 +104,23 @@ class ResampleNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    await _runInternal(dataset, params, null);
+  }
+
+  @override
+  Future<void> runChunked(
+    Dataset dataset,
+    Map<String, dynamic> params,
+    NodeExecutionContext context,
+  ) async {
+    await _runInternal(dataset, params, context);
+  }
+
+  Future<void> _runInternal(
+    Dataset dataset,
+    Map<String, dynamic> params,
+    NodeExecutionContext? context,
+  ) async {
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
       return;
@@ -110,19 +130,30 @@ class ResampleNodeType extends NodeType {
         (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;
     final String method = (params['method'] ?? 'cubic_spline').toString();
     final bool omitSpikes = (params['omitSpikes'] as bool?) ?? false;
+    final List<List<double>> outputChannels = <List<double>>[];
+    final List<List<double>> inputChannels = timeSeries.channels;
 
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: timeSeries.channels.map((List<double> channel) {
-        final List<double> preparedSamples = omitSpikes
-            ? suppressSpikes(channel)
-            : List<double>.from(channel);
-        return resampleSignal(
+    for (int index = 0; index < inputChannels.length; index++) {
+      await context?.setProgress(
+        'Resampling ${dataset.label}: channel ${index + 1}/${inputChannels.length}...',
+      );
+      final List<double> channel = inputChannels[index];
+      final List<double> preparedSamples = omitSpikes
+          ? suppressSpikes(channel)
+          : List<double>.from(channel);
+      outputChannels.add(
+        resampleSignal(
           preparedSamples,
           sourceSampleRate: timeSeries.sampleRate,
           targetSampleRate: targetSampleRate,
           method: method,
-        );
-      }).toList(growable: false),
+        ),
+      );
+      await context?.yieldIfNeeded();
+    }
+
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: outputChannels,
       sampleRate: targetSampleRate,
       channelLabels: timeSeries.channelLabels,
       markers: timeSeries.markers
@@ -140,7 +171,9 @@ String _currentRateLabel(List<double> sampleRates) {
 
   final List<double> uniqueRates = <double>[];
   for (final double rate in sampleRates) {
-    final bool seen = uniqueRates.any((double value) => (value - rate).abs() < 0.001);
+    final bool seen = uniqueRates.any(
+      (double value) => (value - rate).abs() < 0.001,
+    );
     if (!seen) {
       uniqueRates.add(rate);
     }
@@ -151,7 +184,10 @@ String _currentRateLabel(List<double> sampleRates) {
   }
 
   return uniqueRates
-      .map((double rate) => '${rate.toStringAsFixed(rate.truncateToDouble() == rate ? 0 : 2)} Hz')
+      .map(
+        (double rate) =>
+            '${rate.toStringAsFixed(rate.truncateToDouble() == rate ? 0 : 2)} Hz',
+      )
       .join(', ');
 }
 
@@ -170,7 +206,10 @@ List<double> resampleSignal(
   }
 
   final double durationSeconds = input.length / sourceSampleRate;
-  final int outputLength = math.max(1, (durationSeconds * targetSampleRate).round());
+  final int outputLength = math.max(
+    1,
+    (durationSeconds * targetSampleRate).round(),
+  );
 
   return List<double>.generate(outputLength, (int index) {
     final double sourceIndex = index * sourceSampleRate / targetSampleRate;
@@ -200,10 +239,9 @@ List<double> suppressSpikes(List<double> input) {
       input[index + 2],
     ]..sort();
     final double median = (neighborhood[1] + neighborhood[2]) / 2.0;
-    final List<double> deviations = neighborhood
-        .map((double value) => (value - median).abs())
-        .toList()
-      ..sort();
+    final List<double> deviations =
+        neighborhood.map((double value) => (value - median).abs()).toList()
+          ..sort();
     final double mad = (deviations[1] + deviations[2]) / 2.0;
     final double threshold = math.max(1e-6, mad * 6.0);
     if ((input[index] - median).abs() > threshold) {

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -9,6 +10,8 @@ import '../model/dataset.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
+import 'artifact_template_preview.dart';
+import 'channel_positions_dialog.dart';
 
 class RawSignalBrowser extends StatefulWidget {
   const RawSignalBrowser({
@@ -16,22 +19,50 @@ class RawSignalBrowser extends StatefulWidget {
     required this.dataset,
     required this.params,
     this.onChanged,
-    this.onMarkersChanged,
-    this.onChannelEditsSaved,
-    this.onInteractiveArtifactDetectionSaved,
-    this.onSaveAndQuit,
+    this.onPersistDrafts,
+    this.onQuit,
   });
 
   final Dataset dataset;
   final Map<String, dynamic> params;
   final VoidCallback? onChanged;
-  final ValueChanged<List<dynamic>>? onMarkersChanged;
-  final ValueChanged<Map<String, dynamic>>? onChannelEditsSaved;
-  final VoidCallback? onInteractiveArtifactDetectionSaved;
-  final VoidCallback? onSaveAndQuit;
+  final Future<void> Function(ViewerDraftSaveRequest request)? onPersistDrafts;
+  final VoidCallback? onQuit;
 
   @override
   State<RawSignalBrowser> createState() => _RawSignalBrowserState();
+}
+
+class ViewerDraftSaveRequest {
+  const ViewerDraftSaveRequest({
+    this.markerEdits,
+    this.channelEditConfig,
+    this.interactiveArtifactParams,
+    this.runAfterSave = false,
+  });
+
+  final List<Map<String, dynamic>>? markerEdits;
+  final Map<String, dynamic>? channelEditConfig;
+  final Map<String, dynamic>? interactiveArtifactParams;
+  final bool runAfterSave;
+
+  bool get hasMarkerEdits => markerEdits != null;
+  bool get hasChannelEdits => channelEditConfig != null;
+  bool get hasInteractiveArtifactEdits => interactiveArtifactParams != null;
+}
+
+class _ChannelDisplayRow {
+  const _ChannelDisplayRow({
+    required this.sourceIndex,
+    required this.label,
+    required this.samples,
+    required this.removed,
+  });
+
+  final int sourceIndex;
+  final String label;
+  final List<double> samples;
+  final bool removed;
 }
 
 class _RawSignalBrowserState extends State<RawSignalBrowser> {
@@ -60,9 +91,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     1000,
   ];
   static const List<double> _timeSpanOptionsSec = <double>[1, 2, 5, 10, 20, 30];
-  static const List<double> _channelSpacingOptions = <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+  static const List<double> _channelSpacingOptions = <double>[
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+  ];
   static const double _collapsedRailWidth = 28;
 
+  late final FocusNode _focusNode;
   late final ScrollController _verticalController;
   late final ScrollController _horizontalController;
 
@@ -77,33 +116,44 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   List<Map<String, dynamic>>? _draftArtifactExemplars;
   List<Map<String, dynamic>>? _draftArtifactCandidates;
   List<Map<String, dynamic>>? _draftArtifactTemplates;
+  String? _lastPersistedDraftFingerprint;
   Offset? _dragSelectionStart;
   Offset? _dragSelectionCurrent;
   Offset? _dragSelectionGlobal;
-  String? _lastFocusedReferenceId;
   String? _hoveredMarkerReferenceId;
+  String? _viewIdentity;
   bool _renamingMarker = false;
+  double _lastTraceViewportWidth = 180;
+  bool _traceViewportSyncScheduled = false;
 
   @override
   void initState() {
     super.initState();
-    _verticalController = ScrollController();
-    _horizontalController = ScrollController();
+    _focusNode = FocusNode();
+    _verticalController = ScrollController(keepScrollOffset: false);
+    _horizontalController = ScrollController(keepScrollOffset: false);
+    _viewIdentity = _currentViewIdentity();
     _ensureDefaults();
+    _scheduleViewportReset();
   }
 
   @override
   void didUpdateWidget(covariant RawSignalBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);
     _ensureDefaults();
-    if (oldWidget.dataset.id != widget.dataset.id) {
+    final String nextIdentity = _currentViewIdentity();
+    if (_viewIdentity != nextIdentity) {
+      _viewIdentity = nextIdentity;
       _draftMarkers = null;
       _draftChannelEditConfig = null;
+      _lastPersistedDraftFingerprint = null;
+      _scheduleViewportReset();
     }
   }
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _verticalController.dispose();
     _horizontalController.dispose();
     super.dispose();
@@ -116,356 +166,529 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     if (timeSeries == null || timeSeries.channels.isEmpty) {
       return const _BrowserMessage(
         title: 'No time-domain signal',
-        body: 'Run an Import or signal-processing path upstream of this visualization node first.',
+        body:
+            'Run an Import or signal-processing path upstream of this visualization node first.',
       );
     }
 
-    final List<List<double>> channels = _effectiveChannels(timeSeries);
-    final List<String> labels = _channelLabels(timeSeries, channels.length);
-    final List<Color> channelColors = _channelColors(channels.length);
-    final int channelCount = channels.length;
-    final double durationSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
+    final List<_ChannelDisplayRow> channelRows = _channelDisplayRows(
+      timeSeries,
+    );
+    final List<List<double>> channels = channelRows
+        .map(((_ChannelDisplayRow row) => row.samples))
+        .toList(growable: false);
+    final List<String> labels = channelRows
+        .map(((_ChannelDisplayRow row) => row.label))
+        .toList(growable: false);
+    final List<bool> removedRows = channelRows
+        .map(((_ChannelDisplayRow row) => row.removed))
+        .toList(growable: false);
+    final List<Color> baseChannelColors = _channelColors(
+      timeSeries.channelCount,
+    );
+    final List<Color> channelColors = channelRows
+        .map(((_ChannelDisplayRow row) => baseChannelColors[row.sourceIndex]))
+        .toList(growable: false);
+    final int channelCount = channelRows.length;
+    final double durationSeconds =
+        timeSeries.sampleCount / timeSeries.sampleRate;
     final bool showSignals = _showSignals();
     final bool showMarkers = _showMarkers();
     final bool removeDc = _removeDc();
     final bool hideSignals = !showSignals;
-    final bool interactiveArtifactDetection = _interactiveArtifactDetectionEnabled();
+    final bool interactiveArtifactDetection =
+        _interactiveArtifactDetectionEnabled();
+    final bool markerEditingEnabled = _markerEditingEnabled();
+    final bool interactiveMatchingEnabled = _interactiveMatchingEnabled();
     final List<TimeMarker> markers = !showMarkers
         ? const <TimeMarker>[]
         : interactiveArtifactDetection
-            ? _interactiveDisplayMarkers(timeSeries)
-            : _currentMarkersForDataset();
+        ? _interactiveDisplayMarkers(timeSeries)
+        : _currentMarkersForDataset();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        _buildControlBar(
-          sampleRate: timeSeries.sampleRate,
-          channelCount: channelCount,
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final bool rightCollapsed = _rightPanelCollapsed();
-              final double defaultLabelWidth = _defaultLeftPanelWidth(labels);
-              final double defaultSidePanelWidth = _defaultRightPanelWidth(markers);
-              final double labelWidth = hideSignals
-                  ? 0
-                  : _resolvedLeftPanelWidth(defaultLabelWidth);
-              final double sidePanelWidth = rightCollapsed
-                  ? _collapsedRailWidth
-                  : _resolvedRightPanelWidth(defaultSidePanelWidth);
-              final double leftPaneWidth =
-                  math.max(260, constraints.maxWidth - sidePanelWidth - 24 - labelWidth);
-              final double traceWidth = math.max(
-                180,
-                leftPaneWidth,
-              );
-              final double secondsPerView =
-                  (widget.params['window_sec'] as num?)?.toDouble() ?? 10.0;
-              final double pixelsPerSecond = traceWidth / secondsPerView;
-              final double totalWidth =
-                  math.max(traceWidth, durationSeconds * pixelsPerSecond);
-              const double axisHeight = 26;
-              const double timelineHeight = 28;
-              const double bottomChromeHeight = axisHeight + timelineHeight + 12;
-              final double traceAreaHeight =
-                  math.max(140, constraints.maxHeight - bottomChromeHeight);
-              final double totalHeight = hideSignals
-                  ? traceAreaHeight
-                  : math.max(
-                      traceAreaHeight,
-                      _channelHeight(traceAreaHeight, channelCount) * channelCount,
-                    );
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapDown: (_) => _focusNode.requestFocus(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            _buildControlBar(
+              sampleRate: timeSeries.sampleRate,
+              channelCount: channelCount,
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final bool rightCollapsed = _rightPanelCollapsed();
+                  final double defaultLabelWidth = _defaultLeftPanelWidth(
+                    labels,
+                  );
+                  final double defaultSidePanelWidth = _defaultRightPanelWidth(
+                    markers,
+                  );
+                  final double labelWidth = hideSignals
+                      ? 0
+                      : _resolvedLeftPanelWidth(defaultLabelWidth);
+                  final double sidePanelWidth = rightCollapsed
+                      ? _collapsedRailWidth
+                      : _resolvedRightPanelWidth(defaultSidePanelWidth);
+                  const double traceContainerInset = 10;
+                  const double canvasSideChromeWidth = 20;
+                  final double leftPaneWidth = math.max(
+                    260,
+                    constraints.maxWidth -
+                        sidePanelWidth -
+                        canvasSideChromeWidth,
+                  );
+                  final double leftContentWidth = math.max(
+                    180,
+                    leftPaneWidth - (traceContainerInset * 2),
+                  );
+                  final double traceViewportWidth = math.max(
+                    180,
+                    leftContentWidth - labelWidth - (hideSignals ? 0 : 16),
+                  );
+                  final double secondsPerView =
+                      (widget.params['window_sec'] as num?)?.toDouble() ?? 10.0;
+                  _syncTraceViewportWidth(
+                    nextWidth: traceViewportWidth,
+                    secondsPerView: secondsPerView,
+                  );
+                  final double effectiveViewportWidth = traceViewportWidth;
+                  final double pixelsPerSecond =
+                      effectiveViewportWidth / secondsPerView;
+                  final double totalWidth = math.max(
+                    effectiveViewportWidth,
+                    durationSeconds * pixelsPerSecond,
+                  );
+                  const double axisHeight = 26;
+                  const double timelineHeight = 28;
+                  const double bottomChromeHeight =
+                      axisHeight + timelineHeight + 12;
+                  final double traceAreaHeight = math.max(
+                    140,
+                    constraints.maxHeight - bottomChromeHeight,
+                  );
+                  final double totalHeight = hideSignals
+                      ? traceAreaHeight
+                      : math.max(
+                          traceAreaHeight,
+                          _channelHeight(traceAreaHeight, channelCount) *
+                              channelCount,
+                        );
 
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: Column(
-                      children: <Widget>[
-                        Expanded(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: Scrollbar(
-                                controller: _verticalController,
-                                thumbVisibility: true,
-                                child: SingleChildScrollView(
-                                  controller: _verticalController,
-                                  scrollDirection: Axis.vertical,
-                                  child: SizedBox(
-                                    width: leftPaneWidth,
-                                    height: totalHeight,
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: <Widget>[
-                                        if (!hideSignals)
-                                          SizedBox(
-                                            width: labelWidth,
-                                            child: _ChannelLabelColumn(
-                                              labels: labels,
-                                              colors: channelColors,
-                                              channelHeight: _channelHeight(
-                                                traceAreaHeight,
-                                                channelCount,
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          children: <Widget>[
+                            Expanded(
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(10),
+                                  child: Scrollbar(
+                                    controller: _verticalController,
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
+                                      controller: _verticalController,
+                                      scrollDirection: Axis.vertical,
+                                      child: SizedBox(
+                                        width: leftContentWidth,
+                                        height: totalHeight,
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: <Widget>[
+                                            if (!hideSignals)
+                                              SizedBox(
+                                                width: labelWidth,
+                                                child: _ChannelLabelColumn(
+                                                  labels: labels,
+                                                  colors: channelColors,
+                                                  removed: removedRows,
+                                                  channelHeight: _channelHeight(
+                                                    traceAreaHeight,
+                                                    channelCount,
+                                                  ),
+                                                  onCycleColor:
+                                                      _cycleChannelColor,
+                                                  channelEditEnabled:
+                                                      markerEditingEnabled,
+                                                  onEditChannel:
+                                                      (int rowIndex) =>
+                                                          _showChannelEditPanel(
+                                                            channelRows[rowIndex]
+                                                                .sourceIndex,
+                                                          ),
+                                                ),
                                               ),
-                                              onCycleColor: _cycleChannelColor,
-                                              channelEditEnabled:
-                                                  _interactionMode() == 'edit',
-                                              onEditChannel: _showChannelEditPanel,
-                                            ),
-                                          ),
-                                        if (!hideSignals) const SizedBox(width: 4),
-                                        if (!hideSignals)
-                                          _PanelResizeHandle(
-                                            onDoubleTap: () => setState(() {
-                                              widget.params.remove('left_panel_width');
-                                            }),
-                                            onDragUpdate: (double delta) {
-                                              _updateParam(
-                                                'left_panel_width',
-                                                (_resolvedLeftPanelWidth(defaultLabelWidth) +
-                                                        delta)
-                                                    .clamp(88.0, 260.0),
-                                              );
-                                            },
-                                          ),
-                                        if (!hideSignals) const SizedBox(width: 4),
-                                        Expanded(
-                                          child: Scrollbar(
-                                            controller: _horizontalController,
-                                            thumbVisibility: true,
-                                            notificationPredicate:
-                                                (ScrollNotification notification) =>
-                                                    notification.metrics.axis ==
-                                                    Axis.horizontal,
-                                            child: SingleChildScrollView(
-                                              controller: _horizontalController,
-                                              scrollDirection: Axis.horizontal,
-                                              child: MouseRegion(
-                                                onHover: (PointerHoverEvent details) {
-                                                  if (_interactionMode() != 'edit') {
-                                                    if (_hoveredMarkerReferenceId != null) {
-                                                      setState(() {
-                                                        _hoveredMarkerReferenceId = null;
-                                                      });
-                                                    }
-                                                    return;
-                                                  }
-                                                  final TimeMarker? hoveredMarker =
-                                                      _markerAtLabelPosition(
-                                                    details.localPosition,
-                                                    pixelsPerSecond,
+                                            if (!hideSignals)
+                                              const SizedBox(width: 4),
+                                            if (!hideSignals)
+                                              _PanelResizeHandle(
+                                                onDoubleTap: () => setState(() {
+                                                  widget.params.remove(
+                                                    'left_panel_width',
                                                   );
-                                                  final String? nextId = hoveredMarker == null
-                                                      ? null
-                                                      : _markerReferenceId(hoveredMarker);
-                                                  if (nextId != _hoveredMarkerReferenceId) {
-                                                    setState(() {
-                                                      _hoveredMarkerReferenceId = nextId;
-                                                    });
-                                                  }
+                                                }),
+                                                onDragUpdate: (double delta) {
+                                                  _updateParam(
+                                                    'left_panel_width',
+                                                    (_resolvedLeftPanelWidth(
+                                                              defaultLabelWidth,
+                                                            ) +
+                                                            delta)
+                                                        .clamp(88.0, 260.0),
+                                                  );
                                                 },
-                                                onExit: (_) {
-                                                  if (_hoveredMarkerReferenceId != null) {
-                                                    setState(() {
-                                                      _hoveredMarkerReferenceId = null;
-                                                    });
-                                                  }
-                                                },
-                                                child: GestureDetector(
-                                                  behavior: HitTestBehavior.opaque,
-                                                  onTapDown: interactiveArtifactDetection
-                                                      ? null
-                                                      : null,
-                                                  onPanStart: interactiveArtifactDetection
-                                                      ? (DragStartDetails details) {
-                                                          _handleArtifactDragStart(
-                                                            details.localPosition,
-                                                            details.globalPosition,
-                                                          );
+                                              ),
+                                            if (!hideSignals)
+                                              const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Scrollbar(
+                                                controller:
+                                                    _horizontalController,
+                                                thumbVisibility: true,
+                                                notificationPredicate:
+                                                    (
+                                                      ScrollNotification
+                                                      notification,
+                                                    ) =>
+                                                        notification
+                                                            .metrics
+                                                            .axis ==
+                                                        Axis.horizontal,
+                                                child: SingleChildScrollView(
+                                                  controller:
+                                                      _horizontalController,
+                                                  scrollDirection:
+                                                      Axis.horizontal,
+                                                  child: MouseRegion(
+                                                    onHover: (PointerHoverEvent details) {
+                                                      if (!markerEditingEnabled) {
+                                                        if (_hoveredMarkerReferenceId !=
+                                                            null) {
+                                                          setState(() {
+                                                            _hoveredMarkerReferenceId =
+                                                                null;
+                                                          });
                                                         }
-                                                      : _interactionMode() == 'edit'
-                                                          ? (DragStartDetails details) {
-                                                              _handleMarkerDragStart(
-                                                                details.localPosition,
-                                                              );
-                                                            }
-                                                          : null,
-                                                  onPanUpdate: interactiveArtifactDetection
-                                                      ? (DragUpdateDetails details) {
-                                                          _handleArtifactDragUpdate(
-                                                            details.localPosition,
-                                                            details.globalPosition,
-                                                          );
-                                                        }
-                                                      : _interactionMode() == 'edit'
-                                                          ? (DragUpdateDetails details) {
-                                                              _handleMarkerDragUpdate(
-                                                                details.localPosition,
-                                                              );
-                                                            }
-                                                          : null,
-                                                  onPanEnd: interactiveArtifactDetection
-                                                      ? (DragEndDetails details) {
-                                                          _handleArtifactDragEnd(
+                                                        return;
+                                                      }
+                                                      final TimeMarker?
+                                                      hoveredMarker =
+                                                          _markerAtLabelPosition(
+                                                            details
+                                                                .localPosition,
                                                             pixelsPerSecond,
                                                           );
-                                                        }
-                                                      : _interactionMode() == 'edit'
-                                                          ? (DragEndDetails details) {
+                                                      final String? nextId =
+                                                          hoveredMarker == null
+                                                          ? null
+                                                          : _markerReferenceId(
+                                                              hoveredMarker,
+                                                            );
+                                                      if (nextId !=
+                                                          _hoveredMarkerReferenceId) {
+                                                        setState(() {
+                                                          _hoveredMarkerReferenceId =
+                                                              nextId;
+                                                        });
+                                                      }
+                                                    },
+                                                    onExit: (_) {
+                                                      if (_hoveredMarkerReferenceId !=
+                                                          null) {
+                                                        setState(() {
+                                                          _hoveredMarkerReferenceId =
+                                                              null;
+                                                        });
+                                                      }
+                                                    },
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .opaque,
+                                                      onTapDown: null,
+                                                      onPanStart:
+                                                          interactiveMatchingEnabled
+                                                          ? (
+                                                              DragStartDetails
+                                                              details,
+                                                            ) {
+                                                              _handleArtifactDragStart(
+                                                                details
+                                                                    .localPosition,
+                                                                details
+                                                                    .globalPosition,
+                                                              );
+                                                            }
+                                                          : markerEditingEnabled
+                                                          ? (
+                                                              DragStartDetails
+                                                              details,
+                                                            ) {
+                                                              _handleMarkerDragStart(
+                                                                details
+                                                                    .localPosition,
+                                                              );
+                                                            }
+                                                          : null,
+                                                      onPanUpdate:
+                                                          interactiveMatchingEnabled
+                                                          ? (
+                                                              DragUpdateDetails
+                                                              details,
+                                                            ) {
+                                                              _handleArtifactDragUpdate(
+                                                                details
+                                                                    .localPosition,
+                                                                details
+                                                                    .globalPosition,
+                                                              );
+                                                            }
+                                                          : markerEditingEnabled
+                                                          ? (
+                                                              DragUpdateDetails
+                                                              details,
+                                                            ) {
+                                                              _handleMarkerDragUpdate(
+                                                                details
+                                                                    .localPosition,
+                                                              );
+                                                            }
+                                                          : null,
+                                                      onPanEnd:
+                                                          interactiveMatchingEnabled
+                                                          ? (
+                                                              DragEndDetails
+                                                              details,
+                                                            ) {
+                                                              _handleArtifactDragEnd(
+                                                                pixelsPerSecond,
+                                                              );
+                                                            }
+                                                          : markerEditingEnabled
+                                                          ? (
+                                                              DragEndDetails
+                                                              details,
+                                                            ) {
                                                               _handleMarkerDragEnd(
                                                                 pixelsPerSecond,
                                                               );
                                                             }
                                                           : null,
-                                                  onTapUp: interactiveArtifactDetection
-                                                      ? null
-                                                      : (TapUpDetails details) {
-                                                          _handleMarkerTapOrRename(
-                                                            details.localPosition,
-                                                            pixelsPerSecond,
-                                                          );
-                                                        },
-                                                  child: SizedBox(
-                                                    width: totalWidth,
-                                                    height: totalHeight,
-                                                    child: RepaintBoundary(
-                                                      child: AnimatedBuilder(
-                                                        animation: Listenable.merge(
-                                                          <Listenable>[
-                                                            _horizontalController,
-                                                            _verticalController,
-                                                          ],
-                                                        ),
-                                                        builder: (BuildContext context, Widget? child) {
-                                                          return CustomPaint(
-                                                            painter: _RawSignalPainter(
-                                                              channels: channels,
-                                                              channelLabels: labels,
-                                                            sampleRate: timeSeries.sampleRate,
-                                                            channelHeight: _channelHeight(
-                                                              traceAreaHeight,
-                                                              channelCount,
-                                                            ),
-                                                            pixelsPerSecond: pixelsPerSecond,
-                                                            yScaleUv: _yScaleUv(),
-                                                            showSignals: showSignals,
-                                                            removeDc: removeDc,
-                                                            colors: channelColors,
-                                                            markers: markers,
-                                                            selectionStartX: _dragSelectionStart?.dx,
-                                                            selectionEndX: _dragSelectionCurrent?.dx,
-                                                            hoveredMarkerReferenceId:
-                                                                _hoveredMarkerReferenceId,
-                                                            horizontalOffset:
-                                                                _horizontalController.hasClients
-                                                                    ? _horizontalController.offset
-                                                                    : 0.0,
-                                                            verticalOffset:
-                                                                _verticalController.hasClients
-                                                                    ? _verticalController.offset
-                                                                    : 0.0,
-                                                            viewportWidth: traceWidth,
-                                                            viewportHeight: traceAreaHeight,
+                                                      onTapUp:
+                                                          markerEditingEnabled
+                                                          ? (
+                                                              TapUpDetails
+                                                              details,
+                                                            ) {
+                                                              _handleMarkerTapOrRename(
+                                                                details
+                                                                    .localPosition,
+                                                                pixelsPerSecond,
+                                                              );
+                                                            }
+                                                          : null,
+                                                      child: SizedBox(
+                                                        width: totalWidth,
+                                                        height: totalHeight,
+                                                        child: RepaintBoundary(
+                                                          child: AnimatedBuilder(
+                                                            animation: Listenable.merge(<
+                                                              Listenable
+                                                            >[
+                                                              _horizontalController,
+                                                              _verticalController,
+                                                            ]),
+                                                            builder:
+                                                                (
+                                                                  BuildContext
+                                                                  context,
+                                                                  Widget? child,
+                                                                ) {
+                                                                  return CustomPaint(
+                                                                    painter: _RawSignalPainter(
+                                                                      channels:
+                                                                          channels,
+                                                                      channelLabels:
+                                                                          labels,
+                                                                      sampleCount:
+                                                                          timeSeries
+                                                                              .sampleCount,
+                                                                      sampleRate:
+                                                                          timeSeries
+                                                                              .sampleRate,
+                                                                      channelHeight: _channelHeight(
+                                                                        traceAreaHeight,
+                                                                        channelCount,
+                                                                      ),
+                                                                      pixelsPerSecond:
+                                                                          pixelsPerSecond,
+                                                                      yScaleUv:
+                                                                          _yScaleUv(),
+                                                                      showSignals:
+                                                                          showSignals,
+                                                                      removeDc:
+                                                                          removeDc,
+                                                                      colors:
+                                                                          channelColors,
+                                                                      removedRows:
+                                                                          removedRows,
+                                                                      markers:
+                                                                          markers,
+                                                                      selectionStartX:
+                                                                          _dragSelectionStart
+                                                                              ?.dx,
+                                                                      selectionEndX:
+                                                                          _dragSelectionCurrent
+                                                                              ?.dx,
+                                                                      hoveredMarkerReferenceId:
+                                                                          _hoveredMarkerReferenceId,
+                                                                      horizontalOffset:
+                                                                          _horizontalController
+                                                                              .hasClients
+                                                                          ? _horizontalController.offset
+                                                                          : 0.0,
+                                                                      verticalOffset:
+                                                                          _verticalController
+                                                                              .hasClients
+                                                                          ? _verticalController.offset
+                                                                          : 0.0,
+                                                                      viewportWidth:
+                                                                          effectiveViewportWidth,
+                                                                      viewportHeight:
+                                                                          traceAreaHeight,
+                                                                    ),
+                                                                  );
+                                                                },
                                                           ),
-                                                          );
-                                                        },
+                                                        ),
                                                       ),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
+                                          ],
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: EdgeInsets.only(left: labelWidth + 8),
-                            child: SizedBox(
-                              width: traceWidth,
-                              child: _TimeAxisBar(
-                                controller: _horizontalController,
-                                pixelsPerSecond: pixelsPerSecond,
-                                viewportWidth: traceWidth,
-                                durationSeconds: durationSeconds,
+                            const SizedBox(height: 6),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: traceContainerInset,
+                              ),
+                              child: Row(
+                                children: <Widget>[
+                                  if (!hideSignals) SizedBox(width: labelWidth),
+                                  if (!hideSignals) const SizedBox(width: 4),
+                                  if (!hideSignals) const SizedBox(width: 8),
+                                  if (!hideSignals) const SizedBox(width: 4),
+                                  Expanded(
+                                    child: SizedBox(
+                                      width: effectiveViewportWidth,
+                                      child: _TimeAxisBar(
+                                        controller: _horizontalController,
+                                        pixelsPerSecond: pixelsPerSecond,
+                                        viewportWidth: effectiveViewportWidth,
+                                        durationSeconds: durationSeconds,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: EdgeInsets.only(left: labelWidth + 8),
-                            child: SizedBox(
-                              width: traceWidth,
-                              child: _TimelineBar(
-                                controller: _horizontalController,
-                                totalWidth: totalWidth,
-                                viewportWidth: traceWidth,
-                                durationSeconds: durationSeconds,
+                            const SizedBox(height: 6),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: traceContainerInset,
+                              ),
+                              child: Row(
+                                children: <Widget>[
+                                  if (!hideSignals) SizedBox(width: labelWidth),
+                                  if (!hideSignals) const SizedBox(width: 4),
+                                  if (!hideSignals) const SizedBox(width: 8),
+                                  if (!hideSignals) const SizedBox(width: 4),
+                                  Expanded(
+                                    child: SizedBox(
+                                      width: effectiveViewportWidth,
+                                      child: _TimelineBar(
+                                        controller: _horizontalController,
+                                        totalWidth: totalWidth,
+                                        viewportWidth: effectiveViewportWidth,
+                                        durationSeconds: durationSeconds,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  _PanelResizeHandle(
-                    onDoubleTap: rightCollapsed
-                        ? null
-                        : () => setState(() {
-                              widget.params.remove('right_panel_width');
-                            }),
-                    onDragUpdate: rightCollapsed
-                        ? null
-                        : (double delta) {
-                            _updateParam(
-                              'right_panel_width',
-                              (_resolvedRightPanelWidth(defaultSidePanelWidth) - delta)
-                                  .clamp(188.0, 420.0),
-                            );
-                          },
-                  ),
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    width: sidePanelWidth,
-                    child: rightCollapsed
-                        ? _CollapsedSideRail(
-                            tooltip: 'Show markers',
-                            icon: Icons.chevron_left,
-                            onTap: () => _updateParam('right_panel_collapsed', false),
-                          )
-                        : _buildInfoPanel(
-                            interactiveArtifactDetection: interactiveArtifactDetection,
-                            markers: markers,
-                            onCollapse: () => _updateParam('right_panel_collapsed', true),
-                          ),
-                  ),
-                ],
-              );
-            },
-          ),
+                      ),
+                      const SizedBox(width: 8),
+                      _PanelResizeHandle(
+                        onDoubleTap: rightCollapsed
+                            ? null
+                            : () => setState(() {
+                                widget.params.remove('right_panel_width');
+                              }),
+                        onDragUpdate: rightCollapsed
+                            ? null
+                            : (double delta) {
+                                _updateParam(
+                                  'right_panel_width',
+                                  (_resolvedRightPanelWidth(
+                                            defaultSidePanelWidth,
+                                          ) -
+                                          delta)
+                                      .clamp(188.0, 420.0),
+                                );
+                              },
+                      ),
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: sidePanelWidth,
+                        child: rightCollapsed
+                            ? _CollapsedSideRail(
+                                tooltip: 'Show markers',
+                                icon: Icons.chevron_left,
+                                onTap: () => _updateParam(
+                                  'right_panel_collapsed',
+                                  false,
+                                ),
+                              )
+                            : _buildInfoPanel(
+                                interactiveArtifactDetection:
+                                    interactiveArtifactDetection,
+                                markers: markers,
+                                onCollapse: () =>
+                                    _updateParam('right_panel_collapsed', true),
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -473,15 +696,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     required double sampleRate,
     required int channelCount,
   }) {
-    final bool interactiveArtifactDetection = _interactiveArtifactDetectionEnabled();
+    final bool interactiveArtifactDetection =
+        _interactiveArtifactDetectionEnabled();
     final double windowSeconds =
         (widget.params['window_sec'] as num?)?.toDouble() ?? 10.0;
     final bool showSignals = _showSignals();
     final bool showMarkers = _showMarkers();
     final bool removeDc = _removeDc();
     final double spacingFactor = _channelSpacingFactor();
-    final bool controlsExpanded =
-        (widget.params['controls_expanded'] as bool?) ?? false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -511,70 +733,68 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 _InlineToggleOption(
                   label: 'markers',
                   selected: showMarkers,
-                  onPressed: () => _updateParam('raw_show_markers', !showMarkers),
-                ),
-                _InlineToggleOption(
-                  label: 'Remove DC',
-                  selected: removeDc,
-                  leadingGap: 10,
-                  onPressed: () => _updateParam('raw_remove_dc', !removeDc),
+                  onPressed: () =>
+                      _updateParam('raw_show_markers', !showMarkers),
                 ),
               ],
             ),
             const _ControlStripDivider(),
-            if (!interactiveArtifactDetection)
-              _InlineChoiceGroup(
-                label: 'Mode:',
-                options: <_InlineChoiceOption>[
-                  _InlineChoiceOption(
-                    label: 'view',
-                    selected: _interactionMode() == 'view',
-                    onPressed: () => _updateParam('interaction_mode', 'view'),
-                  ),
-                  _InlineChoiceOption(
-                    label: 'edit',
-                    selected: _interactionMode() == 'edit',
-                    onPressed: () => _updateParam('interaction_mode', 'edit'),
-                  ),
-                ],
-              ),
+            _InlineToggleButton(
+              label: 'Remove DC',
+              selected: removeDc,
+              onPressed: () => _updateParam('raw_remove_dc', !removeDc),
+            ),
+            const _ControlStripDivider(),
+            _InlineChoiceGroup(
+              label: 'Mode:',
+              options: <_InlineChoiceOption>[
+                _InlineChoiceOption(
+                  label: 'view',
+                  selected: _currentMode() == 'view',
+                  onPressed: () => _setMode('view'),
+                ),
+                _InlineChoiceOption(
+                  label: 'edit',
+                  selected: _currentMode() == 'edit',
+                  onPressed: () => _setMode('edit'),
+                ),
+                _InlineChoiceOption(
+                  label: 'interactive',
+                  selected: _currentMode() == 'interactive',
+                  onPressed: () => _setMode('interactive'),
+                ),
+              ],
+            ),
             if (interactiveArtifactDetection)
-              const Text(
-                'Drag to label blink • Alt+drag for other artifacts',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+              Text(
+                _interactiveMatchingEnabled()
+                    ? 'Drag to label blink • Alt+drag for other artifacts'
+                    : 'Edit uses the interactive backend, with template matching disabled',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
             const _ControlStripDivider(),
             _ScaleCluster(
               timeSeconds: windowSeconds,
               timeOptionsSeconds: _timeSpanOptionsSec,
-              onTimeSelected: (double value) => _updateParam('window_sec', value),
+              onTimeSelected: (double value) =>
+                  _updateParam('window_sec', value),
               rangeUv: _yScaleUv(),
               rangeOptionsUv: _yScaleOptionsUv,
-              onRangeSelected: (double value) => _updateParam('y_scale_uv', value),
+              onRangeSelected: (double value) =>
+                  _updateParam('y_scale_uv', value),
               spacingFactor: spacingFactor,
               spacingOptions: _channelSpacingOptions,
               onSpacingSelected: (double value) =>
                   _updateParam('channel_spacing_factor', value),
             ),
             OutlinedButton.icon(
-              onPressed: () => _updateParam('controls_expanded', !controlsExpanded),
-              icon: Icon(
-                controlsExpanded ? Icons.expand_less : Icons.tune,
-                size: 18,
-              ),
-              label: Text(controlsExpanded ? 'Hide Controls' : 'Show Controls'),
+              onPressed: () =>
+                  showChannelPositionsDialog(context, dataset: widget.dataset),
+              icon: const Icon(Icons.public, size: 18),
+              label: const Text('Channel positions'),
             ),
           ],
         ),
-        if (controlsExpanded) ...<Widget>[
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-            ],
-          ),
-        ],
       ],
     );
   }
@@ -600,14 +820,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 tooltip: 'Collapse panel',
                 visualDensity: VisualDensity.compact,
                 onPressed: onCollapse,
-                icon: const Icon(
-                  Icons.chevron_right,
-                  color: Colors.white70,
-                ),
+                icon: const Icon(Icons.chevron_right, color: Colors.white70),
               ),
             ),
             if (_hasAnyDraftChanges) ...<Widget>[
+              _buildDraftSummary(interactiveArtifactDetection),
+              const SizedBox(height: 10),
               _buildDraftActions(interactiveArtifactDetection),
+              const SizedBox(height: 10),
+            ] else if (widget.onQuit != null) ...<Widget>[
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton(
+                  onPressed: widget.onQuit,
+                  child: const Text('Quit'),
+                ),
+              ),
               const SizedBox(height: 10),
             ],
             Expanded(
@@ -617,12 +845,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                   children: <Widget>[
                     if (interactiveArtifactDetection) ...<Widget>[
                       _InteractiveArtifactReviewSection(
-                        labelChoices:
-                            InteractiveArtifactDetectionNodeType.supportedLabels,
+                        labelChoices: InteractiveArtifactDetectionNodeType
+                            .supportedLabels,
+                        channelLabels:
+                            widget.dataset.timeSeries?.channelLabels ??
+                            const <String>[],
+                        channelCoordinates:
+                            widget.dataset.timeSeries?.channelCoordinates ??
+                            const <String, ChannelCoordinate>{},
                         exemplarsExpanded:
-                            (widget.params['artifact_exemplars_expanded'] as bool?) ?? true,
+                            (widget.params['artifact_exemplars_expanded']
+                                as bool?) ??
+                            true,
                         candidatesExpanded:
-                            (widget.params['artifact_candidates_expanded'] as bool?) ?? true,
+                            (widget.params['artifact_candidates_expanded']
+                                as bool?) ??
+                            true,
                         templates: _artifactTemplateSummaries(),
                         exemplars: _artifactExemplars(),
                         pendingCandidates: _artifactCandidates(
@@ -638,57 +876,66 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         onDeleteExemplar: _deleteInteractiveArtifactExemplar,
                         onAcceptCandidate: _acceptInteractiveArtifactCandidate,
                         onRejectCandidate: _rejectInteractiveArtifactCandidate,
-                        onUndoAccepted: _undoAcceptedInteractiveArtifactCandidate,
+                        onUndoAccepted:
+                            _undoAcceptedInteractiveArtifactCandidate,
                         onAcceptAll: _acceptAllInteractiveArtifactCandidates,
                         onFocusExemplar: (ArtifactExemplarData exemplar) {
                           _jumpToTimeRange(
-                            referenceId: 'exemplar:${exemplar.id}',
                             onsetMicros: exemplar.onsetMicros,
                             durationMicros: exemplar.durationMicros,
                           );
                         },
-                        onFocusPendingCandidate: (ArtifactCandidateData candidate) {
-                          _jumpToTimeRange(
-                            referenceId: 'pending:${candidate.id}',
-                            onsetMicros: candidate.onsetMicros,
-                            durationMicros: candidate.durationMicros,
-                          );
-                        },
-                        onFocusAcceptedCandidate: (ArtifactCandidateData candidate) {
-                          _jumpToTimeRange(
-                            referenceId: 'accepted:${candidate.id}',
-                            onsetMicros: candidate.onsetMicros,
-                            durationMicros: candidate.durationMicros,
-                          );
-                        },
-                        onToggleExemplars: (bool expanded) =>
-                            _updateParam('artifact_exemplars_expanded', expanded),
-                        onToggleCandidates: (bool expanded) =>
-                            _updateParam('artifact_candidates_expanded', expanded),
+                        onFocusPendingCandidate:
+                            (ArtifactCandidateData candidate) {
+                              _jumpToTimeRange(
+                                onsetMicros: candidate.onsetMicros,
+                                durationMicros: candidate.durationMicros,
+                              );
+                            },
+                        onFocusAcceptedCandidate:
+                            (ArtifactCandidateData candidate) {
+                              _jumpToTimeRange(
+                                onsetMicros: candidate.onsetMicros,
+                                durationMicros: candidate.durationMicros,
+                              );
+                            },
+                        onToggleExemplars: (bool expanded) => _updateParam(
+                          'artifact_exemplars_expanded',
+                          expanded,
+                        ),
+                        onToggleCandidates: (bool expanded) => _updateParam(
+                          'artifact_candidates_expanded',
+                          expanded,
+                        ),
                       ),
                       const SizedBox(height: 8),
                     ],
                     _MarkerSection(
                       expanded:
-                          (widget.params['marker_list_expanded'] as bool?) ?? false,
+                          (widget.params['marker_list_expanded'] as bool?) ??
+                          false,
                       markers: markers,
+                      onRecode: markers.isEmpty
+                          ? null
+                          : _showRecodeMarkersDialog,
                       onToggle: (bool expanded) =>
                           _updateParam('marker_list_expanded', expanded),
                       labelExpandedMap: Map<String, dynamic>.from(
-                        widget.params['marker_label_expanded'] as Map? ?? <String, dynamic>{},
+                        widget.params['marker_label_expanded'] as Map? ??
+                            <String, dynamic>{},
                       ),
                       onToggleLabelExpanded: (String label, bool expanded) {
-                        final Map<String, dynamic> next = Map<String, dynamic>.from(
-                          widget.params['marker_label_expanded'] as Map? ?? <String, dynamic>{},
-                        );
+                        final Map<String, dynamic> next =
+                            Map<String, dynamic>.from(
+                              widget.params['marker_label_expanded'] as Map? ??
+                                  <String, dynamic>{},
+                            );
                         next[label] = expanded;
                         _updateParam('marker_label_expanded', next);
                       },
                       onDelete: _deleteMarker,
                       onFocus: (TimeMarker marker) {
                         _jumpToTimeRange(
-                          referenceId:
-                              'marker:${marker.label}:${marker.onsetMicros}:${marker.durationMicros}',
                           onsetMicros: marker.onsetMicros,
                           durationMicros: marker.durationMicros,
                         );
@@ -715,19 +962,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           child: const Text('Discard'),
         ),
         ElevatedButton(
-          onPressed: _saveDraftChanges,
-          child: Text(
-            interactiveArtifactDetection
-                ? 'Save'
-                : _hasChannelEditDraft && !_hasMarkerDraft
-                    ? 'Save Channel Edits'
-                    : 'Save',
-          ),
+          onPressed: () => _persistDraftChanges(runAfterSave: false),
+          child: const Text('Save'),
         ),
         FilledButton.tonal(
-          onPressed: _saveDraftChangesAndQuit,
-          child: const Text('Save and Quit'),
+          onPressed: () => _persistDraftChanges(runAfterSave: true),
+          child: const Text('Save and run'),
         ),
+        OutlinedButton(onPressed: widget.onQuit, child: const Text('Quit')),
       ],
     );
   }
@@ -746,11 +988,132 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     });
   }
 
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final BuildContext? primaryContext =
+        FocusManager.instance.primaryFocus?.context;
+    if (primaryContext != null &&
+        primaryContext.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return KeyEventResult.ignored;
+    }
+    final LogicalKeyboardKey key = event.logicalKey;
+    final bool controlPressed = HardwareKeyboard.instance.isControlPressed;
+    final bool altPressed = HardwareKeyboard.instance.isAltPressed;
+
+    if (altPressed) {
+      if (key == LogicalKeyboardKey.keyD) {
+        _updateParam('raw_show_data', !_showSignals());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyM) {
+        _updateParam('raw_show_markers', !_showMarkers());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyC) {
+        _updateParam('raw_remove_dc', !_removeDc());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyV) {
+        _setMode('view');
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyE) {
+        _setMode('edit');
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyI) {
+        _setMode('interactive');
+        return KeyEventResult.handled;
+      }
+    }
+
+    if (controlPressed &&
+        (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowRight)) {
+      _stepTimeSpan(key == LogicalKeyboardKey.arrowRight ? 1 : -1);
+      return KeyEventResult.handled;
+    }
+
+    if (controlPressed &&
+        (key == LogicalKeyboardKey.arrowUp ||
+            key == LogicalKeyboardKey.arrowDown)) {
+      _stepYScale(key == LogicalKeyboardKey.arrowUp ? 1 : -1);
+      return KeyEventResult.handled;
+    }
+
+    if (!controlPressed &&
+        (key == LogicalKeyboardKey.arrowLeft ||
+            key == LogicalKeyboardKey.arrowRight)) {
+      _nudgeHorizontalWindow(key == LogicalKeyboardKey.arrowRight ? 1 : -1);
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  void _setMode(String mode) {
+    setState(() {
+      if (mode == 'interactive') {
+        widget.params['interactiveArtifactDetection'] = true;
+        widget.params['interaction_mode'] = 'interactive';
+        widget.params['interactive_template_matching_enabled'] = true;
+      } else if (mode == 'edit') {
+        widget.params['interactiveArtifactDetection'] = true;
+        widget.params['interaction_mode'] = 'edit';
+        widget.params['interactive_template_matching_enabled'] = false;
+      } else {
+        widget.params['interactiveArtifactDetection'] = false;
+        widget.params['interaction_mode'] = 'view';
+        widget.params['interactive_template_matching_enabled'] = false;
+      }
+      _ensureDefaults();
+    });
+  }
+
+  void _stepTimeSpan(int direction) {
+    final double current =
+        (widget.params['window_sec'] as num?)?.toDouble() ??
+        _timeSpanOptionsSec[0];
+    final int currentIndex = _closestOptionIndex(_timeSpanOptionsSec, current);
+    final int nextIndex = (currentIndex + direction).clamp(
+      0,
+      _timeSpanOptionsSec.length - 1,
+    );
+    _updateParam('window_sec', _timeSpanOptionsSec[nextIndex]);
+  }
+
+  void _stepYScale(int direction) {
+    final double current = _yScaleUv();
+    final int currentIndex = _closestOptionIndex(_yScaleOptionsUv, current);
+    final int nextIndex = (currentIndex + direction).clamp(
+      0,
+      _yScaleOptionsUv.length - 1,
+    );
+    _updateParam('y_scale_uv', _yScaleOptionsUv[nextIndex]);
+  }
+
+  void _nudgeHorizontalWindow(int direction) {
+    if (!_horizontalController.hasClients) {
+      return;
+    }
+    final double viewportWidth =
+        _horizontalController.position.viewportDimension;
+    final double step = math.max(24.0, viewportWidth * 0.12);
+    _horizontalController.jumpTo(
+      (_horizontalController.offset + (direction * step)).clamp(
+        0.0,
+        _horizontalController.position.maxScrollExtent,
+      ),
+    );
+  }
+
   void _handleMarkerTapOrRename(Offset localPosition, double pixelsPerSecond) {
     if (_renamingMarker) {
       return;
     }
-    if (_interactionMode() != 'edit') {
+    if (!_markerEditingEnabled()) {
       return;
     }
 
@@ -758,9 +1121,16 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       return;
     }
 
-    final TimeMarker? tappedMarker = _markerAtLabelPosition(localPosition, pixelsPerSecond);
+    final TimeMarker? tappedMarker = _markerAtLabelPosition(
+      localPosition,
+      pixelsPerSecond,
+    );
     if (tappedMarker != null) {
       _renameMarker(tappedMarker);
+      return;
+    }
+
+    if (_currentMode() != 'edit') {
       return;
     }
 
@@ -817,9 +1187,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final double leftDx = math.min(startDx, endDx);
     final double rightDx = math.max(startDx, endDx);
     final int onsetMicros = ((leftDx / pixelsPerSecond) * 1000000.0).round();
-    final int durationMicros = ((math.max(0.0, rightDx - leftDx) / pixelsPerSecond) *
-            1000000.0)
-        .round();
+    final int durationMicros =
+        ((math.max(0.0, rightDx - leftDx) / pixelsPerSecond) * 1000000.0)
+            .round();
     final String label = _defaultMarkerLabel();
     final TimeMarker marker = TimeMarker(
       onsetMicros: onsetMicros,
@@ -831,12 +1201,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     _setDraftMarkersForDataset(<TimeMarker>[...currentMarkers, marker]);
   }
 
-  TimeMarker? _markerAtLabelPosition(Offset localPosition, double pixelsPerSecond) {
-    final double verticalOffset =
-        _verticalController.hasClients ? _verticalController.offset : 0.0;
+  TimeMarker? _markerAtLabelPosition(
+    Offset localPosition,
+    double pixelsPerSecond,
+  ) {
+    final double verticalOffset = _verticalController.hasClients
+        ? _verticalController.offset
+        : 0.0;
     final double labelTop = verticalOffset + 4;
     const double labelHeight = 18;
-    if (localPosition.dy < labelTop || localPosition.dy > (labelTop + labelHeight)) {
+    if (localPosition.dy < labelTop ||
+        localPosition.dy > (labelTop + labelHeight)) {
       return null;
     }
     for (final TimeMarker marker in _currentMarkersForDataset().reversed) {
@@ -874,7 +1249,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       return;
     }
     final String markerId = _markerReferenceId(marker);
-    final TextEditingController controller = TextEditingController(text: marker.label);
+    final TextEditingController controller = TextEditingController(
+      text: marker.label,
+    );
     final String? nextLabel;
     setState(() {
       _renamingMarker = true;
@@ -890,10 +1267,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             content: TextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Marker label',
-              ),
-              onSubmitted: (String value) => Navigator.of(context).pop(value.trim()),
+              decoration: const InputDecoration(labelText: 'Marker label'),
+              onSubmitted: (String value) =>
+                  Navigator.of(context).pop(value.trim()),
             ),
             actions: <Widget>[
               TextButton(
@@ -901,7 +1277,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 child: const Text('Cancel'),
               ),
               FilledButton(
-                onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+                onPressed: () =>
+                    Navigator.of(context).pop(controller.text.trim()),
                 child: const Text('Save'),
               ),
             ],
@@ -936,15 +1313,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Future<void> _showChannelEditPanel(int channelIndex) async {
-    if (_interactionMode() != 'edit') {
+    if (!_markerEditingEnabled()) {
       return;
     }
     final TimeSeriesData? baseTimeSeries = widget.dataset.timeSeries;
     if (baseTimeSeries == null || baseTimeSeries.channels.isEmpty) {
       return;
     }
-    final List<String> baseLabels = baseTimeSeries.channelLabels.length ==
-            baseTimeSeries.channelCount
+    final List<String> baseLabels =
+        baseTimeSeries.channelLabels.length == baseTimeSeries.channelCount
         ? baseTimeSeries.channelLabels
         : List<String>.generate(
             baseTimeSeries.channelCount,
@@ -958,10 +1335,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       builder: (BuildContext context) {
         return Dialog(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: 980,
-              maxHeight: 720,
-            ),
+            constraints: const BoxConstraints(maxWidth: 980, maxHeight: 720),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -1053,7 +1427,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       label = chosenLabel;
     }
     _addInteractiveArtifactExemplar(
-      onsetMicros: ((math.min(start.dx, end.dx) / pixelsPerSecond) * 1000000.0).round(),
+      onsetMicros: ((math.min(start.dx, end.dx) / pixelsPerSecond) * 1000000.0)
+          .round(),
       durationMicros: ((dragWidth / pixelsPerSecond) * 1000000.0).round(),
       label: label,
     );
@@ -1078,10 +1453,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       ),
       items: InteractiveArtifactDetectionNodeType.supportedLabels
           .map(
-            (String label) => PopupMenuItem<String>(
-              value: label,
-              child: Text(label),
-            ),
+            (String label) =>
+                PopupMenuItem<String>(value: label, child: Text(label)),
           )
           .toList(growable: false),
     );
@@ -1100,9 +1473,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final List<dynamic> rawMarkers = _effectiveRawMarkers;
     final List<TimeMarker> editedMarkers = rawMarkers
         .whereType<Map<String, dynamic>>()
-        .where((Map<String, dynamic> marker) => marker['datasetId'] == widget.dataset.id)
+        .where(
+          (Map<String, dynamic> marker) =>
+              marker['datasetId'] == widget.dataset.id,
+        )
         .map((Map<String, dynamic> marker) {
-          final Map<String, dynamic> payload = Map<String, dynamic>.from(marker);
+          final Map<String, dynamic> payload = Map<String, dynamic>.from(
+            marker,
+          );
           payload.remove('datasetId');
           return TimeMarker.fromJson(payload);
         })
@@ -1126,7 +1504,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   List<dynamic> get _effectiveRawMarkers =>
-      _draftMarkers ?? (widget.params['markers'] as List<dynamic>? ?? <dynamic>[]);
+      _draftMarkers ??
+      (widget.params['markers'] as List<dynamic>? ?? <dynamic>[]);
 
   bool get _hasMarkerDraft => _draftMarkers != null;
 
@@ -1138,7 +1517,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       _draftArtifactTemplates != null;
 
   bool get _hasAnyDraftChanges =>
-      _hasMarkerDraft || _hasChannelEditDraft || _hasInteractiveArtifactDraft;
+      _currentDraftSaveRequest(runAfterSave: false) != null;
 
   Map<String, dynamic> _effectiveChannelEditConfig() {
     return _draftChannelEditConfig ??
@@ -1147,6 +1526,16 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   bool _interactiveArtifactDetectionEnabled() =>
       widget.params['interactiveArtifactDetection'] == true;
+
+  bool _interactiveMatchingEnabled() =>
+      _interactiveArtifactDetectionEnabled() &&
+      (widget.params['interactive_template_matching_enabled'] as bool?) !=
+          false;
+
+  bool _markerEditingEnabled() {
+    final String mode = _interactionMode();
+    return mode == 'edit' || mode == 'interactive';
+  }
 
   Map<String, dynamic> get _effectiveInteractiveArtifactParams =>
       <String, dynamic>{
@@ -1166,9 +1555,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
-  List<ArtifactCandidateData> _artifactCandidates({
-    Set<String>? statuses,
-  }) {
+  List<ArtifactCandidateData> _artifactCandidates({Set<String>? statuses}) {
     return InteractiveArtifactDetectionNodeType.candidatesForDataset(
       widget.dataset.id,
       _effectiveInteractiveArtifactParams,
@@ -1189,21 +1576,33 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     required List<ArtifactTemplateSummary> currentDatasetTemplates,
   }) {
     final List<Map<String, dynamic>> preservedExemplars =
-        (widget.params['artifactExemplars'] as List<dynamic>? ?? const <dynamic>[])
+        (widget.params['artifactExemplars'] as List<dynamic>? ??
+                const <dynamic>[])
             .whereType<Map<String, dynamic>>()
-            .where((Map<String, dynamic> item) => item['datasetId'] != widget.dataset.id)
+            .where(
+              (Map<String, dynamic> item) =>
+                  item['datasetId'] != widget.dataset.id,
+            )
             .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
             .toList(growable: true);
     final List<Map<String, dynamic>> preservedCandidates =
-        (widget.params['artifactCandidates'] as List<dynamic>? ?? const <dynamic>[])
+        (widget.params['artifactCandidates'] as List<dynamic>? ??
+                const <dynamic>[])
             .whereType<Map<String, dynamic>>()
-            .where((Map<String, dynamic> item) => item['datasetId'] != widget.dataset.id)
+            .where(
+              (Map<String, dynamic> item) =>
+                  item['datasetId'] != widget.dataset.id,
+            )
             .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
             .toList(growable: true);
     final List<Map<String, dynamic>> preservedTemplates =
-        (widget.params['artifactTemplates'] as List<dynamic>? ?? const <dynamic>[])
+        (widget.params['artifactTemplates'] as List<dynamic>? ??
+                const <dynamic>[])
             .whereType<Map<String, dynamic>>()
-            .where((Map<String, dynamic> item) => item['datasetId'] != widget.dataset.id)
+            .where(
+              (Map<String, dynamic> item) =>
+                  item['datasetId'] != widget.dataset.id,
+            )
             .map((Map<String, dynamic> item) => Map<String, dynamic>.from(item))
             .toList(growable: true);
 
@@ -1211,10 +1610,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       currentDatasetExemplars.map((ArtifactExemplarData item) => item.toJson()),
     );
     preservedCandidates.addAll(
-      currentDatasetCandidates.map((ArtifactCandidateData item) => item.toJson()),
+      currentDatasetCandidates.map(
+        (ArtifactCandidateData item) => item.toJson(),
+      ),
     );
     preservedTemplates.addAll(
-      currentDatasetTemplates.map((ArtifactTemplateSummary item) => item.toJson()),
+      currentDatasetTemplates.map(
+        (ArtifactTemplateSummary item) => item.toJson(),
+      ),
     );
 
     setState(() {
@@ -1235,13 +1638,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     }
     final ArtifactDetectionComputation computation =
         InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
-      datasetId: widget.dataset.id,
-      timeSeries: timeSeries,
-      exemplars: exemplars,
-      existingCandidates: currentCandidates ?? _artifactCandidates(),
-      threshold:
-          (widget.params['artifactThreshold'] as num?)?.toDouble() ?? 0.78,
-    );
+          datasetId: widget.dataset.id,
+          timeSeries: timeSeries,
+          exemplars: exemplars,
+          existingCandidates: currentCandidates ?? _artifactCandidates(),
+          threshold:
+              (widget.params['artifactThreshold'] as num?)?.toDouble() ?? 0.78,
+          enableTemplateMatching: _interactiveMatchingEnabled(),
+        );
     _setInteractiveArtifactDraftState(
       currentDatasetExemplars: exemplars,
       currentDatasetCandidates: computation.candidates,
@@ -1280,9 +1684,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   ) {
     final List<ArtifactCandidateData> candidates = _artifactCandidates()
         .map(
-          (ArtifactCandidateData item) => item.id == candidate.id
-              ? item.copyWith(status: status)
-              : item,
+          (ArtifactCandidateData item) =>
+              item.id == candidate.id ? item.copyWith(status: status) : item,
         )
         .toList(growable: false);
     _setInteractiveArtifactDraftState(
@@ -1319,7 +1722,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
-  void _undoAcceptedInteractiveArtifactCandidate(ArtifactCandidateData candidate) {
+  void _undoAcceptedInteractiveArtifactCandidate(
+    ArtifactCandidateData candidate,
+  ) {
     _updateInteractiveArtifactCandidateStatus(
       candidate,
       InteractiveArtifactDetectionNodeType.pendingStatus,
@@ -1361,7 +1766,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final List<dynamic> rawMarkers = _effectiveRawMarkers;
     final List<Map<String, dynamic>> preservedMarkers = rawMarkers
         .whereType<Map<String, dynamic>>()
-        .where((Map<String, dynamic> marker) => marker['datasetId'] != widget.dataset.id)
+        .where(
+          (Map<String, dynamic> marker) =>
+              marker['datasetId'] != widget.dataset.id,
+        )
         .map((Map<String, dynamic> marker) => Map<String, dynamic>.from(marker))
         .toList(growable: true);
 
@@ -1378,61 +1786,29 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     });
   }
 
-  void _saveDraftChanges() {
-    if (_hasInteractiveArtifactDraft) {
-      setState(() {
-        widget.params['artifactExemplars'] =
-            _draftArtifactExemplars ?? widget.params['artifactExemplars'];
-        widget.params['artifactCandidates'] =
-            _draftArtifactCandidates ?? widget.params['artifactCandidates'];
-        widget.params['artifactTemplates'] =
-            _draftArtifactTemplates ?? widget.params['artifactTemplates'];
-        _draftArtifactExemplars = null;
-        _draftArtifactCandidates = null;
-        _draftArtifactTemplates = null;
-        _markerCacheKey = null;
-      });
-      widget.onInteractiveArtifactDetectionSaved?.call();
+  Future<void> _persistDraftChanges({required bool runAfterSave}) async {
+    final ViewerDraftSaveRequest? request = _currentDraftSaveRequest(
+      runAfterSave: runAfterSave,
+    );
+    if (request == null) {
       return;
     }
-
-    final Map<String, dynamic>? draftChannelEditConfig = _draftChannelEditConfig;
-    if (draftChannelEditConfig != null) {
-      final Map<String, dynamic> normalizedConfig =
-          EditChannelsNodeType.configForDataset(
-        <String, dynamic>{
-          'channelEditsByDataset': <String, dynamic>{
-            widget.dataset.id: draftChannelEditConfig,
-          },
-        },
-        widget.dataset.id,
-      );
-      setState(() {
-        EditChannelsNodeType.setConfigForDataset(
-          widget.params,
-          widget.dataset.id,
-          normalizedConfig,
-        );
-        _draftChannelEditConfig = null;
-      });
-      widget.onChannelEditsSaved?.call(normalizedConfig);
+    final Future<void> Function(ViewerDraftSaveRequest request)?
+    onPersistDrafts = widget.onPersistDrafts;
+    if (onPersistDrafts == null) {
+      return;
     }
-
-    final List<Map<String, dynamic>>? draftMarkers = _draftMarkers;
-    if (draftMarkers == null) {
+    final String fingerprint = _draftSaveFingerprint(request);
+    await onPersistDrafts(request);
+    if (!mounted) {
       return;
     }
     setState(() {
-      widget.params['markers'] = draftMarkers;
-      _draftMarkers = null;
-      _markerCacheKey = null;
+      _lastPersistedDraftFingerprint = fingerprint;
     });
-    widget.onMarkersChanged?.call(draftMarkers);
-  }
-
-  void _saveDraftChangesAndQuit() {
-    _saveDraftChanges();
-    widget.onSaveAndQuit?.call();
+    if (runAfterSave) {
+      widget.onQuit?.call();
+    }
   }
 
   void _discardDraftChanges() {
@@ -1446,11 +1822,193 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       _dragSelectionCurrent = null;
       _dragSelectionGlobal = null;
       _markerCacheKey = null;
+      _lastPersistedDraftFingerprint = null;
+    });
+  }
+
+  Future<void> _showRecodeMarkersDialog() async {
+    final List<TimeMarker> markers = _currentMarkersForDataset();
+    if (markers.isEmpty || !mounted) {
+      return;
+    }
+    final List<String> labels =
+        markers
+            .map((TimeMarker marker) => marker.label)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    final Map<String, String> draftValues = <String, String>{
+      for (final String label in labels) label: '',
+    };
+    final Map<String, String>?
+    recodeMap = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Recode markers'),
+          content: SizedBox(
+            width: 560,
+            child: StatefulBuilder(
+              builder:
+                  (
+                    BuildContext context,
+                    void Function(void Function()) setDialogState,
+                  ) {
+                    return SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          const Text(
+                            'Rename one or more marker labels. Blank entries are ignored.',
+                          ),
+                          const SizedBox(height: 12),
+                          for (
+                            int index = 0;
+                            index < labels.length;
+                            index++
+                          ) ...<Widget>[
+                            if (index > 0) const Divider(height: 18),
+                            Row(
+                              children: <Widget>[
+                                Expanded(
+                                  child: Text(
+                                    labels[index],
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: TextFormField(
+                                    initialValue:
+                                        draftValues[labels[index]] ?? '',
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      hintText: 'New label',
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    onChanged: (String value) {
+                                      setDialogState(() {
+                                        draftValues[labels[index]] = value;
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    );
+                  },
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final Map<String, String> next = <String, String>{
+                  for (final MapEntry<String, String> entry
+                      in draftValues.entries)
+                    if (entry.value.trim().isNotEmpty)
+                      entry.key: entry.value.trim(),
+                };
+                Navigator.of(context).pop(next);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || recodeMap == null || recodeMap.isEmpty) {
+      return;
+    }
+    final List<TimeMarker> recoded = markers
+        .map((TimeMarker marker) {
+          final String? replacement = recodeMap[marker.label];
+          if (replacement == null || replacement.isEmpty) {
+            return marker;
+          }
+          return marker.copyWith(label: replacement);
+        })
+        .toList(growable: false);
+    setState(() {
+      _setDraftMarkersForDataset(recoded);
+      _markerCacheKey = null;
+    });
+  }
+
+  ViewerDraftSaveRequest? _currentDraftSaveRequest({
+    required bool runAfterSave,
+  }) {
+    final List<Map<String, dynamic>>? markerEdits = _draftMarkers
+        ?.whereType<Map<String, dynamic>>()
+        .where(
+          (Map<String, dynamic> marker) =>
+              marker['datasetId'] == widget.dataset.id,
+        )
+        .map((Map<String, dynamic> marker) => Map<String, dynamic>.from(marker))
+        .toList(growable: false);
+    final Map<String, dynamic>? channelEditConfig =
+        _draftChannelEditConfig == null
+        ? null
+        : EditChannelsNodeType.configForDataset(<String, dynamic>{
+            'channelEditsByDataset': <String, dynamic>{
+              widget.dataset.id: _draftChannelEditConfig!,
+            },
+          }, widget.dataset.id);
+    final Map<String, dynamic>? interactiveArtifactParams =
+        _hasInteractiveArtifactDraft
+        ? <String, dynamic>{
+            'interactiveArtifactDetection': true,
+            'artifactThreshold':
+                (widget.params['artifactThreshold'] as num?)?.toDouble() ??
+                0.78,
+            'artifactExemplars': _artifactExemplars()
+                .map((ArtifactExemplarData item) => item.toJson())
+                .toList(growable: false),
+            'artifactCandidates': _artifactCandidates()
+                .map((ArtifactCandidateData item) => item.toJson())
+                .toList(growable: false),
+            'artifactTemplates': _artifactTemplateSummaries()
+                .map((ArtifactTemplateSummary item) => item.toJson())
+                .toList(growable: false),
+          }
+        : null;
+
+    final bool hasMarkerEdits = markerEdits != null;
+    final bool hasChannelEdits = channelEditConfig != null;
+    final bool hasInteractiveEdits = interactiveArtifactParams != null;
+    if (!hasMarkerEdits && !hasChannelEdits && !hasInteractiveEdits) {
+      return null;
+    }
+
+    final ViewerDraftSaveRequest request = ViewerDraftSaveRequest(
+      markerEdits: markerEdits,
+      channelEditConfig: channelEditConfig,
+      interactiveArtifactParams: interactiveArtifactParams,
+      runAfterSave: runAfterSave,
+    );
+    if (_lastPersistedDraftFingerprint == _draftSaveFingerprint(request)) {
+      return null;
+    }
+    return request;
+  }
+
+  String _draftSaveFingerprint(ViewerDraftSaveRequest request) {
+    return jsonEncode(<String, dynamic>{
+      'markerEdits': request.markerEdits,
+      'channelEditConfig': request.channelEditConfig,
+      'interactiveArtifactParams': request.interactiveArtifactParams,
     });
   }
 
   void _jumpToTimeRange({
-    required String referenceId,
     required int onsetMicros,
     required int durationMicros,
   }) {
@@ -1466,35 +2024,51 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final double onsetSeconds = onsetMicros / 1000000.0;
     final double durationSeconds = durationMicros / 1000000.0;
     final double centerSeconds = onsetSeconds + (durationSeconds / 2);
-    final double recordingSeconds = timeSeries.sampleCount / timeSeries.sampleRate;
-    final double viewportWidth = _horizontalController.position.viewportDimension;
+    final double recordingSeconds =
+        timeSeries.sampleCount / timeSeries.sampleRate;
+    final double viewportWidth = math.max(1.0, _lastTraceViewportWidth);
     final double pixelsPerSecond = viewportWidth / secondsPerView;
-    final double currentStartSeconds =
-        _horizontalController.offset / pixelsPerSecond;
-    final double currentEndSeconds = currentStartSeconds + secondsPerView;
-    final bool alreadyVisible =
-        onsetSeconds >= currentStartSeconds &&
-        (onsetSeconds + math.max(durationSeconds, 0.001)) <= currentEndSeconds;
-    final bool centerThisTime = _lastFocusedReferenceId == referenceId && alreadyVisible;
-    final double targetStartSeconds = centerThisTime
-        ? (centerSeconds - (secondsPerView / 2)).clamp(
-            0.0,
-            math.max(0.0, recordingSeconds - secondsPerView),
-          )
-        : onsetSeconds.clamp(
-            0.0,
-            math.max(0.0, recordingSeconds - secondsPerView),
-          );
+    final double targetStartSeconds = (centerSeconds - (secondsPerView / 2))
+        .clamp(0.0, math.max(0.0, recordingSeconds - secondsPerView));
     final double targetOffset = targetStartSeconds * pixelsPerSecond;
-    _lastFocusedReferenceId = referenceId;
-    _horizontalController.animateTo(
-      targetOffset.clamp(
-        0.0,
-        _horizontalController.position.maxScrollExtent,
-      ),
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
+    _horizontalController.jumpTo(
+      targetOffset.clamp(0.0, _horizontalController.position.maxScrollExtent),
     );
+  }
+
+  void _syncTraceViewportWidth({
+    required double nextWidth,
+    required double secondsPerView,
+  }) {
+    final double previousWidth = _lastTraceViewportWidth;
+    if ((previousWidth - nextWidth).abs() < 0.5) {
+      _lastTraceViewportWidth = nextWidth;
+      return;
+    }
+    _lastTraceViewportWidth = nextWidth;
+    if (!_horizontalController.hasClients || _traceViewportSyncScheduled) {
+      return;
+    }
+    final double previousPixelsPerSecond = previousWidth / secondsPerView;
+    if (previousPixelsPerSecond <= 0) {
+      return;
+    }
+    final double previousRightEdgeSeconds =
+        (_horizontalController.offset + previousWidth) /
+        previousPixelsPerSecond;
+    _traceViewportSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _traceViewportSyncScheduled = false;
+      if (!mounted || !_horizontalController.hasClients) {
+        return;
+      }
+      final double nextPixelsPerSecond = nextWidth / secondsPerView;
+      final double nextOffset =
+          (previousRightEdgeSeconds * nextPixelsPerSecond) - nextWidth;
+      _horizontalController.jumpTo(
+        nextOffset.clamp(0.0, _horizontalController.position.maxScrollExtent),
+      );
+    });
   }
 
   void _ensureDefaults() {
@@ -1508,14 +2082,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         (widget.params['marker_interaction_mode'] ?? 'view').toString();
     widget.params.putIfAbsent(
       'interaction_mode',
-      () => legacyMarkerMode == 'edit' ? 'edit' : 'view',
+      () => _interactiveArtifactDetectionEnabled()
+          ? 'interactive'
+          : (legacyMarkerMode == 'edit' ? 'edit' : 'view'),
+    );
+    widget.params.putIfAbsent(
+      'interactive_template_matching_enabled',
+      () => _interactiveArtifactDetectionEnabled(),
     );
     widget.params.putIfAbsent('marker_default_label', () => 'new marker');
     widget.params.putIfAbsent('markers', () => <Map<String, dynamic>>[]);
     widget.params.putIfAbsent('channel_colors', () => <String, dynamic>{});
-    widget.params.putIfAbsent('controls_expanded', () => false);
     widget.params.putIfAbsent('marker_list_expanded', () => false);
-    widget.params.putIfAbsent('marker_label_expanded', () => <String, dynamic>{});
+    widget.params.putIfAbsent(
+      'marker_label_expanded',
+      () => <String, dynamic>{},
+    );
     widget.params.putIfAbsent('artifact_exemplars_expanded', () => true);
     widget.params.putIfAbsent('artifact_candidates_expanded', () => true);
     widget.params.putIfAbsent('y_scale_uv', () => 100.0);
@@ -1525,6 +2107,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     widget.params.putIfAbsent('raw_remove_dc', () => true);
     widget.params.putIfAbsent('right_panel_collapsed', () => false);
     if (_interactiveArtifactDetectionEnabled()) {
+      final String interactionMode =
+          (widget.params['interaction_mode'] ?? 'interactive').toString();
+      if (interactionMode != 'edit' && interactionMode != 'interactive') {
+        widget.params['interaction_mode'] = 'interactive';
+      }
       widget.params.putIfAbsent(
         'artifactExemplars',
         () => <Map<String, dynamic>>[],
@@ -1579,6 +2166,38 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     return _filteredChannels!;
   }
 
+  List<_ChannelDisplayRow> _channelDisplayRows(TimeSeriesData timeSeries) {
+    final List<String> baseLabels = _channelLabels(
+      timeSeries,
+      timeSeries.channelCount,
+    );
+    final List<List<double>> baseChannels = _effectiveChannels(timeSeries);
+    final Map<String, dynamic> config = _effectiveChannelEditConfig();
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      config['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    return List<_ChannelDisplayRow>.generate(timeSeries.channelCount, (
+      int index,
+    ) {
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        edits['$index'] as Map? ?? const <String, dynamic>{},
+      );
+      final String renamed = (edit['rename'] ?? '').toString().trim();
+      final bool removed = edit['remove'] == true;
+      final String removeMode = (edit['removeMode'] ?? 'delete')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final bool hideTrace = removed && removeMode == 'delete';
+      return _ChannelDisplayRow(
+        sourceIndex: index,
+        label: renamed.isEmpty ? baseLabels[index] : renamed,
+        samples: hideTrace ? const <double>[] : baseChannels[index],
+        removed: hideTrace,
+      );
+    }, growable: false);
+  }
+
   List<String> _channelLabels(TimeSeriesData timeSeries, int channelCount) {
     if (timeSeries.channelLabels.length == channelCount) {
       return timeSeries.channelLabels;
@@ -1594,11 +2213,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   double _channelHeight(double viewportHeight, int channelCount) {
     final double spacingFactor = _channelSpacingFactor();
-    return math.max(40.0, (viewportHeight / math.max(1, channelCount)) * spacingFactor);
+    return math.max(
+      40.0,
+      (viewportHeight / math.max(1, channelCount)) * spacingFactor,
+    );
   }
 
   double _yScaleUv() {
-    final double requested = (widget.params['y_scale_uv'] as num?)?.toDouble() ?? 100.0;
+    final double requested =
+        (widget.params['y_scale_uv'] as num?)?.toDouble() ?? 100.0;
     double closest = _yScaleOptionsUv.first;
     double bestDistance = (requested - closest).abs();
     for (final double option in _yScaleOptionsUv.skip(1)) {
@@ -1648,10 +2271,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       final TextPainter painter = TextPainter(
         text: TextSpan(
           text: label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
         ),
         maxLines: 1,
         textDirection: TextDirection.ltr,
@@ -1674,10 +2294,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       final TextPainter painter = TextPainter(
         text: TextSpan(
           text: text,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
         maxLines: 1,
         textDirection: TextDirection.ltr,
@@ -1688,21 +2305,238 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   double _resolvedLeftPanelWidth(double defaultWidth) {
-    return ((widget.params['left_panel_width'] as num?)?.toDouble() ?? defaultWidth)
+    return ((widget.params['left_panel_width'] as num?)?.toDouble() ??
+            defaultWidth)
         .clamp(88.0, 260.0);
   }
 
   double _resolvedRightPanelWidth(double defaultWidth) {
-    return ((widget.params['right_panel_width'] as num?)?.toDouble() ?? defaultWidth)
+    return ((widget.params['right_panel_width'] as num?)?.toDouble() ??
+            defaultWidth)
         .clamp(188.0, 420.0);
   }
 
   String _interactionMode() {
-    final String mode = (widget.params['interaction_mode'] ?? 'view').toString();
+    final String mode = (widget.params['interaction_mode'] ?? 'view')
+        .toString();
+    if (mode == 'interactive') {
+      return 'interactive';
+    }
     if (mode == 'edit' || mode == 'markers' || mode == 'channels') {
       return 'edit';
     }
     return 'view';
+  }
+
+  String _currentViewIdentity() {
+    final String sourceKey =
+        widget.dataset.ram['viewer.sourceKey']?.toString() ?? widget.dataset.id;
+    final Object? sampleRate = widget.dataset.ram['signal.fs'];
+    final Object? sampleCount = widget.dataset.ram['signal.samples'] is List
+        ? (widget.dataset.ram['signal.samples'] as List).length
+        : widget.dataset.timeSeries?.sampleCount;
+    return '$sourceKey|$sampleRate|$sampleCount';
+  }
+
+  void _scheduleViewportReset() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      if (_horizontalController.hasClients) {
+        _horizontalController.jumpTo(0);
+      }
+      if (_verticalController.hasClients) {
+        _verticalController.jumpTo(0);
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  Widget _buildDraftSummary(bool interactiveArtifactDetection) {
+    final List<_DraftManifestItem> items = <_DraftManifestItem>[
+      if (_hasMarkerDraft)
+        _DraftManifestItem(
+          label: 'Markers',
+          detail:
+              '${_currentMarkersForDataset().length} marker instance(s) will be written into an Edit Markers node for this dataset.',
+          color: const Color(0xFFFFD54F),
+        ),
+      if (_hasChannelEditDraft)
+        _DraftManifestItem(
+          label: 'Channels',
+          detail: _channelDraftSummary(),
+          color: const Color(0xFF6DD3FF),
+        ),
+      if (_hasInteractiveArtifactDraft)
+        _DraftManifestItem(
+          label: interactiveArtifactDetection ? 'Interactive' : 'Artifacts',
+          detail: _interactiveDraftSummary(),
+          color: const Color(0xFFFF8A65),
+        ),
+    ];
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Pending viewer changes',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Saving here updates processing state by creating or updating node-backed edits, not by changing the source file directly.',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 12,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _viewerNodeCreationSummary(),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...items.map(
+              (_DraftManifestItem item) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: item.color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: RichText(
+                        text: TextSpan(
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                            height: 1.25,
+                          ),
+                          children: <InlineSpan>[
+                            TextSpan(
+                              text: '${item.label}: ',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            TextSpan(text: item.detail),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _channelDraftSummary() {
+    final Map<String, dynamic> config = _effectiveChannelEditConfig();
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      config['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    final List<dynamic> newChannels =
+        config['newChannels'] as List<dynamic>? ?? const <dynamic>[];
+    return '${edits.length} existing-channel edit row(s) and ${newChannels.length} derived/new channel row(s) will be written into an Edit Channels node for this dataset.';
+  }
+
+  String _interactiveDraftSummary() {
+    final int exemplarCount = _artifactExemplars().length;
+    final int pendingCount = _artifactCandidates(
+      statuses: const <String>{
+        InteractiveArtifactDetectionNodeType.pendingStatus,
+      },
+    ).length;
+    final int acceptedCount = _artifactCandidates(
+      statuses: const <String>{
+        InteractiveArtifactDetectionNodeType.acceptedStatus,
+      },
+    ).length;
+    final int templateCount = _artifactTemplateSummaries().length;
+    return '$exemplarCount exemplar(s), $pendingCount pending candidate(s), $acceptedCount accepted match(es), and $templateCount template(s) will be converted into marker parameters in an Edit Markers node for this dataset.';
+  }
+
+  String _viewerNodeCreationSummary() {
+    final List<String> nodeLabels = <String>[];
+    final bool markerLikeDraft =
+        _hasMarkerDraft || _hasInteractiveArtifactDraft;
+    if (_hasChannelEditDraft && markerLikeDraft) {
+      nodeLabels.add('Edit Channels and Markers');
+    } else if (_hasChannelEditDraft) {
+      nodeLabels.add('Edit Channels');
+    } else if (markerLikeDraft) {
+      nodeLabels.add('Edit Markers');
+    }
+
+    if (nodeLabels.isEmpty) {
+      return 'No node will be created until there are unsaved edits.';
+    }
+    if (nodeLabels.length == 1) {
+      return 'Saving will create a new ${nodeLabels.first} node.';
+    }
+    return 'Saving will create ${nodeLabels.length} new nodes: ${_joinNodeLabels(nodeLabels)}.';
+  }
+
+  String _joinNodeLabels(List<String> values) {
+    if (values.length == 1) {
+      return values.first;
+    }
+    if (values.length == 2) {
+      return '${values.first} and ${values.last}';
+    }
+    return '${values.sublist(0, values.length - 1).join(', ')}, and ${values.last}';
+  }
+
+  String _currentMode() {
+    return _interactionMode();
+  }
+
+  int _closestOptionIndex(List<double> options, double value) {
+    int bestIndex = 0;
+    double bestDistance = (options.first - value).abs();
+    for (int index = 1; index < options.length; index++) {
+      final double distance = (options[index] - value).abs();
+      if (distance < bestDistance) {
+        bestIndex = index;
+        bestDistance = distance;
+      }
+    }
+    return bestIndex;
   }
 
   String _hiddenMarkerType() {
@@ -1718,8 +2552,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Color _colorForChannel(int channelIndex) {
-    final Map<String, dynamic> colorMap =
-        Map<String, dynamic>.from(widget.params['channel_colors'] as Map? ?? <String, dynamic>{});
+    final Map<String, dynamic> colorMap = Map<String, dynamic>.from(
+      widget.params['channel_colors'] as Map? ?? <String, dynamic>{},
+    );
     final String key = '${widget.dataset.id}:$channelIndex';
     final int? colorValue = colorMap[key] as int?;
     if (colorValue != null) {
@@ -1753,8 +2588,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       (Color color) => color.toARGB32() == current.toARGB32(),
     );
     final Color nextColor = _palette[(currentIndex + 1) % _palette.length];
-    final Map<String, dynamic> colorMap =
-        Map<String, dynamic>.from(widget.params['channel_colors'] as Map? ?? <String, dynamic>{});
+    final Map<String, dynamic> colorMap = Map<String, dynamic>.from(
+      widget.params['channel_colors'] as Map? ?? <String, dynamic>{},
+    );
     colorMap['${widget.dataset.id}:$channelIndex'] = nextColor.toARGB32();
     setState(() {
       widget.params['channel_colors'] = colorMap;
@@ -1780,10 +2616,7 @@ class _ControlStripDivider extends StatelessWidget {
 }
 
 class _HoverHighlightFrame extends StatefulWidget {
-  const _HoverHighlightFrame({
-    required this.child,
-    required this.glowColor,
-  });
+  const _HoverHighlightFrame({required this.child, required this.glowColor});
 
   final Widget child;
   final Color glowColor;
@@ -1804,7 +2637,9 @@ class _HoverHighlightFrameState extends State<_HoverHighlightFrame> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 90),
         decoration: BoxDecoration(
-          color: _hovered ? Colors.yellow.withValues(alpha: 0.18) : Colors.transparent,
+          color: _hovered
+              ? Colors.yellow.withValues(alpha: 0.18)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: _hovered
               ? Border.all(color: Colors.yellow.withValues(alpha: 0.85))
@@ -1851,13 +2686,7 @@ class _CollapsedSideRail extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             onTap: onTap,
-            child: Center(
-              child: Icon(
-                icon,
-                color: Colors.white70,
-                size: 18,
-              ),
-            ),
+            child: Center(child: Icon(icon, color: Colors.white70, size: 18)),
           ),
         ),
       ),
@@ -1934,10 +2763,7 @@ class _ScaleCluster extends StatelessWidget {
       runSpacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
-        const Text(
-          'Scale:',
-          style: TextStyle(color: Colors.white70),
-        ),
+        const Text('Scale:', style: TextStyle(color: Colors.white70)),
         _ScalePillMenu<double>(
           label: 'Time',
           currentValue: timeSeconds,
@@ -1950,16 +2776,18 @@ class _ScaleCluster extends StatelessWidget {
         _ScalePillMenu<double>(
           label: 'Range',
           currentValue: rangeUv,
-          valueText: '${rangeUv.toStringAsFixed(0)} uV',
+          valueText: '${rangeUv.toStringAsFixed(0)} μV',
           tooltip: 'Signal range',
           options: rangeOptionsUv,
-          itemLabelBuilder: (double option) => '${option.toStringAsFixed(0)} uV',
+          itemLabelBuilder: (double option) =>
+              '${option.toStringAsFixed(0)} μV',
           onSelected: onRangeSelected,
         ),
         _ScalePillMenu<double>(
           label: 'Spacing',
           currentValue: spacingFactor,
-          valueText: '${spacingFactor.toStringAsFixed(spacingFactor == spacingFactor.roundToDouble() ? 0 : 2)}x',
+          valueText:
+              '${spacingFactor.toStringAsFixed(spacingFactor == spacingFactor.roundToDouble() ? 0 : 2)}x',
           tooltip: 'Channel spacing',
           options: spacingOptions,
           itemLabelBuilder: (double option) =>
@@ -2018,12 +2846,14 @@ class _ScalePillMenu<T> extends StatelessWidget {
             tooltip: '',
             onSelected: onSelected,
             itemBuilder: (BuildContext context) {
-              return options.map((T option) {
-                return PopupMenuItem<T>(
-                  value: option,
-                  child: Text(itemLabelBuilder(option)),
-                );
-              }).toList(growable: false);
+              return options
+                  .map((T option) {
+                    return PopupMenuItem<T>(
+                      value: option,
+                      child: Text(itemLabelBuilder(option)),
+                    );
+                  })
+                  .toList(growable: false);
             },
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -2032,7 +2862,10 @@ class _ScalePillMenu<T> extends StatelessWidget {
                 border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
                 child: Text(
                   '$label: $valueText',
                   style: const TextStyle(
@@ -2054,13 +2887,11 @@ class _InlineToggleOption {
     required this.label,
     required this.selected,
     required this.onPressed,
-    this.leadingGap = 0,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onPressed;
-  final double leadingGap;
 }
 
 class _InlineChoiceOption {
@@ -2075,11 +2906,66 @@ class _InlineChoiceOption {
   final VoidCallback onPressed;
 }
 
-class _InlineToggleGroup extends StatelessWidget {
-  const _InlineToggleGroup({
+class _InlineToggleButton extends StatelessWidget {
+  const _InlineToggleButton({
     required this.label,
-    required this.options,
+    required this.selected,
+    required this.onPressed,
   });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextPainter painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final double buttonWidth = painter.width + 40;
+    return SizedBox(
+      width: buttonWidth,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            minimumSize: Size(buttonWidth, 34),
+            backgroundColor: selected
+                ? Colors.white.withValues(alpha: 0.24)
+                : Colors.white.withValues(alpha: 0.04),
+            foregroundColor: selected ? Colors.white : Colors.white70,
+            side: BorderSide(
+              color: selected
+                  ? Colors.white.withValues(alpha: 0.24)
+                  : Colors.white.withValues(alpha: 0.12),
+            ),
+            shape: const StadiumBorder(),
+            splashFactory: NoSplash.splashFactory,
+            overlayColor: Colors.transparent,
+            animationDuration: Duration.zero,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineToggleGroup extends StatelessWidget {
+  const _InlineToggleGroup({required this.label, required this.options});
 
   final String label;
   final List<_InlineToggleOption> options;
@@ -2091,55 +2977,12 @@ class _InlineToggleGroup extends StatelessWidget {
       runSpacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white70),
-        ),
+        Text(label, style: const TextStyle(color: Colors.white70)),
         ...options.map((_InlineToggleOption option) {
-          final TextPainter painter = TextPainter(
-            text: TextSpan(
-              text: option.label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            maxLines: 1,
-            textDirection: TextDirection.ltr,
-          )..layout();
-          final double buttonWidth = painter.width + 40;
-          return Padding(
-            padding: EdgeInsets.only(left: option.leadingGap),
-            child: SizedBox(
-              width: buttonWidth,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: OutlinedButton(
-                  onPressed: option.onPressed,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    minimumSize: Size(buttonWidth, 34),
-                    backgroundColor: option.selected
-                        ? Colors.white.withValues(alpha: 0.24)
-                        : Colors.white.withValues(alpha: 0.04),
-                    foregroundColor: option.selected ? Colors.white : Colors.white70,
-                    side: BorderSide(
-                      color: option.selected
-                          ? Colors.white.withValues(alpha: 0.24)
-                          : Colors.white.withValues(alpha: 0.12),
-                    ),
-                    shape: const StadiumBorder(),
-                    splashFactory: NoSplash.splashFactory,
-                    overlayColor: Colors.transparent,
-                    animationDuration: Duration.zero,
-                  ),
-                  child: Text(
-                    option.label,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontWeight: option.selected ? FontWeight.w600 : FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          return _InlineToggleButton(
+            label: option.label,
+            selected: option.selected,
+            onPressed: option.onPressed,
           );
         }),
       ],
@@ -2148,20 +2991,19 @@ class _InlineToggleGroup extends StatelessWidget {
 }
 
 class _InlineChoiceGroup extends StatelessWidget {
-  const _InlineChoiceGroup({
-    required this.label,
-    required this.options,
-  });
+  const _InlineChoiceGroup({required this.label, required this.options});
 
   final String label;
   final List<_InlineChoiceOption> options;
 
   @override
   Widget build(BuildContext context) {
-    final String selectedLabel = options.firstWhere(
-      (_InlineChoiceOption option) => option.selected,
-      orElse: () => options.first,
-    ).label;
+    final String selectedLabel = options
+        .firstWhere(
+          (_InlineChoiceOption option) => option.selected,
+          orElse: () => options.first,
+        )
+        .label;
 
     return RadioGroup<String>(
       groupValue: selectedLabel,
@@ -2181,10 +3023,7 @@ class _InlineChoiceGroup extends StatelessWidget {
         runSpacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: <Widget>[
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white70),
-          ),
+          Text(label, style: const TextStyle(color: Colors.white70)),
           ...options.map((_InlineChoiceOption option) {
             return InkWell(
               borderRadius: BorderRadius.circular(999),
@@ -2207,7 +3046,9 @@ class _InlineChoiceGroup extends StatelessWidget {
                       option.label,
                       style: TextStyle(
                         color: option.selected ? Colors.white : Colors.white70,
-                        fontWeight: option.selected ? FontWeight.w600 : FontWeight.w500,
+                        fontWeight: option.selected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
                       ),
                     ),
                   ],
@@ -2225,6 +3066,7 @@ class _ChannelLabelColumn extends StatefulWidget {
   const _ChannelLabelColumn({
     required this.labels,
     required this.colors,
+    required this.removed,
     required this.channelHeight,
     required this.onCycleColor,
     required this.channelEditEnabled,
@@ -2233,6 +3075,7 @@ class _ChannelLabelColumn extends StatefulWidget {
 
   final List<String> labels;
   final List<Color> colors;
+  final List<bool> removed;
   final double channelHeight;
   final ValueChanged<int> onCycleColor;
   final bool channelEditEnabled;
@@ -2249,97 +3092,107 @@ class _ChannelLabelColumnState extends State<_ChannelLabelColumn> {
   Widget build(BuildContext context) {
     return Column(
       children: List<Widget>.generate(widget.labels.length, (int index) {
-          return SizedBox(
-            height: widget.channelHeight,
-            child: Row(
-              children: <Widget>[
-                GestureDetector(
-                  onTap: () => widget.onCycleColor(index),
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: widget.colors[index],
-                      shape: BoxShape.circle,
-                    ),
+        return SizedBox(
+          height: widget.channelHeight,
+          child: Row(
+            children: <Widget>[
+              GestureDetector(
+                onTap: () => widget.onCycleColor(index),
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: widget.colors[index],
+                    shape: BoxShape.circle,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: MouseRegion(
-                    cursor: widget.channelEditEnabled
-                        ? SystemMouseCursors.click
-                        : SystemMouseCursors.basic,
-                    onEnter: (_) {
-                      if (!widget.channelEditEnabled) {
-                        return;
-                      }
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: MouseRegion(
+                  cursor: widget.channelEditEnabled
+                      ? SystemMouseCursors.click
+                      : SystemMouseCursors.basic,
+                  onEnter: (_) {
+                    if (!widget.channelEditEnabled) {
+                      return;
+                    }
+                    setState(() {
+                      _hoveredIndex = index;
+                    });
+                  },
+                  onExit: (_) {
+                    if (_hoveredIndex == index) {
                       setState(() {
-                        _hoveredIndex = index;
+                        _hoveredIndex = null;
                       });
-                    },
-                    onExit: (_) {
-                      if (_hoveredIndex == index) {
-                        setState(() {
-                          _hoveredIndex = null;
-                        });
-                      }
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 80),
-                      curve: Curves.linear,
-                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                      decoration: BoxDecoration(
-                        color: widget.channelEditEnabled && _hoveredIndex == index
-                            ? Colors.yellow.withValues(alpha: 0.18)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(6),
-                        border: widget.channelEditEnabled && _hoveredIndex == index
-                            ? Border.all(
-                                color: Colors.yellow.withValues(alpha: 0.85),
-                              )
-                            : null,
-                        boxShadow: widget.channelEditEnabled && _hoveredIndex == index
-                            ? <BoxShadow>[
-                                BoxShadow(
-                                  color: widget.colors[index]
-                                      .withValues(alpha: 0.45),
-                                  blurRadius: 10,
-                                  spreadRadius: 1,
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 80),
+                    curve: Curves.linear,
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 4,
+                      horizontal: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.channelEditEnabled && _hoveredIndex == index
+                          ? Colors.yellow.withValues(alpha: 0.18)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                          widget.channelEditEnabled && _hoveredIndex == index
+                          ? Border.all(
+                              color: Colors.yellow.withValues(alpha: 0.85),
+                            )
+                          : null,
+                      boxShadow:
+                          widget.channelEditEnabled && _hoveredIndex == index
+                          ? <BoxShadow>[
+                              BoxShadow(
+                                color: widget.colors[index].withValues(
+                                  alpha: 0.45,
                                 ),
-                              ]
-                            : const <BoxShadow>[],
-                      ),
-                      child: InkWell(
-                        onTap: widget.channelEditEnabled
-                            ? () => widget.onEditChannel(index)
-                            : null,
-                        borderRadius: BorderRadius.circular(6),
-                        child: Text(
-                          widget.labels[index],
-                          style: TextStyle(
-                            color: widget.channelEditEnabled
-                                ? Colors.white
-                                : Colors.white.withValues(alpha: 0.95),
-                            fontSize: 12,
-                            fontWeight: widget.channelEditEnabled
-                                ? FontWeight.w700
-                                : FontWeight.w500,
-                            decoration: widget.channelEditEnabled
-                                ? TextDecoration.underline
-                                : TextDecoration.none,
-                            decorationColor: Colors.white70,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                                blurRadius: 10,
+                                spreadRadius: 1,
+                              ),
+                            ]
+                          : const <BoxShadow>[],
+                    ),
+                    child: InkWell(
+                      onTap: widget.channelEditEnabled
+                          ? () => widget.onEditChannel(index)
+                          : null,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Text(
+                        widget.labels[index],
+                        style: TextStyle(
+                          color: widget.removed[index]
+                              ? Colors.white38
+                              : widget.channelEditEnabled
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.95),
+                          fontSize: 12,
+                          fontWeight: widget.channelEditEnabled
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          decoration: widget.removed[index]
+                              ? TextDecoration.none
+                              : widget.channelEditEnabled
+                              ? TextDecoration.underline
+                              : TextDecoration.none,
+                          decorationColor: Colors.white70,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
                 ),
-              ],
-            ),
-          );
-        }, growable: false),
+              ),
+            ],
+          ),
+        );
+      }, growable: false),
     );
   }
 }
@@ -2359,7 +3212,7 @@ class _MarkerList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (markers.isEmpty) {
       return const Text(
-        'No markers placed yet. Switch mode to edit to place markers inside the trace view.',
+        'No markers placed yet. Use edit mode to place markers, or interactive mode to label artifact exemplars.',
         style: TextStyle(color: Colors.white70),
       );
     }
@@ -2367,39 +3220,38 @@ class _MarkerList extends StatelessWidget {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: markers.map((TimeMarker marker) {
-        final bool isArtifact = marker.markerType == MarkerType.artifact;
-        final Color markerColor = _markerDisplayColor(marker);
-        return _HoverHighlightFrame(
-          glowColor: markerColor,
-          child: InputChip(
-            avatar: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: markerColor,
-                shape: BoxShape.circle,
+      children: markers
+          .map((TimeMarker marker) {
+            final bool isArtifact = marker.markerType == MarkerType.artifact;
+            final Color markerColor = _markerDisplayColor(marker);
+            return _HoverHighlightFrame(
+              glowColor: markerColor,
+              child: InputChip(
+                avatar: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: markerColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                label: Text(
+                  '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
+                ),
+                selected: isArtifact,
+                selectedColor: markerColor.withValues(alpha: 0.22),
+                onPressed: () => onFocus(marker),
+                onDeleted: () => onDelete(marker),
               ),
-            ),
-            label: Text(
-              '${marker.label} @ ${marker.timeSeconds.toStringAsFixed(2)} s',
-            ),
-            selected: isArtifact,
-            selectedColor: markerColor.withValues(alpha: 0.22),
-            onPressed: () => onFocus(marker),
-            onDeleted: () => onDelete(marker),
-          ),
-        );
-      }).toList(growable: false),
+            );
+          })
+          .toList(growable: false),
     );
   }
 }
 
 class _MarkerLabelGroup {
-  const _MarkerLabelGroup({
-    required this.label,
-    required this.markers,
-  });
+  const _MarkerLabelGroup({required this.label, required this.markers});
 
   final String label;
   final List<TimeMarker> markers;
@@ -2409,6 +3261,7 @@ class _MarkerSection extends StatelessWidget {
   const _MarkerSection({
     required this.expanded,
     required this.markers,
+    required this.onRecode,
     required this.labelExpandedMap,
     required this.onToggleLabelExpanded,
     required this.onToggle,
@@ -2418,6 +3271,7 @@ class _MarkerSection extends StatelessWidget {
 
   final bool expanded;
   final List<TimeMarker> markers;
+  final Future<void> Function()? onRecode;
   final Map<String, dynamic> labelExpandedMap;
   final void Function(String label, bool expanded) onToggleLabelExpanded;
   final ValueChanged<bool> onToggle;
@@ -2453,6 +3307,12 @@ class _MarkerSection extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
+                  const Spacer(),
+                  if (onRecode != null)
+                    TextButton(
+                      onPressed: onRecode,
+                      child: const Text('Recode markers'),
+                    ),
                 ],
               ),
             ),
@@ -2461,7 +3321,9 @@ class _MarkerSection extends StatelessWidget {
               ..._groupedMarkers().map((_MarkerLabelGroup group) {
                 final bool isExpanded =
                     (labelExpandedMap[group.label] as bool?) ?? false;
-                final Color groupColor = _markerDisplayColor(group.markers.first);
+                final Color groupColor = _markerDisplayColor(
+                  group.markers.first,
+                );
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: DecoratedBox(
@@ -2470,15 +3332,20 @@ class _MarkerSection extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           _HoverHighlightFrame(
                             glowColor: groupColor,
                             child: InkWell(
-                              onTap: () =>
-                                  onToggleLabelExpanded(group.label, !isExpanded),
+                              onTap: () => onToggleLabelExpanded(
+                                group.label,
+                                !isExpanded,
+                              ),
                               borderRadius: BorderRadius.circular(6),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -2554,30 +3421,43 @@ class _MarkerSection extends StatelessWidget {
     }
     return grouped.entries
         .map(
-          (MapEntry<String, List<TimeMarker>> entry) => _MarkerLabelGroup(
-            label: entry.key,
-            markers: entry.value,
-          ),
+          (MapEntry<String, List<TimeMarker>> entry) =>
+              _MarkerLabelGroup(label: entry.key, markers: entry.value),
         )
         .toList(growable: false);
   }
 }
 
 Color _markerDisplayColor(TimeMarker marker) {
-  final String? interactiveStatus =
-      marker.attributes['brainstory.artifactStatus']?.toString();
-  final String? interactiveSource =
-      marker.attributes['brainstory.artifactSource']?.toString();
+  final String? interactiveStatus = marker
+      .attributes['brainstory.artifactStatus']
+      ?.toString();
+  final String? interactiveSource = marker
+      .attributes['brainstory.artifactSource']
+      ?.toString();
+  return _interactiveMarkerColor(
+    interactiveStatus: interactiveStatus,
+    interactiveSource: interactiveSource,
+    fallbackMarkerType: marker.markerType,
+  );
+}
+
+Color _interactiveMarkerColor({
+  String? interactiveStatus,
+  String? interactiveSource,
+  String? fallbackMarkerType,
+}) {
   if (interactiveStatus == InteractiveArtifactDetectionNodeType.pendingStatus) {
     return const Color(0xFFFFA630);
   }
   if (interactiveSource == 'exemplar') {
     return const Color(0xFFFF4D8D);
   }
-  if (interactiveStatus == InteractiveArtifactDetectionNodeType.acceptedStatus) {
+  if (interactiveStatus ==
+      InteractiveArtifactDetectionNodeType.acceptedStatus) {
     return const Color(0xFFFF5A36);
   }
-  return marker.markerType == MarkerType.artifact
+  return fallbackMarkerType == MarkerType.artifact
       ? const Color(0xFFFF6B35)
       : const Color(0xFFFFC145);
 }
@@ -2588,12 +3468,7 @@ Color _complementColor(Color color) {
   final int red = (argb >> 16) & 0xFF;
   final int green = (argb >> 8) & 0xFF;
   final int blue = argb & 0xFF;
-  return Color.fromARGB(
-    alpha,
-    255 - red,
-    255 - green,
-    255 - blue,
-  );
+  return Color.fromARGB(alpha, 255 - red, 255 - green, 255 - blue);
 }
 
 void _drawMarkerGuideLine({
@@ -2622,7 +3497,8 @@ void _drawMarkerGuideLine({
     return;
   }
   if (interactiveSource == 'exemplar' ||
-      interactiveStatus == InteractiveArtifactDetectionNodeType.acceptedStatus) {
+      interactiveStatus ==
+          InteractiveArtifactDetectionNodeType.acceptedStatus) {
     const double dash = 8.0;
     const double gap = 4.0;
     for (double y = top; y < bottom; y += dash + gap) {
@@ -2634,31 +3510,14 @@ void _drawMarkerGuideLine({
     }
     return;
   }
-  canvas.drawLine(
-    Offset(x, top),
-    Offset(x, bottom),
-    paint,
-  );
-}
-
-Color _artifactTemplateColor(String label) {
-  switch (label) {
-    case 'blink':
-      return const Color(0xFFFF4D8D);
-    case 'saccade_vertical':
-      return const Color(0xFFFF8C42);
-    case 'saccade_horizontal':
-      return const Color(0xFFFFC145);
-    case 'motion':
-      return const Color(0xFFFF5A36);
-    default:
-      return const Color(0xFFFF9F1C);
-  }
+  canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
 }
 
 class _InteractiveArtifactReviewSection extends StatelessWidget {
   const _InteractiveArtifactReviewSection({
     required this.labelChoices,
+    required this.channelLabels,
+    required this.channelCoordinates,
     required this.exemplarsExpanded,
     required this.candidatesExpanded,
     required this.templates,
@@ -2678,6 +3537,8 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
   });
 
   final List<String> labelChoices;
+  final List<String> channelLabels;
+  final Map<String, ChannelCoordinate> channelCoordinates;
   final bool exemplarsExpanded;
   final bool candidatesExpanded;
   final List<ArtifactTemplateSummary> templates;
@@ -2699,193 +3560,221 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text(
-            'Interactive artifact detection',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
+      children: <Widget>[
+        const Text(
+          'Interactive artifact detection',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Tap any exemplar or candidate to jump there. Alt+drag adds ${labelChoices.where((String label) => label != 'blink').join(', ')}.',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        if (templates.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 10),
+          ArtifactTemplatePreview(
+            templates: templates,
+            channelLabels: channelLabels,
+            channelCoordinates: channelCoordinates,
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Tap any exemplar or candidate to jump there. Alt+drag adds ${labelChoices.where((String label) => label != 'blink').join(', ')}.',
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: templates
+                .map((ArtifactTemplateSummary template) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: artifactTemplateColor(
+                        template.label,
+                      ).withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: artifactTemplateColor(
+                          template.label,
+                        ).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Text(
+                      '${template.label}: ${template.exemplarCount} exemplar${template.exemplarCount == 1 ? '' : 's'} • ${template.sampleCount} samples',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  );
+                })
+                .toList(growable: false),
           ),
-          if (templates.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 10),
-            _ArtifactTemplatePreview(templates: templates),
-            const SizedBox(height: 10),
+        ],
+        const SizedBox(height: 12),
+        _SectionHeader(
+          title: 'Exemplars',
+          count: exemplars.length,
+          expanded: exemplarsExpanded,
+          onToggle: () => onToggleExemplars(!exemplarsExpanded),
+        ),
+        if (exemplarsExpanded) ...<Widget>[
+          const SizedBox(height: 8),
+          if (exemplars.isEmpty)
+            const Text(
+              'No exemplars yet.',
+              style: TextStyle(color: Colors.white54),
+            )
+          else
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: templates.map((ArtifactTemplateSummary template) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: _artifactTemplateColor(template.label).withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: _artifactTemplateColor(template.label).withValues(alpha: 0.4),
-                    ),
-                  ),
-                  child: Text(
-                    '${template.label}: ${template.exemplarCount} exemplar${template.exemplarCount == 1 ? '' : 's'} • ${template.sampleCount} samples',
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                );
-              }).toList(growable: false),
+              children: exemplars
+                  .map((ArtifactExemplarData exemplar) {
+                    final Color labelColor = _interactiveMarkerColor(
+                      interactiveSource: 'exemplar',
+                    );
+                    return InputChip(
+                      avatar: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: labelColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      label: Text(
+                        '${exemplar.label} @ ${(exemplar.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
+                      ),
+                      selected: true,
+                      selectedColor: labelColor.withValues(alpha: 0.22),
+                      onPressed: () => onFocusExemplar(exemplar),
+                      onDeleted: () => onDeleteExemplar(exemplar),
+                    );
+                  })
+                  .toList(growable: false),
+            ),
+        ],
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: <Widget>[
+            _SectionHeader(
+              title: 'Candidate matches',
+              count: pendingCandidates.length + acceptedCandidates.length,
+              expanded: candidatesExpanded,
+              onToggle: () => onToggleCandidates(!candidatesExpanded),
+            ),
+            ElevatedButton(
+              onPressed: pendingCandidates.isEmpty ? null : onAcceptAll,
+              child: const Text('Accept All'),
             ),
           ],
-          const SizedBox(height: 12),
-          _SectionHeader(
-            title: 'Exemplars',
-            count: exemplars.length,
-            expanded: exemplarsExpanded,
-            onToggle: () => onToggleExemplars(!exemplarsExpanded),
-          ),
-          if (exemplarsExpanded) ...<Widget>[
-            const SizedBox(height: 8),
-            if (exemplars.isEmpty)
-              const Text(
-                'No exemplars yet.',
-                style: TextStyle(color: Colors.white54),
-              )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: exemplars.map((ArtifactExemplarData exemplar) {
-                  final Color labelColor = _artifactTemplateColor(exemplar.label);
-                  return InputChip(
-                    avatar: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: labelColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    label: Text(
-                      '${exemplar.label} @ ${(exemplar.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
-                    ),
-                    selected: true,
-                    selectedColor: labelColor.withValues(alpha: 0.22),
-                    onPressed: () => onFocusExemplar(exemplar),
-                    onDeleted: () => onDeleteExemplar(exemplar),
-                  );
-                }).toList(growable: false),
-              ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: _SectionHeader(
-                  title: 'Candidate matches',
-                  count: pendingCandidates.length + acceptedCandidates.length,
-                  expanded: candidatesExpanded,
-                  onToggle: () => onToggleCandidates(!candidatesExpanded),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: pendingCandidates.isEmpty ? null : onAcceptAll,
-                child: const Text('Accept All'),
-              ),
-            ],
-          ),
-          if (candidatesExpanded) ...<Widget>[
-            const SizedBox(height: 8),
-            if (pendingCandidates.isEmpty)
-              const Text(
-                'No pending candidates.',
-                style: TextStyle(color: Colors.white54),
-              )
-            else
-              Column(
-                children: pendingCandidates.map((ArtifactCandidateData candidate) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Material(
-                      color: _artifactTemplateColor(candidate.label).withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      child: InkWell(
+        ),
+        if (candidatesExpanded) ...<Widget>[
+          const SizedBox(height: 8),
+          if (pendingCandidates.isEmpty)
+            const Text(
+              'No pending candidates.',
+              style: TextStyle(color: Colors.white54),
+            )
+          else
+            Column(
+              children: pendingCandidates
+                  .map((ArtifactCandidateData candidate) {
+                    final Color markerColor = _interactiveMarkerColor(
+                      interactiveStatus:
+                          InteractiveArtifactDetectionNodeType.pendingStatus,
+                    );
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Material(
+                        color: markerColor.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(8),
-                        onTap: () => onFocusPendingCandidate(candidate),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          child: Row(
-                            children: <Widget>[
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: _artifactTemplateColor(candidate.label),
-                                  shape: BoxShape.circle,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => onFocusPendingCandidate(candidate),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            child: Row(
+                              children: <Widget>[
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: markerColor,
+                                    shape: BoxShape.circle,
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s • score ${candidate.score.toStringAsFixed(2)}',
-                                  style: const TextStyle(color: Colors.white),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s • score ${candidate.score.toStringAsFixed(2)}',
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              TextButton(
-                                onPressed: () => onRejectCandidate(candidate),
-                                child: const Text('Reject'),
-                              ),
-                              const SizedBox(width: 4),
-                              ElevatedButton(
-                                onPressed: () => onAcceptCandidate(candidate),
-                                child: const Text('Accept'),
-                              ),
-                            ],
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  onPressed: () => onRejectCandidate(candidate),
+                                  child: const Text('Reject'),
+                                ),
+                                const SizedBox(width: 4),
+                                ElevatedButton(
+                                  onPressed: () => onAcceptCandidate(candidate),
+                                  child: const Text('Accept'),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(growable: false),
+                    );
+                  })
+                  .toList(growable: false),
+            ),
+          if (acceptedCandidates.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            const Text(
+              'Accepted candidates',
+              style: TextStyle(
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
               ),
-            if (acceptedCandidates.isNotEmpty) ...<Widget>[
-              const SizedBox(height: 12),
-              const Text(
-                'Accepted candidates',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: acceptedCandidates.map((ArtifactCandidateData candidate) {
-                  final Color labelColor = _artifactTemplateColor(candidate.label);
-                  return InputChip(
-                    avatar: Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: labelColor,
-                        shape: BoxShape.circle,
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: acceptedCandidates
+                  .map((ArtifactCandidateData candidate) {
+                    final Color labelColor = _interactiveMarkerColor(
+                      interactiveStatus:
+                          InteractiveArtifactDetectionNodeType.acceptedStatus,
+                    );
+                    return InputChip(
+                      avatar: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: labelColor,
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                    ),
-                    label: Text(
-                      '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
-                    ),
-                    selected: true,
-                    selectedColor: labelColor.withValues(alpha: 0.22),
-                    onPressed: () => onFocusAcceptedCandidate(candidate),
-                    onDeleted: () => onUndoAccepted(candidate),
-                  );
-                }).toList(growable: false),
-              ),
-            ],
+                      label: Text(
+                        '${candidate.label} @ ${(candidate.onsetMicros / 1000000.0).toStringAsFixed(2)} s',
+                      ),
+                      selected: true,
+                      selectedColor: labelColor.withValues(alpha: 0.22),
+                      onPressed: () => onFocusAcceptedCandidate(candidate),
+                      onDeleted: () => onUndoAccepted(candidate),
+                    );
+                  })
+                  .toList(growable: false),
+            ),
           ],
+        ],
       ],
     );
   }
@@ -2929,111 +3818,16 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _ArtifactTemplatePreview extends StatelessWidget {
-  const _ArtifactTemplatePreview({
-    required this.templates,
+class _DraftManifestItem {
+  const _DraftManifestItem({
+    required this.label,
+    required this.detail,
+    required this.color,
   });
 
-  final List<ArtifactTemplateSummary> templates;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 132,
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-      ),
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          const Text(
-            'Current template summary',
-            style: TextStyle(
-              color: Colors.white70,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Expanded(
-            child: CustomPaint(
-              painter: _ArtifactTemplatePainter(templates: templates),
-              child: const SizedBox.expand(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ArtifactTemplatePainter extends CustomPainter {
-  const _ArtifactTemplatePainter({
-    required this.templates,
-  });
-
-  final List<ArtifactTemplateSummary> templates;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.08)
-      ..strokeWidth = 1;
-    final Paint baselinePaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.16)
-      ..strokeWidth = 1.2;
-
-    final double baselineY = size.height - 6;
-    canvas.drawLine(
-      Offset(0, baselineY),
-      Offset(size.width, baselineY),
-      baselinePaint,
-    );
-    canvas.drawLine(Offset(size.width / 2, 0), Offset(size.width / 2, size.height), gridPaint);
-
-    double maxValue = 1.0;
-    for (final ArtifactTemplateSummary template in templates) {
-      for (final double sample in template.previewSamples) {
-        if (sample > maxValue) {
-          maxValue = sample;
-        }
-      }
-    }
-
-    for (final ArtifactTemplateSummary template in templates) {
-      final List<double> samples = template.previewSamples;
-      if (samples.length < 2) {
-        continue;
-      }
-      final Path path = Path();
-      for (int index = 0; index < samples.length; index++) {
-        final double x = samples.length == 1
-            ? 0
-            : (index / (samples.length - 1)) * size.width;
-        final double normalized = (samples[index] / maxValue).clamp(0.0, 1.0);
-        final double y = baselineY - (normalized * (size.height - 14));
-        if (index == 0) {
-          path.moveTo(x, y);
-        } else {
-          path.lineTo(x, y);
-        }
-      }
-      final Paint paint = Paint()
-        ..color = _artifactTemplateColor(template.label).withValues(alpha: 0.9)
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..strokeWidth = 2.0;
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ArtifactTemplatePainter oldDelegate) {
-    return oldDelegate.templates != templates;
-  }
+  final String label;
+  final String detail;
+  final Color color;
 }
 
 class _TimeAxisBar extends StatelessWidget {
@@ -3060,7 +3854,10 @@ class _TimeAxisBar extends StatelessWidget {
           final double startSeconds = offset / pixelsPerSecond;
           final double endSeconds = (offset + viewportWidth) / pixelsPerSecond;
           final int firstTick = math.max(0, startSeconds.floor());
-          final int lastTick = math.min(durationSeconds.ceil(), endSeconds.ceil());
+          final int lastTick = math.min(
+            durationSeconds.ceil(),
+            endSeconds.ceil(),
+          );
 
           return Container(
             decoration: BoxDecoration(
@@ -3068,37 +3865,42 @@ class _TimeAxisBar extends StatelessWidget {
                 top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
               ),
             ),
-            child: ClipRect(
-              child: Stack(
-                children: <Widget>[
-                  for (int second = firstTick; second <= lastTick; second++)
-                    Positioned(
-                      left: (second * pixelsPerSecond) - offset - 1,
-                      top: 0,
-                      child: SizedBox(
-                        width: 44,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Container(
-                              width: 1,
-                              height: 8,
-                              color: Colors.white.withValues(alpha: 0.28),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${second}s',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ],
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                for (int second = firstTick; second <= lastTick; second++)
+                  ...() {
+                    final double tickX = (second * pixelsPerSecond) - offset;
+                    const double labelWidth = 44;
+                    final double labelLeft = tickX - (labelWidth / 2);
+                    return <Widget>[
+                      Positioned(
+                        left: tickX - 0.5,
+                        top: 0,
+                        child: Container(
+                          width: 1,
+                          height: 8,
+                          color: Colors.white.withValues(alpha: 0.28),
                         ),
                       ),
-                    ),
-                ],
-              ),
+                      Positioned(
+                        left: labelLeft,
+                        top: 10,
+                        child: SizedBox(
+                          width: labelWidth,
+                          child: Text(
+                            '${second}s',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ];
+                  }(),
+              ],
             ),
           );
         },
@@ -3135,10 +3937,12 @@ class _TimelineBar extends StatelessWidget {
                   : (viewportWidth / totalWidth).clamp(0.02, 1.0);
               final double thumbWidth = math.max(18, barWidth * windowFraction);
               final double maxOffset = math.max(0, totalWidth - viewportWidth);
-              final double currentOffset =
-                  controller.hasClients ? controller.offset : 0.0;
-              final double normalizedOffset =
-                  maxOffset == 0 ? 0.0 : (currentOffset / maxOffset).clamp(0.0, 1.0);
+              final double currentOffset = controller.hasClients
+                  ? controller.offset
+                  : 0.0;
+              final double normalizedOffset = maxOffset == 0
+                  ? 0.0
+                  : (currentOffset / maxOffset).clamp(0.0, 1.0);
               final double travel = math.max(0, barWidth - thumbWidth);
               final double thumbLeft = travel * normalizedOffset;
               final double startSeconds = durationSeconds * normalizedOffset;
@@ -3150,8 +3954,10 @@ class _TimelineBar extends StatelessWidget {
                   if (!controller.hasClients || maxOffset == 0) {
                     return;
                   }
-                  final double nextLeft =
-                      (thumbLeft + details.delta.dx).clamp(0.0, travel);
+                  final double nextLeft = (thumbLeft + details.delta.dx).clamp(
+                    0.0,
+                    travel,
+                  );
                   controller.jumpTo((nextLeft / travel) * maxOffset);
                 },
                 onTapDown: (TapDownDetails details) {
@@ -3159,7 +3965,10 @@ class _TimelineBar extends StatelessWidget {
                     return;
                   }
                   final double centeredLeft =
-                      (details.localPosition.dx - (thumbWidth / 2)).clamp(0.0, travel);
+                      (details.localPosition.dx - (thumbWidth / 2)).clamp(
+                        0.0,
+                        travel,
+                      );
                   controller.jumpTo((centeredLeft / travel) * maxOffset);
                 },
                 child: Stack(
@@ -3223,10 +4032,7 @@ class _TimelineBar extends StatelessWidget {
 }
 
 class _BrowserMessage extends StatelessWidget {
-  const _BrowserMessage({
-    required this.title,
-    required this.body,
-  });
+  const _BrowserMessage({required this.title, required this.body});
 
   final String title;
   final String body;
@@ -3260,6 +4066,7 @@ class _RawSignalPainter extends CustomPainter {
   const _RawSignalPainter({
     required this.channels,
     required this.channelLabels,
+    required this.sampleCount,
     required this.sampleRate,
     required this.channelHeight,
     required this.pixelsPerSecond,
@@ -3267,6 +4074,7 @@ class _RawSignalPainter extends CustomPainter {
     required this.showSignals,
     required this.removeDc,
     required this.colors,
+    required this.removedRows,
     required this.markers,
     this.selectionStartX,
     this.selectionEndX,
@@ -3279,6 +4087,7 @@ class _RawSignalPainter extends CustomPainter {
 
   final List<List<double>> channels;
   final List<String> channelLabels;
+  final int sampleCount;
   final double sampleRate;
   final double channelHeight;
   final double pixelsPerSecond;
@@ -3286,6 +4095,7 @@ class _RawSignalPainter extends CustomPainter {
   final bool showSignals;
   final bool removeDc;
   final List<Color> colors;
+  final List<bool> removedRows;
   final List<TimeMarker> markers;
   final double? selectionStartX;
   final double? selectionEndX;
@@ -3304,7 +4114,7 @@ class _RawSignalPainter extends CustomPainter {
         : math.max(0, (startTime * sampleRate).floor() - 1);
     final int endSample = channels.isEmpty
         ? 0
-        : math.min(channels.first.length, (endTime * sampleRate).ceil() + 1);
+        : math.min(sampleCount, (endTime * sampleRate).ceil() + 1);
     final int firstChannel = showSignals
         ? math.max(0, (verticalOffset / channelHeight).floor() - 1)
         : 0;
@@ -3338,7 +4148,8 @@ class _RawSignalPainter extends CustomPainter {
     final List<TimeMarker> visibleMarkers = <TimeMarker>[];
     for (final TimeMarker marker in markers) {
       final double x = marker.timeSeconds * pixelsPerSecond;
-      final double markerEndX = ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+      final double markerEndX =
+          ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
           pixelsPerSecond;
       if (markerEndX < horizontalOffset - 24 ||
           x > horizontalOffset + viewportWidth + 24) {
@@ -3384,7 +4195,7 @@ class _RawSignalPainter extends CustomPainter {
       final double verticalScale = channelHeight * 0.35;
       final double pixelsPerUv = verticalScale / math.max(1.0, yScaleUv);
       final double scaleBarHeight = yScaleUv * pixelsPerUv;
-      final double scaleBarX = horizontalOffset + 10;
+      final double scaleBarX = horizontalOffset + viewportWidth - 14;
       final double scaleBarTop = verticalOffset + 12;
       canvas.drawLine(
         Offset(scaleBarX, scaleBarTop),
@@ -3403,7 +4214,7 @@ class _RawSignalPainter extends CustomPainter {
       );
       final TextPainter scaleLabelPainter = TextPainter(
         text: TextSpan(
-          text: '${yScaleUv.toStringAsFixed(0)} uV',
+          text: '${yScaleUv.toStringAsFixed(0)} μV',
           style: const TextStyle(
             color: Colors.white70,
             fontSize: 11,
@@ -3414,21 +4225,32 @@ class _RawSignalPainter extends CustomPainter {
       )..layout();
       scaleLabelPainter.paint(
         canvas,
-        Offset(scaleBarX + 8, scaleBarTop + (scaleBarHeight / 2) - (scaleLabelPainter.height / 2)),
+        Offset(
+          scaleBarX - scaleLabelPainter.width - 8,
+          scaleBarTop + (scaleBarHeight / 2) - (scaleLabelPainter.height / 2),
+        ),
       );
     }
 
     if (showSignals) {
       final double verticalScale = channelHeight * 0.35;
       final double pixelsPerUv = verticalScale / math.max(1.0, yScaleUv);
-      for (int channelIndex = firstChannel; channelIndex <= lastChannel; channelIndex++) {
-        final double centerY = (channelIndex * channelHeight) + (channelHeight / 2);
+      for (
+        int channelIndex = firstChannel;
+        channelIndex <= lastChannel;
+        channelIndex++
+      ) {
+        final double centerY =
+            (channelIndex * channelHeight) + (channelHeight / 2);
         canvas.drawLine(
           Offset(horizontalOffset, centerY),
           Offset(horizontalOffset + viewportWidth, centerY),
           baselinePaint,
         );
 
+        if (removedRows[channelIndex]) {
+          continue;
+        }
         final List<double> samples = channels[channelIndex];
         if (samples.isEmpty || endSample <= startSample) {
           continue;
@@ -3445,9 +4267,14 @@ class _RawSignalPainter extends CustomPainter {
           1,
           (visibleSampleCount / math.max(1.0, viewportWidth * 2)).ceil(),
         );
-        for (int sampleIndex = startSample; sampleIndex < endSample; sampleIndex += stride) {
+        for (
+          int sampleIndex = startSample;
+          sampleIndex < endSample;
+          sampleIndex += stride
+        ) {
           final double x = (sampleIndex / sampleRate) * pixelsPerSecond;
-          final double y = centerY - ((samples[sampleIndex] - dcOffset) * pixelsPerUv);
+          final double y =
+              centerY - ((samples[sampleIndex] - dcOffset) * pixelsPerUv);
           if (sampleIndex == startSample) {
             path.moveTo(x, y);
           } else {
@@ -3475,7 +4302,7 @@ class _RawSignalPainter extends CustomPainter {
           final double markerStartX = marker.timeSeconds * pixelsPerSecond;
           final double markerEndX =
               ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
-                  pixelsPerSecond;
+              pixelsPerSecond;
           canvas.save();
           canvas.clipRect(
             Rect.fromLTRB(
@@ -3501,15 +4328,17 @@ class _RawSignalPainter extends CustomPainter {
       final double x = marker.timeSeconds * pixelsPerSecond;
       final double markerEndX =
           ((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
-              pixelsPerSecond;
+          pixelsPerSecond;
       final Color markerColor = _markerDisplayColor(marker);
       final String markerReferenceId =
           '${marker.label}:${marker.onsetMicros}:${marker.durationMicros}:${marker.markerType}';
       final bool hovered = hoveredMarkerReferenceId == markerReferenceId;
-      final String? interactiveStatus =
-          marker.attributes['brainstory.artifactStatus']?.toString();
-      final String? interactiveSource =
-          marker.attributes['brainstory.artifactSource']?.toString();
+      final String? interactiveStatus = marker
+          .attributes['brainstory.artifactStatus']
+          ?.toString();
+      final String? interactiveSource = marker
+          .attributes['brainstory.artifactSource']
+          ?.toString();
       _drawMarkerGuideLine(
         canvas: canvas,
         x: x,
@@ -3539,12 +4368,7 @@ class _RawSignalPainter extends CustomPainter {
             color: markerColor,
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            shadows: const <Shadow>[
-              Shadow(
-                blurRadius: 8,
-                color: Colors.black,
-              ),
-            ],
+            shadows: const <Shadow>[Shadow(blurRadius: 8, color: Colors.black)],
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -3581,6 +4405,7 @@ class _RawSignalPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _RawSignalPainter oldDelegate) {
     return oldDelegate.channels != channels ||
+        oldDelegate.sampleCount != sampleCount ||
         oldDelegate.sampleRate != sampleRate ||
         oldDelegate.channelHeight != channelHeight ||
         oldDelegate.pixelsPerSecond != pixelsPerSecond ||
@@ -3589,6 +4414,7 @@ class _RawSignalPainter extends CustomPainter {
         oldDelegate.removeDc != removeDc ||
         oldDelegate.markers != markers ||
         oldDelegate.colors != colors ||
+        oldDelegate.removedRows != removedRows ||
         oldDelegate.selectionStartX != selectionStartX ||
         oldDelegate.selectionEndX != selectionEndX ||
         oldDelegate.hoveredMarkerReferenceId != hoveredMarkerReferenceId ||

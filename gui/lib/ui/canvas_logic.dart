@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -19,6 +21,7 @@ import '../nodes/import_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/node_registry.dart';
 import '../nodes/node_type.dart';
+import '../nodes/psd_average_node.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/realign_node.dart';
 import '../nodes/segmentation_node.dart';
@@ -41,45 +44,117 @@ enum _OutputHandleKind {
   other,
 }
 
+enum RunActivityPhase { initializing, running, finalizing }
+
+enum ProcessingResponsiveness { fast, balanced, responsive }
+
+extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
+  String get label {
+    switch (this) {
+      case ProcessingResponsiveness.fast:
+        return 'Fast';
+      case ProcessingResponsiveness.balanced:
+        return 'Balanced';
+      case ProcessingResponsiveness.responsive:
+        return 'Responsive';
+    }
+  }
+
+  String get description {
+    switch (this) {
+      case ProcessingResponsiveness.fast:
+        return 'Prioritize throughput; chunk-aware nodes yield minimally.';
+      case ProcessingResponsiveness.balanced:
+        return 'Split time between processing and UI responsiveness.';
+      case ProcessingResponsiveness.responsive:
+        return 'Yield frequently so the interface stays easy to use.';
+    }
+  }
+
+  Duration get workBudget {
+    switch (this) {
+      case ProcessingResponsiveness.fast:
+        return const Duration(milliseconds: 250);
+      case ProcessingResponsiveness.balanced:
+        return const Duration(milliseconds: 50);
+      case ProcessingResponsiveness.responsive:
+        return const Duration(milliseconds: 25);
+    }
+  }
+
+  Duration get yieldBudget {
+    switch (this) {
+      case ProcessingResponsiveness.fast:
+        return Duration.zero;
+      case ProcessingResponsiveness.balanced:
+        return const Duration(milliseconds: 50);
+      case ProcessingResponsiveness.responsive:
+        return const Duration(milliseconds: 75);
+    }
+  }
+
+  bool get chunkingEnabled => this != ProcessingResponsiveness.fast;
+}
+
 class RunActivity {
   const RunActivity({
     required this.label,
     this.detail = '',
+    this.phase = RunActivityPhase.initializing,
   });
 
   final String label;
   final String detail;
+  final RunActivityPhase phase;
+
+  bool get locksInterface => phase != RunActivityPhase.running;
 
   RunActivity copyWith({
     String? label,
     String? detail,
+    RunActivityPhase? phase,
   }) {
     return RunActivity(
       label: label ?? this.label,
       detail: detail ?? this.detail,
+      phase: phase ?? this.phase,
     );
   }
 }
 
-enum RunJobState {
-  done,
-  failed,
-}
+enum RunJobState { queued, running, done, failed }
 
 class RunJobEntry {
   const RunJobEntry({
     required this.label,
     required this.detail,
     required this.state,
-    required this.finishedAt,
-    required this.elapsed,
+    this.finishedAt,
+    this.elapsed = Duration.zero,
   });
 
   final String label;
   final String detail;
   final RunJobState state;
-  final DateTime finishedAt;
+  final DateTime? finishedAt;
   final Duration elapsed;
+}
+
+class _QueuedRunTask {
+  _QueuedRunTask({
+    required this.id,
+    required this.label,
+    required this.lockedNodeIds,
+    required this.action,
+    required this.successDetail,
+  });
+
+  final int id;
+  final String label;
+  final Set<String> lockedNodeIds;
+  final Future<void> Function() action;
+  final String Function() successDetail;
+  final Completer<String> completer = Completer<String>();
 }
 
 class VisualizationSourceRef {
@@ -159,19 +234,16 @@ class _DatasetUndoSnapshot {
       sourceBytes: dataset.sourceBytes,
       loaded: dataset.loaded,
       sourceFilename: sourceFilename?.isEmpty == true ? null : sourceFilename,
-      artifactSnapshot:
-          captureArtifacts ? DatasetArtifactSnapshot.fromDataset(dataset) : null,
+      artifactSnapshot: captureArtifacts
+          ? DatasetArtifactSnapshot.fromDataset(dataset)
+          : null,
     );
   }
 
   Dataset restore(Map<String, Dataset> currentDatasetsById) {
-    final Dataset dataset = currentDatasetsById[id] ??
-        Dataset(
-          id,
-          label: label,
-          path: path,
-          sourceBytes: sourceBytes,
-        );
+    final Dataset dataset =
+        currentDatasetsById[id] ??
+        Dataset(id, label: label, path: path, sourceBytes: sourceBytes);
     dataset.label = label;
     dataset.path = path;
     dataset.sourceBytes = sourceBytes;
@@ -271,7 +343,9 @@ class _CanvasUndoSnapshot {
           )
           .toList(growable: false),
       connections: logic.connections
-          .map((Map<String, dynamic> connection) => _deepCloneJsonMap(connection))
+          .map(
+            (Map<String, dynamic> connection) => _deepCloneJsonMap(connection),
+          )
           .toList(growable: false),
       nodeRamSnapshots: <String, Map<String, DatasetArtifactSnapshot>>{
         for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
@@ -302,8 +376,9 @@ class _CanvasUndoSnapshot {
 
     logic.datasets.clear();
     for (final _DatasetUndoSnapshot datasetSnapshot in datasets) {
-      logic.datasets[datasetSnapshot.mapKey] =
-          datasetSnapshot.restore(currentDatasetsById);
+      logic.datasets[datasetSnapshot.mapKey] = datasetSnapshot.restore(
+        currentDatasetsById,
+      );
     }
 
     logic.connections
@@ -316,22 +391,18 @@ class _CanvasUndoSnapshot {
 
     logic._nodeRamSnapshots
       ..clear()
-      ..addAll(
-        <String, Map<String, DatasetArtifactSnapshot>>{
-          for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
-              in nodeRamSnapshots.entries)
-            entry.key: Map<String, DatasetArtifactSnapshot>.from(entry.value),
-        },
-      );
+      ..addAll(<String, Map<String, DatasetArtifactSnapshot>>{
+        for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
+            in nodeRamSnapshots.entries)
+          entry.key: Map<String, DatasetArtifactSnapshot>.from(entry.value),
+      });
     logic._nodeDiskSnapshotIds
       ..clear()
-      ..addAll(
-        <String, Set<String>>{
-          for (final MapEntry<String, Set<String>> entry
-              in nodeDiskSnapshotIds.entries)
-            entry.key: Set<String>.from(entry.value),
-        },
-      );
+      ..addAll(<String, Set<String>>{
+        for (final MapEntry<String, Set<String>> entry
+            in nodeDiskSnapshotIds.entries)
+          entry.key: Set<String>.from(entry.value),
+      });
 
     logic.selectedNodeId = selectedNodeId;
     logic.selectedNodeIds
@@ -385,8 +456,10 @@ class _MemoryRowWidget extends StatelessWidget {
                 'Done' => const Color(0xFF43C26B),
                 'Ready' => const Color(0xFF5CC8FF),
                 'Stale' => const Color(0xFFFFB347),
+                'Partial' => const Color(0xFFC7D85A),
                 'Running' => const Color(0xFF7FE36A),
                 'Waiting' => const Color(0xFFC0CAD4),
+                'Input locked' => const Color(0xFFFFD166),
                 _ => const Color(0xFF8C98A4),
               },
             ),
@@ -417,7 +490,9 @@ class _MemoryRowWidget extends StatelessWidget {
           runSpacing: 8,
           children: <Widget>[
             OutlinedButton(
-              onPressed: onLoadFromDisk == null ? null : () => onLoadFromDisk!(),
+              onPressed: onLoadFromDisk == null
+                  ? null
+                  : () => onLoadFromDisk!(),
               child: const Text('Load from disk'),
             ),
             OutlinedButton(
@@ -459,19 +534,14 @@ class _MemoryInfoPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: color.withValues(alpha: 0.5),
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: RichText(
         text: TextSpan(
           children: <TextSpan>[
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
             TextSpan(
               text: value,
@@ -479,6 +549,82 @@ class _MemoryInfoPill extends StatelessWidget {
                 color: color,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProcessingPolicyControl extends StatelessWidget {
+  const _ProcessingPolicyControl({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final ProcessingResponsiveness value;
+  final ValueChanged<ProcessingResponsiveness> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text(
+              'Processing',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<ProcessingResponsiveness>(
+              initialValue: value,
+              dropdownColor: const Color(0xFF20262E),
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Responsiveness',
+                labelStyle: TextStyle(color: Colors.white70),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white24),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white70),
+                ),
+              ),
+              style: const TextStyle(color: Colors.white),
+              items: ProcessingResponsiveness.values
+                  .map(
+                    (ProcessingResponsiveness option) =>
+                        DropdownMenuItem<ProcessingResponsiveness>(
+                          value: option,
+                          child: Text(option.label),
+                        ),
+                  )
+                  .toList(growable: false),
+              onChanged: (ProcessingResponsiveness? nextValue) {
+                if (nextValue != null) {
+                  onChanged(nextValue);
+                }
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              value.description,
+              style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 11.5,
+                height: 1.25,
               ),
             ),
           ],
@@ -506,7 +652,10 @@ dynamic _deepCloneJsonValue(dynamic value) {
 }
 
 class CanvasLogic {
-  CanvasLogic();
+  CanvasLogic({this.runUiYieldsEnabled = true});
+
+  @visibleForTesting
+  final bool runUiYieldsEnabled;
 
   /// Registry of available node types in the sidebar.
   late final List<NodeType> availableNodes = NodeRegistry.entries
@@ -524,10 +673,27 @@ class CanvasLogic {
   ///   toPort: int,
   /// }
   final List<Map<String, dynamic>> connections = <Map<String, dynamic>>[];
-  final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(null);
+  final ValueNotifier<RunActivity?> runActivity = ValueNotifier<RunActivity?>(
+    null,
+  );
+  final ValueNotifier<ProcessingResponsiveness> processingResponsiveness =
+      ValueNotifier<ProcessingResponsiveness>(
+        ProcessingResponsiveness.balanced,
+      );
+  final ValueNotifier<bool> visualizerPriorityActive = ValueNotifier<bool>(
+    false,
+  );
   final ValueNotifier<List<RunJobEntry>> recentRunJobs =
       ValueNotifier<List<RunJobEntry>>(const <RunJobEntry>[]);
+  final ValueNotifier<List<RunJobEntry>> queuedRunJobs =
+      ValueNotifier<List<RunJobEntry>>(const <RunJobEntry>[]);
+  final List<_QueuedRunTask> _queuedRunTasks = <_QueuedRunTask>[];
+  Future<void> _runQueueTail = Future<void>.value();
+  int _runQueueTaskCounter = 0;
+  int _visualizerPriorityCount = 0;
+  final Stopwatch _executionChunkStopwatch = Stopwatch();
   final Set<String> _runWaitingNodeIds = <String>{};
+  final Set<String> _runLockedNodeIds = <String>{};
   String? _runActiveNodeId;
   DateTime? _runStartedAt;
   final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
@@ -557,6 +723,29 @@ class CanvasLogic {
   final List<_CanvasUndoSnapshot> _undoStack = <_CanvasUndoSnapshot>[];
 
   bool get canUndo => _undoStack.isNotEmpty;
+  bool get interfaceLocked => runActivity.value?.locksInterface ?? false;
+
+  bool get selectedMutationBlocked {
+    if (interfaceLocked) {
+      return true;
+    }
+    final int? connectionIndex = selectedConnectionIndex;
+    if (connectionIndex != null) {
+      return _connectionMutationLockedAtIndex(connectionIndex);
+    }
+    final Set<String> targetIds = selectedNodeIds.isNotEmpty
+        ? selectedNodeIds
+        : <String>{if (selectedNodeId != null) selectedNodeId!};
+    return targetIds.any(isNodeMutationLocked);
+  }
+
+  bool isNodeMutationLocked(String nodeId) {
+    if (interfaceLocked) {
+      return true;
+    }
+    return runActivity.value?.phase == RunActivityPhase.running &&
+        _runLockedNodeIds.contains(nodeId);
+  }
 
   String? undoLast() {
     if (_undoStack.isEmpty) {
@@ -585,7 +774,9 @@ class CanvasLogic {
 
   void addNode(NodeType type) {
     _recordUndo('add ${type.title}');
-    final Offset spawnPosition = _nearestAvailablePosition(_nextSpawnPosition());
+    final Offset spawnPosition = _nearestAvailablePosition(
+      _nextSpawnPosition(),
+    );
     nodes.add(_buildNode(type: type, position: spawnPosition));
   }
 
@@ -665,8 +856,14 @@ class CanvasLogic {
     selectedConnectionIndex = null;
     keyboardFocusedNodeId = null;
     recentRunJobs.value = const <RunJobEntry>[];
+    queuedRunJobs.value = const <RunJobEntry>[];
+    _queuedRunTasks.clear();
     runActivity.value = null;
+    visualizerPriorityActive.value = false;
+    _visualizerPriorityCount = 0;
+    _executionChunkStopwatch.reset();
     _runWaitingNodeIds.clear();
+    _runLockedNodeIds.clear();
     _runActiveNodeId = null;
     _runStartedAt = null;
     _clearPendingConnection();
@@ -677,7 +874,16 @@ class CanvasLogic {
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
           label: 'BrainStory Signals',
-          extensions: <String>['csv', 'tsv', 'txt', 'edf', 'cnt', 'set', 'fdt', 'vhdr'],
+          extensions: <String>[
+            'csv',
+            'tsv',
+            'txt',
+            'edf',
+            'cnt',
+            'set',
+            'fdt',
+            'vhdr',
+          ],
         ),
       ],
     );
@@ -691,18 +897,23 @@ class CanvasLogic {
         eeglabMetadataPathForSelection(file.path),
       );
       final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
-      final bool selectedBrainVisionSidecar = file.name.toLowerCase().endsWith('.eeg') ||
+      final bool selectedBrainVisionSidecar =
+          file.name.toLowerCase().endsWith('.eeg') ||
           file.name.toLowerCase().endsWith('.vmrk');
       final bool selectedAntCnt = file.name.toLowerCase().endsWith('.cnt');
+      final bool hasDesktopPath = !kIsWeb && normalizedPath.trim().isNotEmpty;
       final Uint8List? bytes =
-          (selectedFdt || selectedBrainVisionSidecar || selectedAntCnt)
-              ? null
-              : await file.readAsBytes();
+          (hasDesktopPath ||
+              selectedFdt ||
+              selectedBrainVisionSidecar ||
+              selectedAntCnt)
+          ? null
+          : await file.readAsBytes();
       final String sourceName = selectedFdt
           ? '${file.name.substring(0, file.name.length - 4)}.set'
           : selectedBrainVisionSidecar
-              ? '${file.name.substring(0, file.name.length - 4)}.vhdr'
-              : file.name;
+          ? '${file.name.substring(0, file.name.length - 4)}.vhdr'
+          : file.name;
       final Dataset dataset = datasets.putIfAbsent(
         normalizedPath.isEmpty ? sourceName : normalizedPath,
         () => Dataset(
@@ -722,10 +933,12 @@ class CanvasLogic {
   }
 
   Future<void> removeDataset(String datasetId) async {
-    final MapEntry<String, Dataset>? entry = datasets.entries.cast<MapEntry<String, Dataset>?>().firstWhere(
-      (MapEntry<String, Dataset>? item) => item?.value.id == datasetId,
-      orElse: () => null,
-    );
+    final MapEntry<String, Dataset>? entry = datasets.entries
+        .cast<MapEntry<String, Dataset>?>()
+        .firstWhere(
+          (MapEntry<String, Dataset>? item) => item?.value.id == datasetId,
+          orElse: () => null,
+        );
     if (entry == null) {
       return;
     }
@@ -736,7 +949,8 @@ class CanvasLogic {
     for (final NodeModel node in nodes) {
       node.datasetStates.remove(datasetId);
 
-      final List<dynamic>? selected = node.params['selectedDatasetIds'] as List<dynamic>?;
+      final List<dynamic>? selected =
+          node.params['selectedDatasetIds'] as List<dynamic>?;
       if (selected != null) {
         node.params['selectedDatasetIds'] = selected
             .where((dynamic value) => value?.toString() != datasetId)
@@ -752,9 +966,11 @@ class CanvasLogic {
         }
       }
 
-      final Map<String, dynamic> channelEditsByDataset = Map<String, dynamic>.from(
-        node.params['channelEditsByDataset'] as Map? ?? const <String, dynamic>{},
-      );
+      final Map<String, dynamic> channelEditsByDataset =
+          Map<String, dynamic>.from(
+            node.params['channelEditsByDataset'] as Map? ??
+                const <String, dynamic>{},
+          );
       if (channelEditsByDataset.remove(datasetId) != null) {
         node.params['channelEditsByDataset'] = channelEditsByDataset;
       }
@@ -763,7 +979,10 @@ class CanvasLogic {
           (node.params['markers'] as List<dynamic>? ?? const <dynamic>[]);
       if (markers.isNotEmpty) {
         node.params['markers'] = markers
-            .where((dynamic marker) => marker is! Map || marker['datasetId'] != datasetId)
+            .where(
+              (dynamic marker) =>
+                  marker is! Map || marker['datasetId'] != datasetId,
+            )
             .toList(growable: false);
       }
 
@@ -776,20 +995,29 @@ class CanvasLogic {
             (node.params[key] as List<dynamic>? ?? const <dynamic>[]);
         if (values.isNotEmpty) {
           node.params[key] = values
-              .where((dynamic item) => item is! Map || item['datasetId'] != datasetId)
+              .where(
+                (dynamic item) =>
+                    item is! Map || item['datasetId'] != datasetId,
+              )
               .toList(growable: false);
         }
       }
     }
 
-    for (final String nodeId in _nodeRamSnapshots.keys.toList(growable: false)) {
-      final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[nodeId];
-      if (snapshots?.remove(datasetId) != null && (snapshots?.isEmpty ?? false)) {
+    for (final String nodeId in _nodeRamSnapshots.keys.toList(
+      growable: false,
+    )) {
+      final Map<String, DatasetArtifactSnapshot>? snapshots =
+          _nodeRamSnapshots[nodeId];
+      if (snapshots?.remove(datasetId) != null &&
+          (snapshots?.isEmpty ?? false)) {
         _nodeRamSnapshots.remove(nodeId);
       }
     }
 
-    for (final String nodeId in _nodeDiskSnapshotIds.keys.toList(growable: false)) {
+    for (final String nodeId in _nodeDiskSnapshotIds.keys.toList(
+      growable: false,
+    )) {
       final Set<String>? diskIds = _nodeDiskSnapshotIds[nodeId];
       if (diskIds?.remove(datasetId) ?? false) {
         await deleteNodeSnapshotFromDisk(nodeId: nodeId, datasetId: datasetId);
@@ -814,12 +1042,13 @@ class CanvasLogic {
         ? Set<String>.from(selectedNodeIds)
         : <String>{if (selectedNodeId != null) selectedNodeId!};
     if (targetIds.isEmpty) return;
+    if (targetIds.any(isNodeMutationLocked)) return;
 
     _recordUndo(targetIds.length == 1 ? 'delete node' : 'delete nodes');
     nodes.removeWhere((node) => targetIds.contains(node.id));
     connections.removeWhere(
-          (connection) =>
-      targetIds.contains(connection['fromNode']) ||
+      (connection) =>
+          targetIds.contains(connection['fromNode']) ||
           targetIds.contains(connection['toNode']),
     );
 
@@ -835,6 +1064,9 @@ class CanvasLogic {
   void deleteSelectedConnection() {
     final int? index = selectedConnectionIndex;
     if (index == null || index < 0 || index >= connections.length) {
+      return;
+    }
+    if (_connectionMutationLockedAtIndex(index)) {
       return;
     }
     _recordUndo('delete wire');
@@ -879,10 +1111,27 @@ class CanvasLogic {
     if (index == null) {
       return false;
     }
+    if (_connectionMutationLockedAtIndex(index)) {
+      return false;
+    }
     _recordUndo('delete wire');
     connections.removeAt(index);
     selectedConnectionIndex = null;
     return true;
+  }
+
+  bool _connectionMutationLockedAtIndex(int index) {
+    if (interfaceLocked) {
+      return true;
+    }
+    if (runActivity.value?.phase != RunActivityPhase.running ||
+        index < 0 ||
+        index >= connections.length) {
+      return false;
+    }
+    final Map<String, dynamic> connection = connections[index];
+    return _runLockedNodeIds.contains(connection['fromNode']) ||
+        _runLockedNodeIds.contains(connection['toNode']);
   }
 
   void clearConnectionDraft() {
@@ -908,17 +1157,20 @@ class CanvasLogic {
     required NodeModel node,
     required VoidCallback update,
   }) {
+    if (isNodeMutationLocked(node.id)) {
+      _showStatusSnackBar(
+        context,
+        '${node.title} is locked while its current job is running.',
+      );
+      return;
+    }
     keyboardFocusedNodeId = node.id;
     selectedNodeId = node.id;
     selectedNodeIds
       ..clear()
       ..add(node.id);
     selectedConnectionIndex = null;
-    _openNodeEditor(
-      context: context,
-      node: node,
-      update: update,
-    );
+    _openNodeEditor(context: context, node: node, update: update);
   }
 
   void _clearPendingConnection() {
@@ -971,23 +1223,29 @@ class CanvasLogic {
       case 'Import':
         return 'Data were imported into the workflow.';
       case 'Bridge Detector':
-        final int windowSamples = (params['windowSamples'] as num?)?.toInt() ?? 1000;
+        final int windowSamples =
+            (params['windowSamples'] as num?)?.toInt() ?? 1000;
         return 'Bridge detection was performed by computing channel-wise correlation matrices over the last $windowSamples samples of each full minute of recording.';
       case 'Resample':
-        final double sampleRate = (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;
-        final String method = (params['method'] ?? 'cubic_spline').toString().replaceAll('_', ' ');
+        final double sampleRate =
+            (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;
+        final String method = (params['method'] ?? 'cubic_spline')
+            .toString()
+            .replaceAll('_', ' ');
         final bool omitSpikes = (params['omitSpikes'] as bool?) ?? false;
         return 'Signals were resampled to ${sampleRate.toStringAsFixed(sampleRate.truncateToDouble() == sampleRate ? 0 : 2)} Hz using $method interpolation${omitSpikes ? ' with spike omission enabled' : ''}.';
       case 'Bandpass Filter':
         final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
         final double high = (params['high'] as num?)?.toDouble() ?? 40.0;
-        final double steepness = (params['steepness'] as num?)?.toDouble() ?? 0.8;
+        final double steepness =
+            (params['steepness'] as num?)?.toDouble() ?? 0.8;
         final double? notch = (params['notch'] as num?)?.toDouble();
         return 'A bandpass filter ($low-$high Hz, steepness $steepness${notch == null ? '' : ', notch at $notch Hz'}) was applied.';
       case 'PSD':
         final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
         final double fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
-        final String outputMode = (params['outputMode'] ?? 'averaged').toString();
+        final String outputMode = (params['outputMode'] ?? 'averaged')
+            .toString();
         return 'Power spectral density was estimated from $fLow to $fHigh Hz using ${outputMode == 'segments' ? 'segment-wise output' : 'averaged output'}.';
       case 'FOOOF':
         final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
@@ -1003,12 +1261,17 @@ class CanvasLogic {
       case 'Segmentation':
         return _segmentationMethodsClause(params);
       case 'Realign':
-        final double upsampleRate = (params['upsampleRateHz'] as num?)?.toDouble() ?? 100000.0;
-        final String method = (params['method'] ?? 'cubic_spline').toString().replaceAll('_', ' ');
-        final double maxShiftMs = (params['maxShiftMs'] as num?)?.toDouble() ?? 5.0;
+        final double upsampleRate =
+            (params['upsampleRateHz'] as num?)?.toDouble() ?? 100000.0;
+        final String method = (params['method'] ?? 'cubic_spline')
+            .toString()
+            .replaceAll('_', ' ');
+        final double maxShiftMs =
+            (params['maxShiftMs'] as num?)?.toDouble() ?? 5.0;
         return 'Segmented data were temporarily upsampled to ${upsampleRate.toStringAsFixed(0)} Hz, realigned by cross-correlation using $method interpolation with a maximum shift of $maxShiftMs ms, and then returned to the original sampling rate.';
       case 'Sleep Staging':
-        final double epochSeconds = (params['epochSeconds'] as num?)?.toDouble() ?? 30.0;
+        final double epochSeconds =
+            (params['epochSeconds'] as num?)?.toDouble() ?? 30.0;
         return 'Sleep-stage markers were generated in ${epochSeconds.toStringAsFixed(epochSeconds.truncateToDouble() == epochSeconds ? 0 : 1)}-second epochs while the underlying time-series data were passed through unchanged.';
       case 'Eye Blinks':
         return 'Ocular-event marker detection was configured to emit blink, vertical saccade, and horizontal saccade markers.';
@@ -1031,8 +1294,9 @@ class CanvasLogic {
       case 'Debug Output':
         return 'Intermediate outputs were inspected using a debug-output node.';
       case 'Export':
-        final String fileType =
-            (params['fileType'] ?? 'edf').toString().toUpperCase();
+        final String fileType = (params['fileType'] ?? 'edf')
+            .toString()
+            .toUpperCase();
         return 'Processed outputs were exported as $fileType files.';
       case 'Publish':
         return 'A publish endpoint was configured to generate manuscript-ready descriptions of the workflow and its outputs.';
@@ -1082,15 +1346,25 @@ class CanvasLogic {
       return 'Data were segmented into marker-defined blocks${concatenate ? ', and multiple blocks were concatenated' : ''}${invert ? ', using the complement of the selected blocks' : ''}.';
     }
     if (mode == 'equal_windows') {
-      final double widthMs = (params['equalWidthMs'] as num?)?.toDouble() ?? 1000.0;
-      final double overlapPct = (params['equalOverlapPct'] as num?)?.toDouble() ?? 0.0;
+      final double widthMs =
+          (params['equalWidthMs'] as num?)?.toDouble() ?? 1000.0;
+      final double overlapPct =
+          (params['equalOverlapPct'] as num?)?.toDouble() ?? 0.0;
       return 'Data were segmented into equal windows of ${widthMs.toStringAsFixed(widthMs.truncateToDouble() == widthMs ? 0 : 1)} ms with ${overlapPct.toStringAsFixed(overlapPct.truncateToDouble() == overlapPct ? 0 : 1)}% overlap.';
     }
-    final double windowStart = (params['eventsWindowStartMs'] as num?)?.toDouble() ?? 0.0;
-    final double windowStop = (params['eventsWindowStopMs'] as num?)?.toDouble() ?? 0.0;
-    final double baselineStart = (params['eventsBaselineStartMs'] as num?)?.toDouble() ?? 0.0;
-    final double baselineStop = (params['eventsBaselineStopMs'] as num?)?.toDouble() ?? 0.0;
-    return 'Event-locked segmentation was performed with a window from ${windowStart.toStringAsFixed(windowStart.truncateToDouble() == windowStart ? 0 : 1)} to ${windowStop.toStringAsFixed(windowStop.truncateToDouble() == windowStop ? 0 : 1)} ms and a baseline interval from ${baselineStart.toStringAsFixed(baselineStart.truncateToDouble() == baselineStart ? 0 : 1)} to ${baselineStop.toStringAsFixed(baselineStop.truncateToDouble() == baselineStop ? 0 : 1)} ms.';
+    final double windowStart =
+        (params['eventsWindowStartMs'] as num?)?.toDouble() ?? 0.0;
+    final double windowStop =
+        (params['eventsWindowStopMs'] as num?)?.toDouble() ?? 0.0;
+    final bool applyBaseline = params['eventApplyBaseline'] as bool? ?? false;
+    final double baselineStart =
+        (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0;
+    final double baselineStop =
+        (params['eventBaselineStopMs'] as num?)?.toDouble() ?? 0.0;
+    final String baselineDescription = applyBaseline
+        ? ' with artifact baseline correction from ${baselineStart.toStringAsFixed(baselineStart.truncateToDouble() == baselineStart ? 0 : 1)} to ${baselineStop.toStringAsFixed(baselineStop.truncateToDouble() == baselineStop ? 0 : 1)} ms'
+        : ' without artifact baseline correction';
+    return 'Event-locked segmentation was performed with a window from ${windowStart.toStringAsFixed(windowStart.truncateToDouble() == windowStart ? 0 : 1)} to ${windowStop.toStringAsFixed(windowStop.truncateToDouble() == windowStop ? 0 : 1)} ms$baselineDescription.';
   }
 
   String _joinWithCommas(List<String> values) {
@@ -1138,19 +1412,16 @@ class CanvasLogic {
     final FileSaveLocation? location = await getSaveLocation(
       suggestedName: 'brainstory_project.bst',
       acceptedTypeGroups: const <XTypeGroup>[
-        XTypeGroup(
-          label: 'BrainStory Project',
-          extensions: <String>['bst'],
-        ),
+        XTypeGroup(label: 'BrainStory Project', extensions: <String>['bst']),
       ],
     );
     if (location == null) {
       return;
     }
 
-    final String jsonPayload = const JsonEncoder.withIndent('  ').convert(
-      exportProjectJson(),
-    );
+    final String jsonPayload = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(exportProjectJson());
     final String? savedPath = await saveBrainStoryProject(
       suggestedName: 'brainstory_project',
       targetPath: location.path,
@@ -1172,10 +1443,7 @@ class CanvasLogic {
   Future<void> loadBrainStory(BuildContext context) async {
     final XFile? file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[
-        XTypeGroup(
-          label: 'BrainStory Project',
-          extensions: <String>['bst'],
-        ),
+        XTypeGroup(label: 'BrainStory Project', extensions: <String>['bst']),
       ],
     );
     if (file == null) {
@@ -1227,9 +1495,7 @@ class CanvasLogic {
           title: const Text('Publish'),
           content: SizedBox(
             width: 720,
-            child: SingleChildScrollView(
-              child: SelectableText(methodsText),
-            ),
+            child: SingleChildScrollView(child: SelectableText(methodsText)),
           ),
           actions: <Widget>[
             TextButton(
@@ -1268,8 +1534,9 @@ class CanvasLogic {
   }
 
   Future<void> _loadBrainStoryJsonPayload(String jsonPayload) async {
-    final Map<String, dynamic> jsonMap =
-        Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
+    final Map<String, dynamic> jsonMap = Map<String, dynamic>.from(
+      jsonDecode(jsonPayload) as Map,
+    );
     _recordUndo('load BrainStory');
     importProjectJson(jsonMap);
     await _refreshDiskSnapshotFlagsForLoadedProject();
@@ -1290,10 +1557,15 @@ class CanvasLogic {
       return 'No BrainStory pipeline is currently defined.';
     }
 
-    final List<String> datasetLabels = datasets.values
-        .map((Dataset dataset) => dataset.label.trim().isEmpty ? 'Dataset' : dataset.label.trim())
-        .toList(growable: false)
-      ..sort();
+    final List<String> datasetLabels =
+        datasets.values
+            .map(
+              (Dataset dataset) => dataset.label.trim().isEmpty
+                  ? 'Dataset'
+                  : dataset.label.trim(),
+            )
+            .toList(growable: false)
+          ..sort();
     final Set<String> datasetTypes = datasets.values
         .map(_datasetTypeLabel)
         .where((String type) => type.isNotEmpty)
@@ -1317,7 +1589,9 @@ class CanvasLogic {
         uniqueBranchClauses.add(clauses);
       }
     }
-    final List<String> sharedPrefix = _longestCommonClausePrefix(uniqueBranchClauses);
+    final List<String> sharedPrefix = _longestCommonClausePrefix(
+      uniqueBranchClauses,
+    );
     final List<List<String>> branchSuffixes = uniqueBranchClauses
         .map(
           (List<String> clauses) => clauses.length <= sharedPrefix.length
@@ -1327,13 +1601,16 @@ class CanvasLogic {
         .toList(growable: false);
 
     final StringBuffer buffer = StringBuffer();
-    buffer.writeln('Data were processed in BrainStory using a node-based analysis pipeline.');
+    buffer.writeln(
+      'Data were processed in BrainStory using a node-based analysis pipeline.',
+    );
     if (datasetLabels.isNotEmpty) {
       final String datasetSummary = datasetLabels.length == 1
           ? datasetLabels.first
           : '${datasetLabels.length} datasets (${_joinWithCommas(datasetLabels)})';
       if (datasetTypes.isNotEmpty) {
-        final List<String> sortedTypes = datasetTypes.toList(growable: false)..sort();
+        final List<String> sortedTypes = datasetTypes.toList(growable: false)
+          ..sort();
         buffer.writeln(
           'The workflow operated on $datasetSummary imported from ${_joinWithCommas(sortedTypes)} source files.',
         );
@@ -1416,7 +1693,10 @@ class CanvasLogic {
           )
           .toList(growable: false),
       'connections': connections
-          .map((Map<String, dynamic> connection) => Map<String, dynamic>.from(connection))
+          .map(
+            (Map<String, dynamic> connection) =>
+                Map<String, dynamic>.from(connection),
+          )
           .toList(growable: false),
     };
   }
@@ -1428,15 +1708,15 @@ class CanvasLogic {
     final List<dynamic> datasetEntries =
         jsonMap['datasets'] as List<dynamic>? ?? <dynamic>[];
     for (final dynamic entry in datasetEntries) {
-      final Map<String, dynamic> data =
-          Map<String, dynamic>.from(entry as Map);
+      final Map<String, dynamic> data = Map<String, dynamic>.from(entry as Map);
       final String path = data['path']?.toString() ?? '';
       final String label = data['label']?.toString() ?? 'Dataset';
-      final String id = data['id']?.toString() ??
+      final String id =
+          data['id']?.toString() ??
           DateTime.now().microsecondsSinceEpoch.toString();
       final String? sourceBytesBase64 = data['sourceBytesBase64']?.toString();
-      final Uint8List? sourceBytes = sourceBytesBase64 == null ||
-              sourceBytesBase64.isEmpty
+      final Uint8List? sourceBytes =
+          sourceBytesBase64 == null || sourceBytesBase64.isEmpty
           ? null
           : Uint8List.fromList(base64Decode(sourceBytesBase64));
       final Dataset dataset = Dataset(
@@ -1456,14 +1736,14 @@ class CanvasLogic {
     final List<dynamic> nodeEntries =
         jsonMap['nodes'] as List<dynamic>? ?? <dynamic>[];
     for (final dynamic entry in nodeEntries) {
-      final Map<String, dynamic> data =
-          Map<String, dynamic>.from(entry as Map);
+      final Map<String, dynamic> data = Map<String, dynamic>.from(entry as Map);
       final NodeType? type = _nodeTypeByTitle(data['type']?.toString() ?? '');
       if (type == null) {
         continue;
       }
       final NodeModel node = NodeModel(
-        id: data['id']?.toString() ??
+        id:
+            data['id']?.toString() ??
             DateTime.now().microsecondsSinceEpoch.toString(),
         type: type,
         position: Offset(
@@ -1474,19 +1754,22 @@ class CanvasLogic {
           data['params'] as Map? ?? <String, dynamic>{},
         ),
         markerChange: data['markerChange'] is Map<String, dynamic>
-            ? MarkerChange.fromJson(data['markerChange'] as Map<String, dynamic>)
+            ? MarkerChange.fromJson(
+                data['markerChange'] as Map<String, dynamic>,
+              )
             : data['markerChange'] is Map
-                ? MarkerChange.fromJson(
-                    Map<String, dynamic>.from(data['markerChange'] as Map),
-                  )
-                : const MarkerChange(),
+            ? MarkerChange.fromJson(
+                Map<String, dynamic>.from(data['markerChange'] as Map),
+              )
+            : const MarkerChange(),
       );
       final Map<String, dynamic> rawStates = Map<String, dynamic>.from(
         data['datasetStates'] as Map? ?? <String, dynamic>{},
       );
       for (final MapEntry<String, dynamic> stateEntry in rawStates.entries) {
-        node.datasetStates[stateEntry.key] =
-            _datasetStateFromName(stateEntry.value?.toString());
+        node.datasetStates[stateEntry.key] = _datasetStateFromName(
+          stateEntry.value?.toString(),
+        );
       }
       nodes.add(node);
     }
@@ -1569,6 +1852,17 @@ class CanvasLogic {
           ),
           const SizedBox(height: 10),
           Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _ProcessingPolicyControl(
+              value: processingResponsiveness.value,
+              onChanged: (ProcessingResponsiveness value) {
+                processingResponsiveness.value = value;
+                update();
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
             child: SizedBox(
               width: double.infinity,
@@ -1617,7 +1911,8 @@ class CanvasLogic {
           );
         })
         .toList(growable: false);
-    final Map<String, List<NodeType>> nodesBySubcategory = <String, List<NodeType>>{};
+    final Map<String, List<NodeType>> nodesBySubcategory =
+        <String, List<NodeType>>{};
     for (final NodeType type in categoryNodes) {
       for (final NodePlacement placement in type.allPlacements) {
         if (placement.category != category) {
@@ -1631,7 +1926,8 @@ class CanvasLogic {
     for (final List<NodeType> types in nodesBySubcategory.values) {
       types.sort((NodeType a, NodeType b) => a.title.compareTo(b.title));
     }
-    final List<String> subcategoryOrder = nodesBySubcategory.keys.toList()..sort();
+    final List<String> subcategoryOrder = nodesBySubcategory.keys.toList()
+      ..sort();
     final bool collapsed = _collapsedCategories[category] ?? false;
 
     return <Widget>[
@@ -1693,7 +1989,11 @@ class CanvasLogic {
                       update();
                     },
                     child: Padding(
-                      padding: const EdgeInsets.only(left: 28, bottom: 6, top: 2),
+                      padding: const EdgeInsets.only(
+                        left: 28,
+                        bottom: 6,
+                        top: 2,
+                      ),
                       child: Row(
                         children: <Widget>[
                           Icon(
@@ -1719,14 +2019,17 @@ class CanvasLogic {
                     ),
                   ),
                   if (!subcategoryCollapsed)
-                    for (final NodeType type in nodesBySubcategory[subcategory]!)
+                    for (final NodeType type
+                        in nodesBySubcategory[subcategory]!)
                       Padding(
                         padding: const EdgeInsets.only(left: 36, bottom: 6),
                         child: SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: category.color.withValues(alpha: 0.18),
+                              backgroundColor: category.color.withValues(
+                                alpha: 0.18,
+                              ),
                               foregroundColor: Colors.white,
                               side: BorderSide(
                                 color: category.color.withValues(alpha: 0.35),
@@ -1752,7 +2055,9 @@ class CanvasLogic {
     final Map<String, NodeModel> nodeById = <String, NodeModel>{
       for (final NodeModel node in nodes) node.id: node,
     };
-    return connections.asMap().entries.map((MapEntry<int, Map<String, dynamic>> entry) {
+    return connections.asMap().entries.map((
+      MapEntry<int, Map<String, dynamic>> entry,
+    ) {
       final int connectionIndex = entry.key;
       final Map<String, dynamic> connection = entry.value;
       final NodeModel? fromNode = nodeById[connection['fromNode'] as String];
@@ -1763,23 +2068,27 @@ class CanvasLogic {
       }
 
       final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
+      final Offset start = _outputAnchor(
+        fromNode,
+        toNode,
+        fromPortIndex: fromPort,
+      );
       final Offset end = _inputAnchor(fromNode, toNode);
       final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
 
-        return CustomPaint(
-          painter: ConnectionPainter(
-            start: start,
-            end: end,
-            preferVertical: preferVertical,
-            gridWidth: _gridWidth,
-            gridHeight: _gridHeight,
-            obstacles: _connectionObstacles(fromNode, toNode),
-            selected: selectedConnectionIndex == connectionIndex,
-            color: _outputColorForPort(fromNode, fromPort),
-          ),
-          size: Size.infinite,
-        );
+      return CustomPaint(
+        painter: ConnectionPainter(
+          start: start,
+          end: end,
+          preferVertical: preferVertical,
+          gridWidth: _gridWidth,
+          gridHeight: _gridHeight,
+          obstacles: _connectionObstacles(fromNode, toNode),
+          selected: selectedConnectionIndex == connectionIndex,
+          color: _outputColorForPort(fromNode, fromPort),
+        ),
+        size: Size.infinite,
+      );
     }).toList();
   }
 
@@ -1804,10 +2113,7 @@ class CanvasLogic {
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
         onDragEnd: (Offset globalOffset) {
-          moveNodeOrSelection(
-            node,
-            translateDropOffset(globalOffset),
-          );
+          moveNodeOrSelection(node, translateDropOffset(globalOffset));
           update();
         },
         onTap: () {
@@ -1823,11 +2129,14 @@ class CanvasLogic {
             openVisualizationWindow(node);
             return;
           }
-          _openNodeEditor(
-            context: context,
-            node: node,
-            update: update,
-          );
+          if (isNodeMutationLocked(node.id)) {
+            _showStatusSnackBar(
+              context,
+              '${node.title} is locked while its current job is running.',
+            );
+            return;
+          }
+          _openNodeEditor(context: context, node: node, update: update);
         },
         onContextMenuAt: (Offset globalPosition) {
           showNodeContextMenu(
@@ -1849,6 +2158,16 @@ class CanvasLogic {
     required VoidCallback update,
     required void Function(NodeModel node) openVisualizationWindow,
   }) async {
+    final bool mutationLocked = isNodeMutationLocked(node.id);
+    final bool queueRun = runActivity.value?.phase == RunActivityPhase.running;
+    final Set<String> nodeDatasetIds = _datasetsForNode(node);
+    final bool canLoadFromDisk = await _nodeHasLoadableDiskCache(
+      node: node,
+      datasetIds: nodeDatasetIds,
+    );
+    if (!context.mounted) {
+      return;
+    }
     final String? choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -1857,13 +2176,35 @@ class CanvasLogic {
         globalPosition.dx + 1,
         globalPosition.dy + 1,
       ),
-      items: const <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(value: 'run_this', child: Text('Run This Step')),
-        PopupMenuItem<String>(value: 'run_start', child: Text('Run From Start')),
-        PopupMenuItem<String>(value: 'edit', child: Text('Edit Parameters')),
-        PopupMenuDivider(),
+      items: <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'run_this',
+          child: Text(queueRun ? 'Queue This Step' : 'Run This Step'),
+        ),
+        PopupMenuItem<String>(
+          value: 'run_start',
+          child: Text(queueRun ? 'Queue From Start' : 'Run From Start'),
+        ),
+        PopupMenuItem<String>(
+          value: 'load_from_disk',
+          enabled: canLoadFromDisk,
+          child: const Text('Load from disk'),
+        ),
+        const PopupMenuItem<String>(
+          value: 'memory',
+          child: Text('Memory management'),
+        ),
+        PopupMenuItem<String>(
+          value: 'edit',
+          enabled: !mutationLocked,
+          child: Text(
+            mutationLocked ? 'Edit Parameters (locked)' : 'Edit Parameters',
+          ),
+        ),
+        const PopupMenuDivider(),
         PopupMenuItem<String>(
           value: 'delete',
+          enabled: !mutationLocked,
           child: Text('Delete Node', style: TextStyle(color: Colors.red)),
         ),
       ],
@@ -1874,11 +2215,10 @@ class CanvasLogic {
 
     switch (choice) {
       case 'run_this':
-        final Set<String> datasetIds = _datasetsForNode(node);
         if (await promptLoadFromDiskInsteadOfRun(
           context: context,
           node: node,
-          datasetIds: datasetIds,
+          datasetIds: nodeDatasetIds,
           update: update,
         )) {
           return;
@@ -1886,16 +2226,16 @@ class CanvasLogic {
         if (!context.mounted) {
           return;
         }
-        bool succeeded = false;
         String? finalDetail;
         try {
-          await prepareRunUi('Running ${node.title}');
-          await runThisStep(node.id);
-          succeeded = true;
-          finalDetail = _lastRunDatasetCount == 0
-              ? 'No datasets matched ${node.title}.'
-              : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
-          finalDetail = _decorateRunDetailWithSkips(finalDetail);
+          finalDetail = await runQueued(
+            label: 'Running ${node.title}',
+            lockedNodeIds: _collectAncestorsInclusive(node.id),
+            action: () => runThisStep(node.id),
+            successDetail: () => _lastRunDatasetCount == 0
+                ? 'No datasets matched ${node.title}.'
+                : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
+          );
           update();
           if (node.type is VisualizationNodeType &&
               visualizationDisplayMode(node) == 'window') {
@@ -1909,19 +2249,13 @@ class CanvasLogic {
           if (context.mounted) {
             _showStatusSnackBar(context, finalDetail);
           }
-        } finally {
-          finishRunUi(
-            succeeded: succeeded,
-            detail: finalDetail,
-          );
         }
         return;
       case 'run_start':
-        final Set<String> datasetIds = _datasetsForNode(node);
         if (await promptLoadFromDiskInsteadOfRun(
           context: context,
           node: node,
-          datasetIds: datasetIds,
+          datasetIds: nodeDatasetIds,
           update: update,
         )) {
           return;
@@ -1929,16 +2263,16 @@ class CanvasLogic {
         if (!context.mounted) {
           return;
         }
-        bool succeeded = false;
         String? finalDetail;
         try {
-          await prepareRunUi('Running pipeline to ${node.title}');
-          await runFromStart(node.id);
-          succeeded = true;
-          finalDetail = _lastRunDatasetCount == 0
-              ? 'No datasets matched ${node.title}.'
-              : 'Ran pipeline to ${node.title} for $_lastRunDatasetCount dataset(s).';
-          finalDetail = _decorateRunDetailWithSkips(finalDetail);
+          finalDetail = await runQueued(
+            label: 'Running pipeline to ${node.title}',
+            lockedNodeIds: _collectAncestorsInclusive(node.id),
+            action: () => runFromStart(node.id),
+            successDetail: () => _lastRunDatasetCount == 0
+                ? 'No datasets matched ${node.title}.'
+                : 'Ran pipeline to ${node.title} for $_lastRunDatasetCount dataset(s).',
+          );
           update();
           if (node.type is VisualizationNodeType &&
               visualizationDisplayMode(node) == 'window') {
@@ -1952,19 +2286,23 @@ class CanvasLogic {
           if (context.mounted) {
             _showStatusSnackBar(context, finalDetail);
           }
-        } finally {
-          finishRunUi(
-            succeeded: succeeded,
-            detail: finalDetail,
-          );
         }
         return;
-      case 'edit':
-        _openNodeEditor(
-          context: context,
+      case 'load_from_disk':
+        final String message = await _loadNodeSnapshotsToRam(
           node: node,
+          datasetIds: nodeDatasetIds,
           update: update,
         );
+        if (context.mounted) {
+          _showStatusSnackBar(context, message);
+        }
+        return;
+      case 'memory':
+        await showMemoryManagerDialog(context, update: update, node: node);
+        return;
+      case 'edit':
+        _openNodeEditor(context: context, node: node, update: update);
         return;
       case 'delete':
         selectedNodeId = node.id;
@@ -1982,8 +2320,8 @@ class CanvasLogic {
   void _handleNodeTap(NodeModel node) {
     final bool canUseSelectionAsConnectionSource =
         selectedNodeId != null &&
-            selectedNodeId != node.id &&
-            selectedNodeIds.length <= 1;
+        selectedNodeId != node.id &&
+        selectedNodeIds.length <= 1;
     if (!canUseSelectionAsConnectionSource) {
       selectedNodeId = node.id;
       selectedNodeIds
@@ -2003,12 +2341,24 @@ class CanvasLogic {
       _clearPendingConnection();
       return;
     }
+    if (isNodeMutationLocked(fromNode.id) || isNodeMutationLocked(node.id)) {
+      selectedNodeId = node.id;
+      selectedNodeIds
+        ..clear()
+        ..add(node.id);
+      selectedConnectionIndex = null;
+      _clearPendingConnection();
+      return;
+    }
 
-    final _PortConnection? portConnection =
-        _firstMatchingPortConnection(fromNode, node);
+    final _PortConnection? portConnection = _firstMatchingPortConnection(
+      fromNode,
+      node,
+    );
     final bool validDirection = _isValidDownstreamPlacement(fromNode, node);
-    final bool introducesCycle =
-        _collectDescendantsInclusive(node.id).contains(fromNode.id);
+    final bool introducesCycle = _collectDescendantsInclusive(
+      node.id,
+    ).contains(fromNode.id);
 
     if (portConnection == null || !validDirection || introducesCycle) {
       selectedNodeId = node.id;
@@ -2061,55 +2411,40 @@ class CanvasLogic {
   }) {
     showDialog<void>(
       context: context,
-      builder: (_) => node.type.buildConfigWidget(node.params, (params) {
-        _applyNodeParams(
-          node: node,
-          params: params,
-          update: update,
-        );
-      },
+      builder: (_) => node.type.buildConfigWidget(
+        node.params,
+        (params) {
+          _applyNodeParams(node: node, params: params, update: update);
+        },
         onSaveAndRun: (Map<String, dynamic> params) async {
-          _applyNodeParams(
-            node: node,
-            params: params,
-            update: update,
-          );
-          bool succeeded = false;
+          _applyNodeParams(node: node, params: params, update: update);
           String? finalDetail;
           try {
-            await prepareRunUi('Running ${node.title}');
-            await runThisStep(node.id);
-            succeeded = true;
-            finalDetail = _lastRunDatasetCount == 0
-                ? 'No datasets matched ${node.title}.'
-                : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
+            finalDetail = await runQueued(
+              label: 'Running ${node.title}',
+              lockedNodeIds: _collectAncestorsInclusive(node.id),
+              action: () => runThisStep(node.id),
+              successDetail: () => _lastRunDatasetCount == 0
+                  ? 'No datasets matched ${node.title}.'
+                  : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
+            );
             update();
             if (context.mounted) {
-              _showStatusSnackBar(
-                context,
-                finalDetail,
-              );
+              _showStatusSnackBar(context, finalDetail);
             }
           } catch (error) {
             finalDetail = 'Run failed: $error';
             if (context.mounted) {
               _showStatusSnackBar(context, finalDetail);
             }
-          } finally {
-            finishRunUi(
-              succeeded: succeeded,
-              detail: finalDetail,
-            );
           }
         },
-        datasetActions: _datasetActionsForNode(
-          node: node,
-          update: update,
-        ),
+        datasetActions: _datasetActionsForNode(node: node, update: update),
         datasets: _datasetsById(),
         availableDatasetIds: _availableDatasetIdsForNode(node),
         datasetSourceLabels: _datasetSourceLabelsForNode(node),
         processedDatasetStates: _processedDatasetStatesForNode(node),
+        portStatusSummary: _portStatusSummaryForNode(node),
         processingSteps: processingStepsForNode(node.id),
       ),
     );
@@ -2120,6 +2455,9 @@ class CanvasLogic {
     required Map<String, dynamic> params,
     required VoidCallback update,
   }) {
+    if (isNodeMutationLocked(node.id)) {
+      return;
+    }
     _recordUndo('edit ${node.title} parameters');
     node.params = params;
     if (node.type is ImportNodeType) {
@@ -2132,6 +2470,325 @@ class CanvasLogic {
           : DatasetState.notReady;
     }
     update();
+  }
+
+  @visibleForTesting
+  void applyNodeParamsForTest(NodeModel node, Map<String, dynamic> params) {
+    _applyNodeParams(node: node, params: params, update: () {});
+  }
+
+  bool _expandPsdRuntimePipeline(NodeModel psdNode) {
+    bool changed = false;
+    changed = _ensurePsdSegmentationParent(psdNode) || changed;
+    changed = _ensurePsdAverageChild(psdNode) || changed;
+    psdNode.params['deferAverageToDownstream'] =
+        (psdNode.params['outputMode'] ?? 'averaged').toString() == 'averaged';
+    return changed;
+  }
+
+  bool _ensurePsdSegmentationParent(NodeModel psdNode) {
+    final double windowWidthMs = _psdWindowWidthMs(psdNode);
+    final double windowOverlapPercent = _psdWindowOverlapPercent(psdNode);
+    final List<NodeModel> parents = _immediateParents(psdNode.id);
+    final List<NodeModel> segmentationParents = parents
+        .where((NodeModel parent) => parent.type is SegmentationNodeType)
+        .toList(growable: false);
+    if (segmentationParents.isNotEmpty) {
+      bool changed = false;
+      for (final NodeModel segmentationParent in segmentationParents) {
+        final String windowMarkerName = _equalWindowMarkerName(
+          segmentationParent,
+        );
+        changed =
+            _setParamIfChanged(segmentationParent, 'mode', 'equal_windows') ||
+            changed;
+        changed =
+            _setParamIfChanged(
+              segmentationParent,
+              'equalWindowWidthMs',
+              windowWidthMs,
+            ) ||
+            changed;
+        changed =
+            _setParamIfChanged(
+              segmentationParent,
+              'equalWindowOverlapPercent',
+              windowOverlapPercent,
+            ) ||
+            changed;
+        final Map<String, dynamic> includedMarkers = <String, dynamic>{
+          markerKeyForKindAndLabel(
+            kind: MarkerType.window,
+            label: windowMarkerName,
+          ): true,
+        };
+        changed =
+            _setParamIfChanged(
+              segmentationParent,
+              'includedMarkers',
+              includedMarkers,
+            ) ||
+            changed;
+      }
+      return changed;
+    }
+    if (parents.isEmpty) {
+      return false;
+    }
+
+    final NodeModel anchorParent = parents.first;
+    final NodeModel segmentationNode = _buildNode(
+      type: SegmentationNodeType(),
+      position: _nearestAvailablePosition(
+        Offset(
+          (anchorParent.position.dx + psdNode.position.dx) / 2,
+          (anchorParent.position.dy + psdNode.position.dy) / 2,
+        ),
+      ),
+      params: <String, dynamic>{
+        ...SegmentationNodeType().defaultParams,
+        'mode': 'equal_windows',
+        'windowMarkerName': 'FFT Window',
+        'includedMarkers': <String, dynamic>{
+          markerKeyForKindAndLabel(
+            kind: MarkerType.window,
+            label: 'FFT Window',
+          ): true,
+        },
+        'equalWindowWidthMs': windowWidthMs,
+        'equalWindowOverlapPercent': windowOverlapPercent,
+        if (psdNode.params['selectedDatasetIds'] != null)
+          'selectedDatasetIds': List<dynamic>.from(
+            psdNode.params['selectedDatasetIds'] as List<dynamic>,
+          ),
+      },
+    );
+    nodes.add(segmentationNode);
+
+    connections.removeWhere((Map<String, dynamic> connection) {
+      return connection['toNode'] == psdNode.id &&
+          parents.any(
+            (NodeModel parent) => parent.id == connection['fromNode'],
+          );
+    });
+    for (final NodeModel parent in parents) {
+      _addAllMatchingConnections(parent, segmentationNode);
+    }
+    _addAllMatchingConnections(segmentationNode, psdNode);
+    _seedNodeDatasetStates(segmentationNode);
+    return true;
+  }
+
+  bool _setParamIfChanged(NodeModel node, String key, Object? value) {
+    if (node.params[key].toString() == value.toString()) {
+      return false;
+    }
+    node.params[key] = value;
+    return true;
+  }
+
+  double _psdWindowWidthMs(NodeModel psdNode) {
+    final double lengthSeconds =
+        (psdNode.params['windowLengthSec'] as num?)?.toDouble() ?? 1.0;
+    return (lengthSeconds * 1000.0).clamp(1.0, double.infinity).toDouble();
+  }
+
+  double _psdWindowOverlapPercent(NodeModel psdNode) {
+    return ((psdNode.params['windowOverlapPercent'] as num?)?.toDouble() ?? 0.0)
+        .clamp(0.0, 95.0)
+        .toDouble();
+  }
+
+  bool _ensurePsdAverageChild(NodeModel psdNode) {
+    final String outputMode = (psdNode.params['outputMode'] ?? 'averaged')
+        .toString();
+    if (outputMode != 'averaged') {
+      return false;
+    }
+    final List<NodeModel> children = _immediateChildren(psdNode.id);
+    if (children.any((NodeModel child) => child.type is PSDAverageNodeType)) {
+      return false;
+    }
+
+    final NodeModel averageNode = _buildNode(
+      type: PSDAverageNodeType(),
+      position: _nearestAvailablePosition(
+        Offset(
+          psdNode.position.dx,
+          psdNode.position.dy + _cardHeight + _spawnGap,
+        ),
+      ),
+      params: <String, dynamic>{
+        ...PSDAverageNodeType().defaultParams,
+        if (psdNode.params['selectedDatasetIds'] != null)
+          'selectedDatasetIds': List<dynamic>.from(
+            psdNode.params['selectedDatasetIds'] as List<dynamic>,
+          ),
+      },
+    );
+    nodes.add(averageNode);
+
+    final List<Map<String, dynamic>> downstreamConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == psdNode.id,
+        )
+        .map((Map<String, dynamic> connection) {
+          return Map<String, dynamic>.from(connection);
+        })
+        .toList(growable: false);
+    connections.removeWhere(
+      (Map<String, dynamic> connection) => connection['fromNode'] == psdNode.id,
+    );
+    _addAllMatchingConnections(psdNode, averageNode);
+    for (final Map<String, dynamic> connection in downstreamConnections) {
+      final NodeModel? downstream = _findNode(
+        connection['toNode']?.toString() ?? '',
+      );
+      if (downstream == null || downstream.id == averageNode.id) {
+        continue;
+      }
+      final _PortConnection? portConnection = _firstMatchingPortConnection(
+        averageNode,
+        downstream,
+      );
+      if (portConnection == null) {
+        continue;
+      }
+      connections.add(<String, dynamic>{
+        'fromNode': averageNode.id,
+        'fromPort': portConnection.fromPortIndex,
+        'toNode': downstream.id,
+        'toPort': portConnection.toPortIndex,
+      });
+    }
+    _seedNodeDatasetStates(averageNode);
+    return true;
+  }
+
+  bool _ensureEqualWindowMarkerParent(NodeModel segmentationNode) {
+    if (segmentationNode.type is! SegmentationNodeType ||
+        (segmentationNode.params['mode'] ?? 'events').toString() !=
+            'equal_windows') {
+      return false;
+    }
+    final String windowMarkerName = _equalWindowMarkerName(segmentationNode);
+    final List<NodeModel> parents = _immediateParents(segmentationNode.id);
+    NodeModel? existingGenerator;
+    for (final NodeModel parent in parents) {
+      if (parent.type is AddRemoveMarkersNodeType &&
+          parent.params['generatedMarkerLabel'] == windowMarkerName) {
+        existingGenerator = parent;
+        break;
+      }
+    }
+    if (existingGenerator != null) {
+      existingGenerator.params['markerGenerator'] = 'fft_windows';
+      existingGenerator.params['generatedMarkerLabel'] = windowMarkerName;
+      existingGenerator.params['windowWidthMs'] =
+          (segmentationNode.params['equalWindowWidthMs'] as num?)?.toDouble() ??
+          1000.0;
+      existingGenerator.params['windowOverlapPercent'] =
+          (segmentationNode.params['equalWindowOverlapPercent'] as num?)
+              ?.toDouble() ??
+          0.0;
+      existingGenerator.params['markerDurationMode'] = 'window';
+      if (segmentationNode.params['selectedDatasetIds'] != null) {
+        existingGenerator.params['selectedDatasetIds'] = List<dynamic>.from(
+          segmentationNode.params['selectedDatasetIds'] as List<dynamic>,
+        );
+      }
+      return false;
+    }
+    if (parents.isEmpty) {
+      return false;
+    }
+
+    final NodeModel anchorParent = parents.first;
+    final NodeModel markerNode = _buildNode(
+      type: AddRemoveMarkersNodeType(),
+      position: _nearestAvailablePosition(
+        Offset(
+          (anchorParent.position.dx + segmentationNode.position.dx) / 2,
+          (anchorParent.position.dy + segmentationNode.position.dy) / 2,
+        ),
+      ),
+      params: <String, dynamic>{
+        ...AddRemoveMarkersNodeType().defaultParams,
+        'markerGenerator': 'fft_windows',
+        'generatedMarkerLabel': windowMarkerName,
+        'windowWidthMs':
+            (segmentationNode.params['equalWindowWidthMs'] as num?)
+                ?.toDouble() ??
+            1000.0,
+        'windowOverlapPercent':
+            (segmentationNode.params['equalWindowOverlapPercent'] as num?)
+                ?.toDouble() ??
+            0.0,
+        'markerDurationMode': 'window',
+        if (segmentationNode.params['selectedDatasetIds'] != null)
+          'selectedDatasetIds': List<dynamic>.from(
+            segmentationNode.params['selectedDatasetIds'] as List<dynamic>,
+          ),
+      },
+    );
+    nodes.add(markerNode);
+
+    connections.removeWhere((Map<String, dynamic> connection) {
+      return connection['toNode'] == segmentationNode.id &&
+          parents.any(
+            (NodeModel parent) => parent.id == connection['fromNode'],
+          );
+    });
+    for (final NodeModel parent in parents) {
+      _addAllMatchingConnections(parent, markerNode);
+    }
+    _addAllMatchingConnections(markerNode, segmentationNode);
+    _seedNodeDatasetStates(markerNode);
+    return true;
+  }
+
+  String _equalWindowMarkerName(NodeModel segmentationNode) {
+    final String name =
+        segmentationNode.params['windowMarkerName']?.toString().trim() ?? '';
+    return name.isEmpty ? 'FFT Window' : name;
+  }
+
+  void _addAllMatchingConnections(NodeModel fromNode, NodeModel toNode) {
+    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(
+      fromNode,
+    );
+    final Set<int> filledInputs = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == fromNode.id &&
+              connection['toNode'] == toNode.id,
+        )
+        .map((Map<String, dynamic> connection) => connection['toPort'])
+        .whereType<int>()
+        .toSet();
+    for (final _EffectiveOutputPort outputPort in effectivePorts) {
+      for (
+        int toPortIndex = 0;
+        toPortIndex < toNode.inputPorts.length;
+        toPortIndex++
+      ) {
+        if (filledInputs.contains(toPortIndex)) {
+          continue;
+        }
+        if (toNode.inputPorts[toPortIndex].type != outputPort.port.type) {
+          continue;
+        }
+        connections.add(<String, dynamic>{
+          'fromNode': fromNode.id,
+          'fromPort': outputPort.portIndex,
+          'toNode': toNode.id,
+          'toPort': toPortIndex,
+        });
+        filledInputs.add(toPortIndex);
+        break;
+      }
+    }
   }
 
   NodeModel? get selectedNode =>
@@ -2184,19 +2841,21 @@ class CanvasLogic {
 
     final List<VisualizationSourceRef> refs = <VisualizationSourceRef>[];
     if (node.type is VisualizationNodeType) {
-      final List<NodeModel> parents = _immediateParents(node.id)
-          .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
-          .toList(growable: false)
-        ..sort(
-          (NodeModel a, NodeModel b) =>
-              _nodeDescriptor(a).compareTo(_nodeDescriptor(b)),
-        );
+      final List<NodeModel> parents =
+          _immediateParents(node.id)
+              .where((NodeModel parent) => parent.outputPorts.isNotEmpty)
+              .toList(growable: false)
+            ..sort(
+              (NodeModel a, NodeModel b) =>
+                  _nodeDescriptor(a).compareTo(_nodeDescriptor(b)),
+            );
       for (final NodeModel parent in parents) {
         final Set<String> datasetIds = _datasetsForNode(parent);
-        final List<Dataset> matchingDatasets = datasets.values
-            .where((Dataset dataset) => datasetIds.contains(dataset.id))
-            .toList(growable: false)
-          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+        final List<Dataset> matchingDatasets =
+            datasets.values
+                .where((Dataset dataset) => datasetIds.contains(dataset.id))
+                .toList(growable: false)
+              ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
         for (final Dataset dataset in matchingDatasets) {
           refs.add(
             VisualizationSourceRef(
@@ -2213,10 +2872,11 @@ class CanvasLogic {
     }
 
     final Set<String> datasetIds = _datasetsForNode(node);
-    final List<Dataset> matchingDatasets = datasets.values
-        .where((Dataset dataset) => datasetIds.contains(dataset.id))
-        .toList(growable: false)
-      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    final List<Dataset> matchingDatasets =
+        datasets.values
+            .where((Dataset dataset) => datasetIds.contains(dataset.id))
+            .toList(growable: false)
+          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
     for (final Dataset dataset in matchingDatasets) {
       refs.add(
         VisualizationSourceRef(
@@ -2235,21 +2895,25 @@ class CanvasLogic {
     String nodeId,
     List<Dataset> sources,
   ) async {
-    final List<Dataset> views = <Dataset>[];
-    for (final Dataset source in sources) {
-      views.add(await materializedDatasetViewForNode(nodeId, source));
-    }
-    return views;
+    return _withVisualizerPriority(() async {
+      final List<Dataset> views = <Dataset>[];
+      for (final Dataset source in sources) {
+        views.add(await materializedDatasetViewForNode(nodeId, source));
+      }
+      return views;
+    });
   }
 
   Future<List<Dataset>> materializedDatasetViewsForSourceRefs(
     List<VisualizationSourceRef> sources,
   ) async {
-    final List<Dataset> views = <Dataset>[];
-    for (final VisualizationSourceRef source in sources) {
-      views.add(await materializedDatasetViewForSourceRef(source));
-    }
-    return views;
+    return _withVisualizerPriority(() async {
+      final List<Dataset> views = <Dataset>[];
+      for (final VisualizationSourceRef source in sources) {
+        views.add(await materializedDatasetViewForSourceRef(source));
+      }
+      return views;
+    });
   }
 
   Future<Dataset> materializedDatasetViewForSourceRef(
@@ -2270,7 +2934,10 @@ class CanvasLogic {
     return view;
   }
 
-  Future<Dataset> materializedDatasetViewForNode(String nodeId, Dataset source) async {
+  Future<Dataset> materializedDatasetViewForNode(
+    String nodeId,
+    Dataset source,
+  ) async {
     final Dataset view = _datasetShell(source);
     final Set<String> ancestorIds = _collectAncestorsInclusive(nodeId);
     final List<NodeModel> orderedAncestors = _orderedNodes(ancestorIds);
@@ -2299,17 +2966,8 @@ class CanvasLogic {
   }
 
   Dataset _datasetShell(Dataset source) {
-    final Dataset shell = Dataset(
-      source.id,
-      label: source.label,
-      path: source.path,
-      sourceBytes: source.sourceBytes,
-    );
+    final Dataset shell = Dataset(source.id, label: source.label);
     shell.loaded = source.loaded;
-    final Object? sourceFilename = source.ram['source.filename'];
-    if (sourceFilename != null) {
-      shell.ram['source.filename'] = sourceFilename;
-    }
     return shell;
   }
 
@@ -2321,42 +2979,23 @@ class CanvasLogic {
         source.artifactIdentities;
     target.artifactIdentities =
         Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
-      sourceIdentities.entries.where(
-        (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
-            entry.key == BrainStoryArtifactKind.timeSeries ||
-            entry.key == BrainStoryArtifactKind.markers,
-      ),
-    );
+          sourceIdentities.entries.where(
+            (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+                entry.key == BrainStoryArtifactKind.timeSeries ||
+                entry.key == BrainStoryArtifactKind.markers,
+          ),
+        );
   }
 
-  bool isVisualizationNode(NodeModel? node) => node?.type is VisualizationNodeType;
+  bool isVisualizationNode(NodeModel? node) =>
+      node?.type is VisualizationNodeType;
 
   bool isMarkerEditNode(NodeModel? node) =>
       node?.type is AddRemoveMarkersNodeType ||
       node?.type is EditChannelsAndMarkersNodeType;
 
   bool canVisualizeNode(NodeModel? node) {
-    if (node == null) {
-      return false;
-    }
-    if (node.type is VisualizationNodeType) {
-      return true;
-    }
-    if (node.type is BridgeDetectorNodeType) {
-      return true;
-    }
-    if (node.type is PSDNodeType) {
-      return true;
-    }
-    if (node.type is SegmentationNodeType || node.type is RealignNodeType) {
-      return true;
-    }
-    if (node.type is SleepStagingNodeType) {
-      return true;
-    }
-    return node.outputPorts.any((PortSpec port) {
-      return port.type == PortType.signal;
-    });
+    return node != null;
   }
 
   String visualizationViewForNode(NodeModel node) {
@@ -2385,7 +3024,9 @@ class CanvasLogic {
     for (final Dataset dataset in datasets) {
       final TimeSeriesData? timeSeries = dataset.timeSeries;
       if (timeSeries != null &&
-          timeSeries.markers.any((TimeMarker marker) => isSleepStageMarker(marker))) {
+          timeSeries.markers.any(
+            (TimeMarker marker) => isSleepStageMarker(marker),
+          )) {
         return 'hypnogram';
       }
     }
@@ -2411,10 +3052,14 @@ class CanvasLogic {
     }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents = _immediateParents(node.id);
-      if (parents.any((NodeModel parent) => parent.type is SleepStagingNodeType)) {
+      if (parents.any(
+        (NodeModel parent) => parent.type is SleepStagingNodeType,
+      )) {
         return 'hypnogram';
       }
-      if (parents.any((NodeModel parent) => parent.type is BridgeDetectorNodeType)) {
+      if (parents.any(
+        (NodeModel parent) => parent.type is BridgeDetectorNodeType,
+      )) {
         return 'bridge';
       }
       if (parents.any((NodeModel parent) => parent.type is PSDNodeType)) {
@@ -2422,11 +3067,14 @@ class CanvasLogic {
       }
       if (parents.any(
         (NodeModel parent) =>
-            parent.type is SegmentationNodeType || parent.type is RealignNodeType,
+            parent.type is SegmentationNodeType ||
+            parent.type is RealignNodeType,
       )) {
         return 'segments';
       }
-      if (parents.any((NodeModel parent) => parent.type.title.contains('Time-Frequency'))) {
+      if (parents.any(
+        (NodeModel parent) => parent.type.title.contains('Time-Frequency'),
+      )) {
         return 'time_frequency';
       }
       return 'raw';
@@ -2455,12 +3103,140 @@ class CanvasLogic {
   int _lastRunDatasetCount = 0;
   int _lastSkippedNodeCount = 0;
 
-  Future<void> prepareRunUi(String label) async {
+  Future<String> runQueued({
+    required String label,
+    required Future<void> Function() action,
+    required String Function() successDetail,
+    Set<String> lockedNodeIds = const <String>{},
+  }) {
+    final _QueuedRunTask task = _QueuedRunTask(
+      id: ++_runQueueTaskCounter,
+      label: label,
+      lockedNodeIds: Set<String>.from(lockedNodeIds),
+      action: action,
+      successDetail: successDetail,
+    );
+    _queuedRunTasks.add(task);
+    _publishQueuedRunJobs();
+    _runQueueTail = _runQueueTail.then<void>(
+      (_) => _executeQueuedRunTask(task),
+      onError: (Object _, StackTrace __) => _executeQueuedRunTask(task),
+    );
+    return task.completer.future;
+  }
+
+  Future<void> _executeQueuedRunTask(_QueuedRunTask task) async {
+    await _waitForVisualizerPriorityBeforeRun();
+    _queuedRunTasks.removeWhere((_QueuedRunTask item) => item.id == task.id);
+    _publishQueuedRunJobs();
+    bool succeeded = false;
+    String? finalDetail;
+    try {
+      await prepareRunUi(task.label, lockedNodeIds: task.lockedNodeIds);
+      await _waitForVisualizerPriorityDuringRun();
+      await task.action();
+      await setRunDetail(
+        'Committing run results...',
+        phase: RunActivityPhase.finalizing,
+      );
+      succeeded = true;
+      finalDetail = _decorateRunDetailWithSkips(task.successDetail());
+      if (!task.completer.isCompleted) {
+        task.completer.complete(finalDetail);
+      }
+    } catch (error, stackTrace) {
+      finalDetail = 'Run failed: $error';
+      if (!task.completer.isCompleted) {
+        task.completer.completeError(error, stackTrace);
+      }
+    } finally {
+      finishRunUi(succeeded: succeeded, detail: finalDetail);
+    }
+  }
+
+  void _publishQueuedRunJobs() {
+    queuedRunJobs.value = _queuedRunTasks
+        .map(
+          (_QueuedRunTask task) => RunJobEntry(
+            label: task.label,
+            detail: visualizerPriorityActive.value
+                ? 'Paused while a visualizer is using priority resources.'
+                : 'Waiting for the current job to finish.',
+            state: RunJobState.queued,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> _waitForVisualizerPriorityBeforeRun() async {
+    while (visualizerPriorityActive.value) {
+      _publishQueuedRunJobs();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+  }
+
+  Future<void> _waitForVisualizerPriorityDuringRun() async {
+    while (visualizerPriorityActive.value) {
+      await setRunDetail(
+        'Visualizer is active; processing is paused...',
+        phase: RunActivityPhase.running,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+  }
+
+  Future<void> _executionChunkBoundary() async {
+    await _waitForVisualizerPriorityDuringRun();
+    final ProcessingResponsiveness policy = processingResponsiveness.value;
+    if (!_executionChunkStopwatch.isRunning) {
+      _executionChunkStopwatch.start();
+    }
+    if (!policy.chunkingEnabled ||
+        _executionChunkStopwatch.elapsed < policy.workBudget) {
+      await Future<void>.delayed(Duration.zero);
+      return;
+    }
+    _executionChunkStopwatch
+      ..reset()
+      ..stop();
+    await WidgetsBinding.instance.endOfFrame;
+    if (policy.yieldBudget > Duration.zero) {
+      await Future<void>.delayed(policy.yieldBudget);
+    }
+    _executionChunkStopwatch.start();
+  }
+
+  Future<T> _withVisualizerPriority<T>(Future<T> Function() action) async {
+    _visualizerPriorityCount++;
+    visualizerPriorityActive.value = true;
+    _publishQueuedRunJobs();
+    try {
+      return await action();
+    } finally {
+      _visualizerPriorityCount = _visualizerPriorityCount <= 1
+          ? 0
+          : _visualizerPriorityCount - 1;
+      visualizerPriorityActive.value = _visualizerPriorityCount > 0;
+      _publishQueuedRunJobs();
+    }
+  }
+
+  Future<void> prepareRunUi(
+    String label, {
+    Set<String> lockedNodeIds = const <String>{},
+  }) async {
     _lastSkippedNodeCount = 0;
     _runStartedAt = DateTime.now();
+    _executionChunkStopwatch
+      ..reset()
+      ..start();
+    _runLockedNodeIds
+      ..clear()
+      ..addAll(lockedNodeIds);
     runActivity.value = RunActivity(
       label: label,
       detail: 'Preparing run state...',
+      phase: RunActivityPhase.initializing,
     );
     await _yieldToUi();
     await setRunDetail('Settling the interface...');
@@ -2473,15 +3249,13 @@ class CanvasLogic {
     if (_lastSkippedNodeCount <= 0) {
       return detail;
     }
-    final String noun =
-        _lastSkippedNodeCount == 1 ? 'node result' : 'node results';
+    final String noun = _lastSkippedNodeCount == 1
+        ? 'node result'
+        : 'node results';
     return '$detail Reused $_lastSkippedNodeCount completed $noun.';
   }
 
-  void finishRunUi({
-    bool succeeded = true,
-    String? detail,
-  }) {
+  void finishRunUi({bool succeeded = true, String? detail}) {
     final RunActivity? current = runActivity.value;
     if (current != null) {
       final Duration elapsed = _runStartedAt == null
@@ -2500,31 +3274,41 @@ class CanvasLogic {
       recentRunJobs.value = nextJobs.take(6).toList(growable: false);
     }
     _runWaitingNodeIds.clear();
+    _runLockedNodeIds.clear();
     _runActiveNodeId = null;
     _runStartedAt = null;
+    _executionChunkStopwatch
+      ..reset()
+      ..stop();
     runActivity.value = null;
   }
 
-  Future<void> setRunDetail(String detail) async {
+  Future<void> setRunDetail(String detail, {RunActivityPhase? phase}) async {
     final RunActivity? current = runActivity.value;
     if (current == null) {
       return;
     }
-    runActivity.value = current.copyWith(detail: detail);
+    runActivity.value = current.copyWith(detail: detail, phase: phase);
     await _yieldToUi();
   }
 
-  Future<void> runThisStep(
-    String nodeId, {
-    Set<String>? datasetIds,
+  Future<void> setRunDetailQuiet(
+    String detail, {
+    RunActivityPhase? phase,
   }) async {
+    final RunActivity? current = runActivity.value;
+    if (current == null) {
+      return;
+    }
+    runActivity.value = current.copyWith(detail: detail, phase: phase);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  Future<void> runThisStep(String nodeId, {Set<String>? datasetIds}) async {
     await _runNodeSet(<String>{nodeId}, datasetIds: datasetIds);
   }
 
-  Future<void> runFromStart(
-    String nodeId, {
-    Set<String>? datasetIds,
-  }) async {
+  Future<void> runFromStart(String nodeId, {Set<String>? datasetIds}) async {
     await _runNodeSet(
       _collectAncestorsInclusive(nodeId),
       datasetIds: datasetIds,
@@ -2535,7 +3319,36 @@ class CanvasLogic {
     Set<String> nodeIds, {
     Set<String>? datasetIds,
   }) async {
-    final List<NodeModel> orderedNodes = _orderedNodes(nodeIds);
+    final Set<String> expandedNodeIds = Set<String>.from(nodeIds);
+    bool graphChanged;
+    do {
+      graphChanged = false;
+      for (final String nodeId in expandedNodeIds.toList(growable: false)) {
+        final NodeModel? node = _findNode(nodeId);
+        if (node == null) {
+          continue;
+        }
+        if (node.type is PSDNodeType) {
+          graphChanged = _expandPsdRuntimePipeline(node) || graphChanged;
+        }
+        if (node.type is SegmentationNodeType &&
+            (node.params['mode'] ?? 'events').toString() == 'equal_windows') {
+          graphChanged = _ensureEqualWindowMarkerParent(node) || graphChanged;
+        }
+        final int previousExpandedCount = expandedNodeIds.length;
+        expandedNodeIds.addAll(_collectAncestorsInclusive(node.id));
+        expandedNodeIds.addAll(
+          _collectDescendantsInclusive(node.id).where((String descendantId) {
+            final NodeModel? descendant = _findNode(descendantId);
+            return descendant?.type is PSDAverageNodeType;
+          }),
+        );
+        graphChanged =
+            expandedNodeIds.length != previousExpandedCount || graphChanged;
+      }
+    } while (graphChanged);
+
+    final List<NodeModel> orderedNodes = _orderedNodes(expandedNodeIds);
     if (orderedNodes.isEmpty) {
       _lastRunDatasetCount = 0;
       return;
@@ -2565,6 +3378,7 @@ class CanvasLogic {
       ..clear()
       ..addAll(orderedNodes.map((NodeModel node) => node.id));
     _runActiveNodeId = null;
+    final String hotDatasetId = targetDatasets.first.id;
 
     for (final Dataset dataset in targetDatasets) {
       await setRunDetail('Preparing ${dataset.label}...');
@@ -2576,7 +3390,9 @@ class CanvasLogic {
         if (node.datasetStates[dataset.id] == DatasetState.done) {
           _lastSkippedNodeCount += 1;
           _runWaitingNodeIds.remove(node.id);
-          await setRunDetail('Skipping ${node.title} for ${dataset.label} (already done)...');
+          await setRunDetail(
+            'Skipping ${node.title} for ${dataset.label} (already done)...',
+          );
           await _restoreMaterializedOutputIfNeeded(node, dataset);
           continue;
         }
@@ -2587,15 +3403,28 @@ class CanvasLogic {
         try {
           dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
-          final List<String> sourceArtifactIds =
-              _sourceArtifactIdsForDataset(dataset);
-          await setRunDetail('Running ${node.title} on ${dataset.label}...');
-          await node.type.run(dataset, node.params);
+          final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
+            dataset,
+          );
+          await setRunDetail(
+            'Running ${node.title} on ${dataset.label} (${processingResponsiveness.value.label}, ${node.type.executionChunkingStrategy})...',
+            phase: RunActivityPhase.running,
+          );
+          await node.type.runChunked(
+            dataset,
+            node.params,
+            NodeExecutionContext(
+              setProgress: (String detail) =>
+                  setRunDetailQuiet(detail, phase: RunActivityPhase.running),
+              yieldIfNeeded: _executionChunkBoundary,
+            ),
+          );
           node.datasetStates[dataset.id] = DatasetState.done;
           await _materializeNodeOutput(
             node,
             dataset,
             sourceArtifactIds: sourceArtifactIds,
+            keepRamSnapshot: dataset.id == hotDatasetId,
           );
           _markImmediateChildrenStale(
             node.id,
@@ -2603,8 +3432,8 @@ class CanvasLogic {
             changeSet: _takeLastChangeSet(dataset),
           );
         } catch (_) {
-          node.datasetStates[dataset.id] = _availableDatasetIdsForNode(node)
-                  .contains(dataset.id)
+          node.datasetStates[dataset.id] =
+              _availableDatasetIdsForNode(node).contains(dataset.id)
               ? DatasetState.ready
               : DatasetState.notReady;
           rethrow;
@@ -2613,6 +3442,9 @@ class CanvasLogic {
             _runActiveNodeId = null;
           }
         }
+      }
+      if (dataset.id != hotDatasetId) {
+        _releasePreferDiskActiveOutputsForDataset(orderedNodes, dataset);
       }
     }
   }
@@ -2685,10 +3517,93 @@ class CanvasLogic {
     };
   }
 
+  NodePortStatusSummary _portStatusSummaryForNode(NodeModel node) {
+    return NodePortStatusSummary(
+      inputs: node.inputPorts
+          .map(
+            (PortSpec input) =>
+                _inputPortStatusSummaryForNode(node: node, input: input),
+          )
+          .toList(growable: false),
+      outputs: node.outputPorts
+          .map(
+            (PortSpec output) => NodePortDatasetSummary(
+              label: output.name,
+              type: output.type,
+              readyCount: _createdDatasetCountForNode(node),
+              totalCount: _availableDatasetIdsForNode(node).length,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  NodePortDatasetSummary _inputPortStatusSummaryForNode({
+    required NodeModel node,
+    required PortSpec input,
+  }) {
+    final int inputIndex = node.inputPorts.indexOf(input);
+    final List<NodeModel> parents = connections
+        .where((Map<String, dynamic> connection) {
+          return connection['toNode'] == node.id &&
+              (connection['toPort'] as int? ?? -1) == inputIndex;
+        })
+        .map((Map<String, dynamic> connection) {
+          return _findNode(connection['fromNode'] as String? ?? '');
+        })
+        .whereType<NodeModel>()
+        .toList(growable: false);
+
+    if (parents.isEmpty) {
+      return NodePortDatasetSummary(
+        label: input.name,
+        type: input.type,
+        readyCount: 0,
+        totalCount: 0,
+      );
+    }
+
+    final Set<String> totalDatasetIds = <String>{};
+    final Set<String> createdDatasetIds = <String>{};
+    for (final NodeModel parent in parents) {
+      totalDatasetIds.addAll(_datasetsForNode(parent));
+      for (final Dataset dataset in datasets.values) {
+        if (_datasetStateHasCreatedOutput(parent, dataset.id)) {
+          createdDatasetIds.add(dataset.id);
+        }
+      }
+    }
+
+    return NodePortDatasetSummary(
+      label: input.name,
+      type: input.type,
+      readyCount: createdDatasetIds.intersection(totalDatasetIds).length,
+      totalCount: totalDatasetIds.length,
+    );
+  }
+
+  int _createdDatasetCountForNode(NodeModel node) {
+    int count = 0;
+    for (final Dataset dataset in datasets.values) {
+      if (_datasetStateHasCreatedOutput(node, dataset.id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  bool _datasetStateHasCreatedOutput(NodeModel node, String datasetId) {
+    final DatasetState state = _effectiveDatasetStateForNode(node, datasetId);
+    return state == DatasetState.done ||
+        state == DatasetState.partial ||
+        state == DatasetState.stale;
+  }
+
   Map<String, List<String>> _datasetSourceLabelsForNode(NodeModel node) {
     if (node.type is ImportNodeType) {
       return <String, List<String>>{
-        for (final Dataset dataset in datasets.values) dataset.id: <String>['Source file'],
+        for (final Dataset dataset in datasets.values)
+          dataset.id: <String>['Source file'],
       };
     }
 
@@ -2856,7 +3771,11 @@ class CanvasLogic {
 
     for (final Map<String, dynamic> connection in connections) {
       if (connection['toNode'] != nodeId) continue;
-      _collectUpstreamImports(connection['fromNode'] as String, imports, visited);
+      _collectUpstreamImports(
+        connection['fromNode'] as String,
+        imports,
+        visited,
+      );
     }
   }
 
@@ -2867,8 +3786,9 @@ class CanvasLogic {
   }
 
   void _refreshDatasetAvailability(String datasetId) {
-    final List<NodeModel> orderedNodes =
-        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
+    final List<NodeModel> orderedNodes = _orderedNodes(
+      nodes.map((NodeModel node) => node.id).toSet(),
+    );
     for (final NodeModel node in orderedNodes) {
       final bool selectedForNode = _datasetsForNode(node).contains(datasetId);
       if (!selectedForNode) {
@@ -2917,9 +3837,7 @@ class CanvasLogic {
       return rawValue;
     }
     if (rawValue is Map) {
-      return ArtifactChangeSet.fromJson(
-        Map<String, dynamic>.from(rawValue),
-      );
+      return ArtifactChangeSet.fromJson(Map<String, dynamic>.from(rawValue));
     }
     return null;
   }
@@ -2964,7 +3882,8 @@ class CanvasLogic {
     final bool usesMetadata = node.inputPorts.any(
       (PortSpec port) => port.type == PortType.metadata,
     );
-    final bool signalChanged = changeSet.touchesSamples ||
+    final bool signalChanged =
+        changeSet.touchesSamples ||
         changeSet.touchesChannelLabels ||
         changeSet.touchesChannelTopology ||
         changeSet.touchesChannelCoordinates;
@@ -2996,16 +3915,15 @@ class CanvasLogic {
       return;
     }
 
-    _recordUndo(
-      'save marker edits',
-      datasetArtifactIds: <String>{dataset.id},
-    );
+    _recordUndo('save marker edits', datasetArtifactIds: <String>{dataset.id});
     final NodeModel markerNode = _ensureMarkerNode(sourceNode);
     markerNode.params['markers'] = rawMarkers;
 
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries != null) {
-      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
+      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
+        dataset,
+      );
       dataset.timeSeries = timeSeries.copyWith(
         markers: AddRemoveMarkersNodeType.markersForDataset(
           dataset.id,
@@ -3015,9 +3933,7 @@ class CanvasLogic {
       dataset.ram['artifact.lastChangeSet'] = ArtifactChangeSet(
         datasetId: dataset.id,
         sourceNodeId: markerNode.id,
-        changeTypes: const <ArtifactChangeType>{
-          ArtifactChangeType.markers,
-        },
+        changeTypes: const <ArtifactChangeType>{ArtifactChangeType.markers},
         description: 'Marker edits',
       );
       _cacheVisualizationEditOutput(
@@ -3051,10 +3967,7 @@ class CanvasLogic {
       return;
     }
 
-    _recordUndo(
-      'save channel edits',
-      datasetArtifactIds: <String>{dataset.id},
-    );
+    _recordUndo('save channel edits', datasetArtifactIds: <String>{dataset.id});
     final NodeModel channelNode = _ensureChannelEditNode(sourceNode);
     EditChannelsNodeType.setConfigForDataset(
       channelNode.params,
@@ -3064,14 +3977,16 @@ class CanvasLogic {
 
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries != null) {
-      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
+      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
+        dataset,
+      );
       final ArtifactChangeSet changeSet =
           EditChannelsNodeType.changeSetForConfig(
-        datasetId: dataset.id,
-        timeSeries: timeSeries,
-        config: datasetConfig,
-        sourceNodeId: channelNode.id,
-      );
+            datasetId: dataset.id,
+            timeSeries: timeSeries,
+            config: datasetConfig,
+            sourceNodeId: channelNode.id,
+          );
       dataset.timeSeries = EditChannelsNodeType.applyChannelEdits(
         timeSeries,
         datasetConfig,
@@ -3101,46 +4016,6 @@ class CanvasLogic {
     _clearPendingConnection();
   }
 
-  void applyInteractiveArtifactDetectionFromVisualization({
-    required String nodeId,
-    required Dataset dataset,
-  }) {
-    final NodeModel? sourceNode = _interactiveArtifactSourceNode(nodeId);
-    if (sourceNode == null) {
-      return;
-    }
-
-    _recordUndo(
-      'save artifact edits',
-      datasetArtifactIds: <String>{dataset.id},
-    );
-    final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries != null) {
-      final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(dataset);
-      dataset.timeSeries = timeSeries.copyWith(
-        markers: InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
-          dataset.id,
-          sourceNode.params,
-          baseMarkers: timeSeries.markers,
-        ),
-      );
-      _cacheVisualizationEditOutput(
-        sourceNode,
-        dataset,
-        sourceArtifactIds: sourceArtifactIds,
-      );
-    }
-
-    sourceNode.datasetStates[dataset.id] = DatasetState.done;
-    _markImmediateChildrenStale(sourceNode.id, dataset.id);
-    selectedNodeId = sourceNode.id;
-    selectedNodeIds
-      ..clear()
-      ..add(sourceNode.id);
-    selectedConnectionIndex = null;
-    _clearPendingConnection();
-  }
-
   Future<String> persistViewerEdits({
     required String viewerNodeId,
     required Dataset dataset,
@@ -3161,30 +4036,51 @@ class CanvasLogic {
       return 'Could not resolve the source branch for this visualizer.';
     }
 
-    final bool hasMarkerEdits = markerEdits != null;
-    final bool hasChannelEdits = channelEditConfig != null &&
+    List<Map<String, dynamic>>? markerEditsValue = markerEdits;
+    if (interactiveArtifactParams != null) {
+      final TimeSeriesData? timeSeries = dataset.timeSeries;
+      if (timeSeries != null) {
+        markerEditsValue =
+            InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
+                  dataset.id,
+                  interactiveArtifactParams,
+                  baseMarkers: markerEdits == null
+                      ? timeSeries.markers
+                      : AddRemoveMarkersNodeType.markersForDataset(
+                          dataset.id,
+                          markerEdits,
+                        ),
+                )
+                .map((TimeMarker marker) {
+                  return <String, dynamic>{
+                    ...marker.toJson(),
+                    'datasetId': dataset.id,
+                  };
+                })
+                .toList(growable: false);
+      }
+    }
+
+    final bool hasMarkerEdits = markerEditsValue != null;
+    final bool hasChannelEdits =
+        channelEditConfig != null &&
         EditChannelsNodeType.hasMeaningfulChanges(channelEditConfig);
     final bool hasInteractiveEdits = interactiveArtifactParams != null;
     if (!hasMarkerEdits && !hasChannelEdits && !hasInteractiveEdits) {
       return 'No unsaved viewer edits were found.';
     }
 
-    _recordUndo(
-      'save viewer edits',
-      datasetArtifactIds: <String>{dataset.id},
-    );
+    _recordUndo('save viewer edits', datasetArtifactIds: <String>{dataset.id});
 
-    final NodeModel? insertBeforeNode =
-        viewerNode.type is VisualizationNodeType ? viewerNode : null;
+    final NodeModel? insertBeforeNode = viewerNode.type is VisualizationNodeType
+        ? viewerNode
+        : null;
     NodeModel anchorNode = sourceNode;
     NodeModel? lastCreatedNode;
     final List<String> createdNodeTitles = <String>[];
-    final List<Map<String, dynamic>>? markerEditsValue = markerEdits;
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
-    final Map<String, dynamic>? interactiveArtifactParamsValue =
-        interactiveArtifactParams;
 
-    if (!hasInteractiveEdits && hasChannelEdits && hasMarkerEdits) {
+    if (hasChannelEdits && hasMarkerEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
@@ -3212,17 +4108,6 @@ class CanvasLogic {
               dataset.id: channelEditConfigValue,
             },
           },
-        );
-        anchorNode = lastCreatedNode;
-        createdNodeTitles.add(lastCreatedNode.title);
-      }
-      if (hasInteractiveEdits) {
-        lastCreatedNode = _spawnViewerEditNode(
-          sourceNode: anchorNode,
-          insertBeforeNode: insertBeforeNode,
-          type: InteractiveArtifactDetectionNodeType(),
-          datasetId: dataset.id,
-          params: Map<String, dynamic>.from(interactiveArtifactParamsValue!),
         );
         anchorNode = lastCreatedNode;
         createdNodeTitles.add(lastCreatedNode.title);
@@ -3266,26 +4151,23 @@ class CanvasLogic {
       );
     }
 
-    bool succeeded = false;
     String? finalDetail;
+    final NodeModel nodeToRun = lastCreatedNode;
     try {
-      await prepareRunUi('Running ${lastCreatedNode.title}');
-      await runFromStart(lastCreatedNode.id, datasetIds: <String>{dataset.id});
-      succeeded = true;
-      finalDetail = _viewerEditSaveMessage(
-        createdNodeTitles: createdNodeTitles,
-        ranNodes: true,
+      finalDetail = await runQueued(
+        label: 'Running ${nodeToRun.title}',
+        lockedNodeIds: _collectAncestorsInclusive(nodeToRun.id),
+        action: () =>
+            runFromStart(nodeToRun.id, datasetIds: <String>{dataset.id}),
+        successDetail: () => _viewerEditSaveMessage(
+          createdNodeTitles: createdNodeTitles,
+          ranNodes: true,
+        ),
       );
-      finalDetail = _decorateRunDetailWithSkips(finalDetail);
       return finalDetail;
     } catch (error) {
       finalDetail = 'Save and run failed: $error';
       rethrow;
-    } finally {
-      finishRunUi(
-        succeeded: succeeded,
-        detail: finalDetail,
-      );
     }
   }
 
@@ -3301,7 +4183,10 @@ class CanvasLogic {
         : 'Created $createdSummary.';
   }
 
-  NodeModel? _viewerEditSourceNodeForDataset(String viewerNodeId, Dataset dataset) {
+  NodeModel? _viewerEditSourceNodeForDataset(
+    String viewerNodeId,
+    Dataset dataset,
+  ) {
     final String? sourceKey = dataset.ram['viewer.sourceKey']?.toString();
     if (sourceKey != null && sourceKey.contains('|')) {
       final String sourceNodeId = sourceKey.split('|').first;
@@ -3355,8 +4240,10 @@ class CanvasLogic {
       );
     }
 
-    final _PortConnection? fromConnection =
-        _firstMatchingPortConnection(sourceNode, node);
+    final _PortConnection? fromConnection = _firstMatchingPortConnection(
+      sourceNode,
+      node,
+    );
     if (fromConnection != null) {
       connections.add(<String, dynamic>{
         'fromNode': sourceNode.id,
@@ -3367,8 +4254,10 @@ class CanvasLogic {
     }
 
     if (insertBeforeNode != null) {
-      final _PortConnection? toConnection =
-          _firstMatchingPortConnection(node, insertBeforeNode);
+      final _PortConnection? toConnection = _firstMatchingPortConnection(
+        node,
+        insertBeforeNode,
+      );
       if (toConnection != null) {
         connections.add(<String, dynamic>{
           'fromNode': node.id,
@@ -3423,22 +4312,23 @@ class CanvasLogic {
         _artifactKindsForNodeOutputs(node, dataset);
     final DatasetArtifactSnapshot snapshot =
         DatasetArtifactSnapshot.fromDataset(
-      dataset,
-      includedKinds: outputKinds,
-    );
+          dataset,
+          includedKinds: outputKinds,
+        );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
       return;
     }
-    _nodeRamSnapshots
-        .putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
-        snapshot;
+    _nodeRamSnapshots.putIfAbsent(
+      node.id,
+      () => <String, DatasetArtifactSnapshot>{},
+    )[dataset.id] = snapshot;
   }
 
   void _showStatusSnackBar(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   NodeDatasetActions _datasetActionsForNode({
@@ -3454,50 +4344,50 @@ class CanvasLogic {
               _nodeHasLoadableDiskCache(node: node, datasetIds: datasetIds),
       runAllPrevious: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _runNodeDatasetAction(
-        runLabel: 'Running pipeline to ${node.title}',
-        action: () => runFromStart(node.id, datasetIds: datasetIds),
-        node: node,
-        update: update,
-      ),
+            runLabel: 'Running pipeline to ${node.title}',
+            action: () => runFromStart(node.id, datasetIds: datasetIds),
+            node: node,
+            update: update,
+          ),
       runThisNode: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _runNodeDatasetAction(
-        runLabel: 'Running ${node.title}',
-        action: () => runThisStep(node.id, datasetIds: datasetIds),
-        node: node,
-        update: update,
-      ),
+            runLabel: 'Running ${node.title}',
+            action: () => runThisStep(node.id, datasetIds: datasetIds),
+            node: node,
+            update: update,
+          ),
       clearResults: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _clearNodeResults(
-        node: node,
-        params: params,
-        datasetIds: datasetIds,
-        update: update,
-      ),
+            node: node,
+            params: params,
+            datasetIds: datasetIds,
+            update: update,
+          ),
       loadFromDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _loadNodeSnapshotsToRam(
-        node: node,
-        datasetIds: datasetIds,
-        update: update,
-      ),
+            node: node,
+            datasetIds: datasetIds,
+            update: update,
+          ),
       purgeActiveMemory:
           (Map<String, dynamic> params, Set<String> datasetIds) =>
               _releaseNodeSnapshotsFromRam(
-        node: node,
-        datasetIds: datasetIds,
-        update: update,
-      ),
+                node: node,
+                datasetIds: datasetIds,
+                update: update,
+              ),
       saveToDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _saveNodeSnapshotsToDisk(
-        node: node,
-        datasetIds: datasetIds,
-        update: update,
-      ),
+            node: node,
+            datasetIds: datasetIds,
+            update: update,
+          ),
       purgeFromDisk: (Map<String, dynamic> params, Set<String> datasetIds) =>
           _deleteNodeSnapshotsFromDisk(
-        node: node,
-        datasetIds: datasetIds,
-        update: update,
-      ),
+            node: node,
+            datasetIds: datasetIds,
+            update: update,
+          ),
     );
   }
 
@@ -3505,8 +4395,12 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset, {
     List<String> sourceArtifactIds = const <String>[],
+    bool keepRamSnapshot = true,
   }) async {
-    await setRunDetail('Materializing ${node.title} for ${dataset.label}...');
+    await setRunDetail(
+      'Materializing ${node.title} for ${dataset.label}...',
+      phase: RunActivityPhase.finalizing,
+    );
     _stampArtifactIdentities(
       node: node,
       dataset: dataset,
@@ -3516,18 +4410,21 @@ class CanvasLogic {
         _artifactKindsForNodeOutputs(node, dataset);
     final DatasetArtifactSnapshot snapshot =
         DatasetArtifactSnapshot.fromDataset(
-      dataset,
-      includedKinds: outputKinds,
-    );
+          dataset,
+          includedKinds: outputKinds,
+        );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
       return;
     }
 
     final NodeStoragePolicy policy = _storagePolicyForNode(node);
-    if (policy != NodeStoragePolicy.onDemand) {
-      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
-          snapshot;
+    if (policy != NodeStoragePolicy.onDemand &&
+        (policy != NodeStoragePolicy.preferDisk || keepRamSnapshot)) {
+      _nodeRamSnapshots.putIfAbsent(
+        node.id,
+        () => <String, DatasetArtifactSnapshot>{},
+      )[dataset.id] = snapshot;
     } else {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
     }
@@ -3543,8 +4440,69 @@ class CanvasLogic {
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
-      if (policy == NodeStoragePolicy.preferDisk) {
+      if (policy == NodeStoragePolicy.preferDisk && !keepRamSnapshot) {
         _nodeRamSnapshots[node.id]?.remove(dataset.id);
+      }
+    }
+  }
+
+  void _releasePreferDiskActiveOutputsForDataset(
+    List<NodeModel> orderedNodes,
+    Dataset dataset,
+  ) {
+    for (final NodeModel node in orderedNodes.reversed) {
+      if (node.datasetStates[dataset.id] != DatasetState.done ||
+          _storagePolicyForNode(node) != NodeStoragePolicy.preferDisk) {
+        continue;
+      }
+      _releaseActiveDatasetArtifactsProducedBy(node, dataset);
+    }
+  }
+
+  void _releaseActiveDatasetArtifactsProducedBy(
+    NodeModel node,
+    Dataset dataset,
+  ) {
+    final Set<BrainStoryArtifactKind> producedKinds =
+        _artifactKindsForNodeOutputs(node, dataset).where((
+          BrainStoryArtifactKind kind,
+        ) {
+          return dataset.artifactIdentityFor(kind)?.producerNodeId == node.id;
+        }).toSet();
+    if (producedKinds.isEmpty) {
+      return;
+    }
+    for (final BrainStoryArtifactKind kind in producedKinds) {
+      switch (kind) {
+        case BrainStoryArtifactKind.timeSeries:
+          dataset.timeSeries = null;
+          break;
+        case BrainStoryArtifactKind.segmentedTimeSeries:
+          dataset.segmentedTimeSeries = null;
+          break;
+        case BrainStoryArtifactKind.spectrum:
+          dataset.spectrum = null;
+          break;
+        case BrainStoryArtifactKind.fooofResult:
+          dataset.fooofResult = null;
+          break;
+        case BrainStoryArtifactKind.featureTable:
+          dataset.featureTable = null;
+          break;
+        case BrainStoryArtifactKind.bridgeDetection:
+          dataset.bridgeDetection = null;
+          break;
+        case BrainStoryArtifactKind.timeFrequency:
+          dataset.timeFrequency = null;
+          break;
+        case BrainStoryArtifactKind.matrixTransformation:
+          dataset.matrixTransformation = null;
+          break;
+        case BrainStoryArtifactKind.markers:
+        case BrainStoryArtifactKind.markerChange:
+        case BrainStoryArtifactKind.channelCoordinates:
+        case BrainStoryArtifactKind.unknown:
+          break;
       }
     }
   }
@@ -3604,8 +4562,7 @@ class CanvasLogic {
       final String outputName = output.name.toLowerCase();
       switch (output.type) {
         case PortType.signal:
-          if ((outputName.contains('psd') ||
-                  outputName.contains('spectrum')) &&
+          if ((outputName.contains('psd') || outputName.contains('spectrum')) &&
               dataset.spectrum != null) {
             kinds.add(BrainStoryArtifactKind.spectrum);
           } else if (dataset.timeSeries != null) {
@@ -3650,8 +4607,7 @@ class CanvasLogic {
       final String outputName = output.name.toLowerCase();
       switch (output.type) {
         case PortType.signal:
-          if ((outputName.contains('psd') ||
-                  outputName.contains('spectrum')) &&
+          if ((outputName.contains('psd') || outputName.contains('spectrum')) &&
               snapshot.spectrum != null) {
             kinds.add(BrainStoryArtifactKind.spectrum);
           } else if (snapshot.timeSeries != null) {
@@ -3694,14 +4650,12 @@ class CanvasLogic {
     final NodeModel configuredNode = _nodeWithParams(node, params);
     final Set<String> diskSavedDatasetIds = <String>{};
     if (supportsNodeSnapshotDiskStore) {
-      final List<String> datasetIds =
-          datasets.values.map((Dataset dataset) => dataset.id).toList(growable: false);
+      final List<String> datasetIds = datasets.values
+          .map((Dataset dataset) => dataset.id)
+          .toList(growable: false);
       final List<bool> diskFlags = await Future.wait(
         datasetIds.map((String datasetId) {
-          return hasNodeSnapshotOnDisk(
-            nodeId: node.id,
-            datasetId: datasetId,
-          );
+          return hasNodeSnapshotOnDisk(nodeId: node.id, datasetId: datasetId);
         }),
       );
       for (int index = 0; index < datasetIds.length; index++) {
@@ -3731,40 +4685,51 @@ class CanvasLogic {
     required NodeModel node,
     required VoidCallback update,
   }) async {
-    bool succeeded = false;
-    String? finalDetail;
     try {
-      await prepareRunUi(runLabel);
-      await action();
-      succeeded = true;
+      final String finalDetail = await runQueued(
+        label: runLabel,
+        lockedNodeIds: _collectAncestorsInclusive(node.id),
+        action: action,
+        successDetail: () => _lastRunDatasetCount == 0
+            ? 'No datasets matched ${node.title}.'
+            : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).',
+      );
       update();
-      finalDetail = _lastRunDatasetCount == 0
-          ? 'No datasets matched ${node.title}.'
-          : 'Ran ${node.title} for $_lastRunDatasetCount dataset(s).';
-      finalDetail = _decorateRunDetailWithSkips(finalDetail);
       return finalDetail;
     } catch (error) {
-      finalDetail = 'Run failed: $error';
       rethrow;
-    } finally {
-      finishRunUi(
-        succeeded: succeeded,
-        detail: finalDetail,
-      );
     }
   }
 
-  Future<List<_MemoryRowSummary>> _memoryRows() async {
+  Future<List<_MemoryRowSummary>> _memoryRows({String? nodeId}) async {
     final List<_MemoryRowSummary> rows = <_MemoryRowSummary>[];
     for (final NodeModel node in nodes) {
+      if (nodeId != null && node.id != nodeId) {
+        continue;
+      }
+      final Set<String> scopedDatasetIds = nodeId == null
+          ? const <String>{}
+          : <String>{
+              ..._datasetsForNode(node),
+              ..._availableDatasetIdsForNode(node),
+              ...?_nodeRamSnapshots[node.id]?.keys,
+              ...?_nodeDiskSnapshotIds[node.id],
+            };
       for (final Dataset dataset in datasets.values) {
-        final bool inRam = _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
-        bool onDisk = _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
+        if (nodeId != null && !scopedDatasetIds.contains(dataset.id)) {
+          continue;
+        }
+        final bool inRam =
+            _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
+        bool onDisk =
+            _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
         final DatasetState state =
             node.datasetStates[dataset.id] ?? DatasetState.notReady;
         final bool hasRun =
-            state == DatasetState.done || state == DatasetState.stale;
-        if (!inRam && !onDisk && !hasRun) {
+            state == DatasetState.done ||
+            state == DatasetState.partial ||
+            state == DatasetState.stale;
+        if (nodeId == null && !inRam && !onDisk && !hasRun) {
           continue;
         }
         if (!onDisk && supportsNodeSnapshotDiskStore) {
@@ -3773,10 +4738,13 @@ class CanvasLogic {
             datasetId: dataset.id,
           );
           if (onDisk) {
-            _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+            _nodeDiskSnapshotIds
+                .putIfAbsent(node.id, () => <String>{})
+                .add(dataset.id);
           }
         }
-        final DatasetArtifactSnapshot? snapshot = _nodeRamSnapshots[node.id]?[dataset.id];
+        final DatasetArtifactSnapshot? snapshot =
+            _nodeRamSnapshots[node.id]?[dataset.id];
         rows.add(
           _MemoryRowSummary(
             nodeId: node.id,
@@ -3784,7 +4752,7 @@ class CanvasLogic {
             nodeTitle: node.title,
             datasetId: dataset.id,
             datasetLabel: dataset.label,
-            processingLabel: _statusLabel(node) ?? 'Not ready',
+            processingLabel: _datasetProcessingLabel(node, dataset.id),
             inRam: inRam,
             onDisk: onDisk,
             precisionLabel: _memoryPrecisionLabel(
@@ -3804,6 +4772,31 @@ class CanvasLogic {
       return a.datasetLabel.compareTo(b.datasetLabel);
     });
     return rows;
+  }
+
+  String _datasetProcessingLabel(NodeModel node, String datasetId) {
+    if (_runActiveNodeId == node.id) {
+      return 'Running';
+    }
+    if (_runWaitingNodeIds.contains(node.id)) {
+      return 'Waiting';
+    }
+    if (isNodeMutationLocked(node.id)) {
+      return 'Input locked';
+    }
+    final DatasetState state = _effectiveDatasetStateForNode(node, datasetId);
+    switch (state) {
+      case DatasetState.notReady:
+        return 'Not ready';
+      case DatasetState.ready:
+        return 'Ready';
+      case DatasetState.partial:
+        return 'Partial';
+      case DatasetState.done:
+        return 'Done';
+      case DatasetState.stale:
+        return 'Stale';
+    }
   }
 
   String _memoryPrecisionLabel({
@@ -3858,7 +4851,8 @@ class CanvasLogic {
       return false;
     }
     for (final Dataset dataset in _datasetsForAction(datasetIds)) {
-      final bool inRam = _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
+      final bool inRam =
+          _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true;
       if (inRam) {
         continue;
       }
@@ -3867,7 +4861,9 @@ class CanvasLogic {
         datasetId: dataset.id,
       );
       if (onDisk) {
-        _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+        _nodeDiskSnapshotIds
+            .putIfAbsent(node.id, () => <String>{})
+            .add(dataset.id);
         return true;
       }
     }
@@ -3896,8 +4892,10 @@ class CanvasLogic {
       if (snapshot == null || snapshot.isEmpty) {
         continue;
       }
-      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
-          snapshot;
+      _nodeRamSnapshots.putIfAbsent(
+        node.id,
+        () => <String, DatasetArtifactSnapshot>{},
+      )[dataset.id] = snapshot;
       lastPath = await saveNodeSnapshotJson(
         nodeId: node.id,
         datasetId: dataset.id,
@@ -3938,15 +4936,19 @@ class CanvasLogic {
       if (jsonPayload == null || jsonPayload.trim().isEmpty) {
         continue;
       }
-      final Map<String, dynamic> decoded =
-          Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
-      final DatasetArtifactSnapshot snapshot =
-          DatasetArtifactSnapshot.fromJson(decoded);
+      final Map<String, dynamic> decoded = Map<String, dynamic>.from(
+        jsonDecode(jsonPayload) as Map,
+      );
+      final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
+        decoded,
+      );
       if (snapshot.isEmpty) {
         continue;
       }
-      _nodeRamSnapshots.putIfAbsent(node.id, () => <String, DatasetArtifactSnapshot>{})[dataset.id] =
-          snapshot;
+      _nodeRamSnapshots.putIfAbsent(
+        node.id,
+        () => <String, DatasetArtifactSnapshot>{},
+      )[dataset.id] = snapshot;
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
@@ -3975,7 +4977,8 @@ class CanvasLogic {
     }
 
     int releasedCount = 0;
-    final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+    final Map<String, DatasetArtifactSnapshot>? snapshots =
+        _nodeRamSnapshots[node.id];
     if (snapshots != null) {
       for (final Dataset dataset in selectedDatasets) {
         if (snapshots.remove(dataset.id) != null) {
@@ -4016,10 +5019,7 @@ class CanvasLogic {
       if (!exists) {
         continue;
       }
-      await deleteNodeSnapshotFromDisk(
-        nodeId: node.id,
-        datasetId: dataset.id,
-      );
+      await deleteNodeSnapshotFromDisk(nodeId: node.id, datasetId: dataset.id);
       _nodeDiskSnapshotIds[node.id]?.remove(dataset.id);
       if (_nodeDiskSnapshotIds[node.id]?.isEmpty ?? false) {
         _nodeDiskSnapshotIds.remove(node.id);
@@ -4045,12 +5045,15 @@ class CanvasLogic {
     }
 
     final NodeModel configuredNode = _nodeWithParams(node, params);
-    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(configuredNode);
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(
+      configuredNode,
+    );
     int clearedCount = 0;
 
     for (final Dataset dataset in selectedDatasets) {
       bool changed = false;
-      final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+      final Map<String, DatasetArtifactSnapshot>? snapshots =
+          _nodeRamSnapshots[node.id];
       if (snapshots?.remove(dataset.id) != null) {
         changed = true;
       }
@@ -4174,7 +5177,10 @@ class CanvasLogic {
       final DatasetArtifactSnapshot? snapshot =
           await _loadSnapshotForNodeDataset(upstreamNode.id, dataset.id);
       if (snapshot != null && !snapshot.isEmpty) {
-        _snapshotScopedToNodeOutputs(upstreamNode, snapshot).applyToDataset(view);
+        _snapshotScopedToNodeOutputs(
+          upstreamNode,
+          snapshot,
+        ).applyToDataset(view);
         appliedAnySnapshot = true;
         continue;
       }
@@ -4200,8 +5206,10 @@ class CanvasLogic {
     if (snapshot.includedKinds != null) {
       return snapshot;
     }
-    final Set<BrainStoryArtifactKind> kinds =
-        _artifactKindsForSnapshotOutputs(node, snapshot);
+    final Set<BrainStoryArtifactKind> kinds = _artifactKindsForSnapshotOutputs(
+      node,
+      snapshot,
+    );
     if (kinds.isEmpty) {
       return snapshot;
     }
@@ -4211,8 +5219,8 @@ class CanvasLogic {
           : null,
       segmentedTimeSeries:
           kinds.contains(BrainStoryArtifactKind.segmentedTimeSeries)
-              ? snapshot.segmentedTimeSeries
-              : null,
+          ? snapshot.segmentedTimeSeries
+          : null,
       spectrum: kinds.contains(BrainStoryArtifactKind.spectrum)
           ? snapshot.spectrum
           : null,
@@ -4230,21 +5238,24 @@ class CanvasLogic {
           : null,
       matrixTransformation:
           kinds.contains(BrainStoryArtifactKind.matrixTransformation)
-              ? snapshot.matrixTransformation
-              : null,
+          ? snapshot.matrixTransformation
+          : null,
       markers: kinds.contains(BrainStoryArtifactKind.markers)
           ? snapshot.markers ??
-              snapshot.timeSeries?.markers
-                  .map((TimeMarker marker) => TimeMarker.fromJson(marker.toJson()))
-                  .toList(growable: false)
+                snapshot.timeSeries?.markers
+                    .map(
+                      (TimeMarker marker) =>
+                          TimeMarker.fromJson(marker.toJson()),
+                    )
+                    .toList(growable: false)
           : null,
       artifactIdentities:
           Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
-        snapshot.artifactIdentities.entries.where(
-          (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
-              kinds.contains(entry.key),
-        ),
-      ),
+            snapshot.artifactIdentities.entries.where(
+              (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+                  kinds.contains(entry.key),
+            ),
+          ),
       includedKinds: kinds,
     );
   }
@@ -4267,16 +5278,20 @@ class CanvasLogic {
       return null;
     }
 
-    final Map<String, dynamic> decoded =
-        Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map);
-    final DatasetArtifactSnapshot snapshot =
-        DatasetArtifactSnapshot.fromJson(decoded);
+    final Map<String, dynamic> decoded = Map<String, dynamic>.from(
+      jsonDecode(jsonPayload) as Map,
+    );
+    final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
+      decoded,
+    );
     if (snapshot.isEmpty) {
       return null;
     }
     _nodeDiskSnapshotIds.putIfAbsent(nodeId, () => <String>{}).add(datasetId);
-    _nodeRamSnapshots
-        .putIfAbsent(nodeId, () => <String, DatasetArtifactSnapshot>{})[datasetId] = snapshot;
+    _nodeRamSnapshots.putIfAbsent(
+      nodeId,
+      () => <String, DatasetArtifactSnapshot>{},
+    )[datasetId] = snapshot;
     return snapshot;
   }
 
@@ -4293,7 +5308,9 @@ class CanvasLogic {
           datasetId: dataset.id,
         );
         if (exists) {
-          _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+          _nodeDiskSnapshotIds
+              .putIfAbsent(node.id, () => <String>{})
+              .add(dataset.id);
         }
       }
     }
@@ -4313,10 +5330,7 @@ class CanvasLogic {
     }
   }
 
-  DatasetState _effectiveDatasetStateForNode(
-    NodeModel node,
-    String datasetId,
-  ) {
+  DatasetState _effectiveDatasetStateForNode(NodeModel node, String datasetId) {
     final DatasetState rawState =
         node.datasetStates[datasetId] ?? DatasetState.notReady;
     if (rawState != DatasetState.stale) {
@@ -4335,10 +5349,7 @@ class CanvasLogic {
         : DatasetState.notReady;
   }
 
-  NodeModel _nodeWithParams(
-    NodeModel node,
-    Map<String, dynamic> params,
-  ) {
+  NodeModel _nodeWithParams(NodeModel node, Map<String, dynamic> params) {
     return NodeModel(
       id: node.id,
       type: node.type,
@@ -4355,9 +5366,17 @@ class CanvasLogic {
   }
 
   NodeStoragePolicy _storagePolicyForNode(NodeModel node) {
-    return NodeStoragePolicyPresentation.fromWireValue(
-      node.params['storagePolicy']?.toString(),
-    );
+    final String? rawPolicy = node.params['storagePolicy']?.toString();
+    if (rawPolicy == null || rawPolicy.trim().isEmpty) {
+      return node.type.defaultStoragePolicy;
+    }
+    final NodeStoragePolicy policy =
+        NodeStoragePolicyPresentation.fromWireValue(
+          node.params['storagePolicy']?.toString(),
+        );
+    return policy == NodeStoragePolicy.automatic
+        ? node.type.defaultStoragePolicy
+        : policy;
   }
 
   NodeType? _nodeTypeByTitle(String title) {
@@ -4373,6 +5392,12 @@ class CanvasLogic {
     if (normalizedTitle == 'Channel Coordinates') {
       return ChannelCoordinatesNodeType();
     }
+    if (normalizedTitle == 'Interactive Artifact Detection') {
+      return InteractiveArtifactDetectionNodeType();
+    }
+    if (normalizedTitle == 'Average Spectra') {
+      return PSDAverageNodeType();
+    }
     return null;
   }
 
@@ -4386,6 +5411,10 @@ class CanvasLogic {
   }
 
   Future<void> _yieldToUi({int extraDelayMs = 12}) async {
+    if (!runUiYieldsEnabled) {
+      await Future<void>.delayed(Duration.zero);
+      return;
+    }
     await WidgetsBinding.instance.endOfFrame;
     await Future<void>.delayed(Duration(milliseconds: extraDelayMs));
   }
@@ -4418,6 +5447,9 @@ class CanvasLogic {
     }
     if (_runWaitingNodeIds.contains(node.id)) {
       return 'Waiting';
+    }
+    if (isNodeMutationLocked(node.id)) {
+      return 'Input locked';
     }
     switch (node.visualState) {
       case DatasetState.notReady:
@@ -4471,24 +5503,6 @@ class CanvasLogic {
       return null;
     }
     return node;
-  }
-
-  NodeModel? _interactiveArtifactSourceNode(String nodeId) {
-    final NodeModel? node = _findNode(nodeId);
-    if (node == null) {
-      return null;
-    }
-    if (node.type is InteractiveArtifactDetectionNodeType) {
-      return node;
-    }
-    if (node.type is VisualizationNodeType) {
-      for (final NodeModel parent in _immediateParents(node.id)) {
-        if (parent.type is InteractiveArtifactDetectionNodeType) {
-          return parent;
-        }
-      }
-    }
-    return null;
   }
 
   NodeModel? _channelEditSourceNode(String nodeId) {
@@ -4547,11 +5561,16 @@ class CanvasLogic {
 
     int? fromPortIndex;
     int? toPortIndex;
-    for (int candidateFromPort = 0;
-        candidateFromPort < sourceNode.outputPorts.length;
-        candidateFromPort++) {
-      final int? candidateToPort =
-          _matchingInputPortForOutputPort(sourceNode, candidateFromPort, markerNode);
+    for (
+      int candidateFromPort = 0;
+      candidateFromPort < sourceNode.outputPorts.length;
+      candidateFromPort++
+    ) {
+      final int? candidateToPort = _matchingInputPortForOutputPort(
+        sourceNode,
+        candidateFromPort,
+        markerNode,
+      );
       if (candidateToPort != null) {
         fromPortIndex = candidateFromPort;
         toPortIndex = candidateToPort;
@@ -4606,9 +5625,11 @@ class CanvasLogic {
 
     int? fromPortIndex;
     int? toPortIndex;
-    for (int candidateFromPort = 0;
-        candidateFromPort < sourceNode.outputPorts.length;
-        candidateFromPort++) {
+    for (
+      int candidateFromPort = 0;
+      candidateFromPort < sourceNode.outputPorts.length;
+      candidateFromPort++
+    ) {
       final int? candidateToPort = _matchingInputPortForOutputPort(
         sourceNode,
         candidateFromPort,
@@ -4633,16 +5654,12 @@ class CanvasLogic {
   }
 
   double _snapCoordinate(double value, double gridSize) {
-    return math.max(
-      0,
-      (value / gridSize).roundToDouble() * gridSize,
-    ).toDouble();
+    return math
+        .max(0, (value / gridSize).roundToDouble() * gridSize)
+        .toDouble();
   }
 
-  Offset _nearestAvailablePosition(
-    Offset desired, {
-    String? movingNodeId,
-  }) {
+  Offset _nearestAvailablePosition(Offset desired, {String? movingNodeId}) {
     Offset candidate = snapToGrid(desired);
     if (!_positionOverlapsAnyNode(candidate, movingNodeId: movingNodeId)) {
       return candidate;
@@ -4653,7 +5670,11 @@ class CanvasLogic {
 
     for (int radius = 1; radius <= 24; radius++) {
       for (int rowOffset = -radius; rowOffset <= radius; rowOffset++) {
-        for (int columnOffset = -radius; columnOffset <= radius; columnOffset++) {
+        for (
+          int columnOffset = -radius;
+          columnOffset <= radius;
+          columnOffset++
+        ) {
           if (rowOffset.abs() != radius && columnOffset.abs() != radius) {
             continue;
           }
@@ -4672,7 +5693,8 @@ class CanvasLogic {
   }
 
   void moveNodeOrSelection(NodeModel draggedNode, Offset targetPosition) {
-    if (!selectedNodeIds.contains(draggedNode.id) || selectedNodeIds.length <= 1) {
+    if (!selectedNodeIds.contains(draggedNode.id) ||
+        selectedNodeIds.length <= 1) {
       final Offset nextPosition = _nearestAvailablePosition(
         targetPosition,
         movingNodeId: draggedNode.id,
@@ -4727,8 +5749,18 @@ class CanvasLogic {
   Future<void> showMemoryManagerDialog(
     BuildContext context, {
     required VoidCallback update,
+    NodeModel? node,
   }) async {
-    Future<List<_MemoryRowSummary>> loadRows() => _memoryRows();
+    Future<List<_MemoryRowSummary>> loadRows() => _memoryRows(nodeId: node?.id);
+    final String title = node == null
+        ? 'Memory'
+        : 'Memory: ${_nodeDescriptor(node)} ${node.title}';
+    final String emptyMessage = node == null
+        ? 'No node outputs are available yet.'
+        : 'No datasets are available for this node yet.';
+    final String helperText = node == null
+        ? 'See what each node is holding in RAM or on disk, and move cached outputs around without opening each node one-by-one.'
+        : 'Manage RAM and disk cache for this node only. Disabled buttons mean that dataset has nothing to load, save, or purge right now.';
 
     await showDialog<void>(
       context: context,
@@ -4746,134 +5778,168 @@ class CanvasLogic {
           builder: (BuildContext context, StateSetter setDialogState) {
             return AlertDialog(
               backgroundColor: Colors.grey.shade900,
-              title: const Text(
-                'Memory',
-                style: TextStyle(color: Colors.white),
-              ),
+              title: Text(title, style: const TextStyle(color: Colors.white)),
               content: SizedBox(
-                width: 980,
+                width: node == null ? 980 : 820,
                 height: 560,
                 child: FutureBuilder<List<_MemoryRowSummary>>(
                   future: rowsFuture,
-                  builder: (
-                    BuildContext context,
-                    AsyncSnapshot<List<_MemoryRowSummary>> snapshot,
-                  ) {
-                    if (snapshot.connectionState != ConnectionState.done) {
-                      return const Center(
-                        child: CircularProgressIndicator(),
-                      );
-                    }
-                    final List<_MemoryRowSummary> rows =
-                        snapshot.data ?? const <_MemoryRowSummary>[];
-                    if (rows.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'No node outputs are available yet.',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                      );
-                    }
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        const Text(
-                          'See what each node is holding in RAM or on disk, and move cached outputs around without opening each node one-by-one.',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                        const SizedBox(height: 14),
-                        Expanded(
-                          child: ListView.separated(
-                            itemCount: rows.length,
-                            separatorBuilder: (_, __) => Divider(
-                              height: 18,
-                              color: Colors.white.withValues(alpha: 0.10),
+                  builder:
+                      (
+                        BuildContext context,
+                        AsyncSnapshot<List<_MemoryRowSummary>> snapshot,
+                      ) {
+                        if (snapshot.connectionState != ConnectionState.done) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
+                        final List<_MemoryRowSummary> rows =
+                            snapshot.data ?? const <_MemoryRowSummary>[];
+                        if (rows.isEmpty) {
+                          return Center(
+                            child: Text(
+                              emptyMessage,
+                              style: const TextStyle(color: Colors.white70),
                             ),
-                            itemBuilder: (BuildContext context, int index) {
-                              final _MemoryRowSummary row = rows[index];
-                              return _MemoryRowWidget(
-                                row: row,
-                                supportsDisk: supportsNodeSnapshotDiskStore,
-                                onLoadFromDisk: row.onDisk
-                                    ? () async {
-                                        final NodeModel? node = _findNode(row.nodeId);
-                                        if (node == null) return;
-                                        final String message =
-                                            await _loadNodeSnapshotsToRam(
-                                          node: node,
-                                          datasetIds: <String>{row.datasetId},
-                                          update: update,
-                                        );
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(content: Text(message)),
-                                          );
-                                        }
-                                        await refresh(setDialogState);
-                                      }
-                                    : null,
-                                onReleaseRam: row.inRam
-                                    ? () async {
-                                        final NodeModel? node = _findNode(row.nodeId);
-                                        if (node == null) return;
-                                        final String message =
-                                            await _releaseNodeSnapshotsFromRam(
-                                          node: node,
-                                          datasetIds: <String>{row.datasetId},
-                                          update: update,
-                                        );
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(content: Text(message)),
-                                          );
-                                        }
-                                        await refresh(setDialogState);
-                                      }
-                                    : null,
-                                onSaveToDisk: supportsNodeSnapshotDiskStore && row.inRam
-                                    ? () async {
-                                        final NodeModel? node = _findNode(row.nodeId);
-                                        if (node == null) return;
-                                        final String message =
-                                            await _saveNodeSnapshotsToDisk(
-                                          node: node,
-                                          datasetIds: <String>{row.datasetId},
-                                          update: update,
-                                        );
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(content: Text(message)),
-                                          );
-                                        }
-                                        await refresh(setDialogState);
-                                      }
-                                    : null,
-                                onPurgeDisk: supportsNodeSnapshotDiskStore && row.onDisk
-                                    ? () async {
-                                        final NodeModel? node = _findNode(row.nodeId);
-                                        if (node == null) return;
-                                        final String message =
-                                            await _deleteNodeSnapshotsFromDisk(
-                                          node: node,
-                                          datasetIds: <String>{row.datasetId},
-                                          update: update,
-                                        );
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(content: Text(message)),
-                                          );
-                                        }
-                                        await refresh(setDialogState);
-                                      }
-                                    : null,
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                          );
+                        }
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              helperText,
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                            const SizedBox(height: 14),
+                            Expanded(
+                              child: ListView.separated(
+                                itemCount: rows.length,
+                                separatorBuilder: (_, __) => Divider(
+                                  height: 18,
+                                  color: Colors.white.withValues(alpha: 0.10),
+                                ),
+                                itemBuilder: (BuildContext context, int index) {
+                                  final _MemoryRowSummary row = rows[index];
+                                  return _MemoryRowWidget(
+                                    row: row,
+                                    supportsDisk: supportsNodeSnapshotDiskStore,
+                                    onLoadFromDisk: row.onDisk
+                                        ? () async {
+                                            final NodeModel? node = _findNode(
+                                              row.nodeId,
+                                            );
+                                            if (node == null) return;
+                                            final String message =
+                                                await _loadNodeSnapshotsToRam(
+                                                  node: node,
+                                                  datasetIds: <String>{
+                                                    row.datasetId,
+                                                  },
+                                                  update: update,
+                                                );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(message),
+                                                ),
+                                              );
+                                            }
+                                            await refresh(setDialogState);
+                                          }
+                                        : null,
+                                    onReleaseRam: row.inRam
+                                        ? () async {
+                                            final NodeModel? node = _findNode(
+                                              row.nodeId,
+                                            );
+                                            if (node == null) return;
+                                            final String message =
+                                                await _releaseNodeSnapshotsFromRam(
+                                                  node: node,
+                                                  datasetIds: <String>{
+                                                    row.datasetId,
+                                                  },
+                                                  update: update,
+                                                );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(message),
+                                                ),
+                                              );
+                                            }
+                                            await refresh(setDialogState);
+                                          }
+                                        : null,
+                                    onSaveToDisk:
+                                        supportsNodeSnapshotDiskStore &&
+                                            row.inRam
+                                        ? () async {
+                                            final NodeModel? node = _findNode(
+                                              row.nodeId,
+                                            );
+                                            if (node == null) return;
+                                            final String message =
+                                                await _saveNodeSnapshotsToDisk(
+                                                  node: node,
+                                                  datasetIds: <String>{
+                                                    row.datasetId,
+                                                  },
+                                                  update: update,
+                                                );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(message),
+                                                ),
+                                              );
+                                            }
+                                            await refresh(setDialogState);
+                                          }
+                                        : null,
+                                    onPurgeDisk:
+                                        supportsNodeSnapshotDiskStore &&
+                                            row.onDisk
+                                        ? () async {
+                                            final NodeModel? node = _findNode(
+                                              row.nodeId,
+                                            );
+                                            if (node == null) return;
+                                            final String message =
+                                                await _deleteNodeSnapshotsFromDisk(
+                                                  node: node,
+                                                  datasetIds: <String>{
+                                                    row.datasetId,
+                                                  },
+                                                  update: update,
+                                                );
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(message),
+                                                ),
+                                              );
+                                            }
+                                            await refresh(setDialogState);
+                                          }
+                                        : null,
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                 ),
               ),
               actions: <Widget>[
@@ -4906,8 +5972,9 @@ class CanvasLogic {
       return false;
     }
 
-    final Map<String, dynamic> connection =
-        Map<String, dynamic>.from(connections[connectionIndex]);
+    final Map<String, dynamic> connection = Map<String, dynamic>.from(
+      connections[connectionIndex],
+    );
     final String? fromNodeId = connection['fromNode']?.toString();
     final String? toNodeId = connection['toNode']?.toString();
     if (fromNodeId == null || toNodeId == null) {
@@ -4922,12 +5989,15 @@ class CanvasLogic {
       return false;
     }
 
-    final _PortConnection? upstream =
-        _firstMatchingPortConnection(fromNode, draggedNode);
-    final _PortConnection? downstream =
-        _firstMatchingPortConnection(draggedNode, toNode);
-    if (upstream == null ||
-        downstream == null) {
+    final _PortConnection? upstream = _firstMatchingPortConnection(
+      fromNode,
+      draggedNode,
+    );
+    final _PortConnection? downstream = _firstMatchingPortConnection(
+      draggedNode,
+      toNode,
+    );
+    if (upstream == null || downstream == null) {
       return false;
     }
 
@@ -4984,7 +6054,11 @@ class CanvasLogic {
         continue;
       }
       final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
+      final Offset start = _outputAnchor(
+        fromNode,
+        toNode,
+        fromPortIndex: fromPort,
+      );
       final Offset end = _inputAnchor(fromNode, toNode);
       final Rect corridor = Rect.fromLTRB(
         math.min(start.dx, end.dx) - corridorPadding,
@@ -4995,7 +6069,8 @@ class CanvasLogic {
       if (!corridor.overlaps(rect)) {
         continue;
       }
-      final bool preferVertical = (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
+      final bool preferVertical =
+          (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
       final List<Offset> points = buildConnectionPolyline(
         start: start,
         end: end,
@@ -5008,7 +6083,11 @@ class CanvasLogic {
       for (int pointIndex = 1; pointIndex < points.length; pointIndex++) {
         distance = math.min(
           distance,
-          _distanceToSegment(center, points[pointIndex - 1], points[pointIndex]),
+          _distanceToSegment(
+            center,
+            points[pointIndex - 1],
+            points[pointIndex],
+          ),
         );
       }
       if (bestDistance == null || distance < bestDistance) {
@@ -5048,10 +6127,7 @@ class CanvasLogic {
     return false;
   }
 
-  bool _positionOverlapsAnyNode(
-    Offset position, {
-    String? movingNodeId,
-  }) {
+  bool _positionOverlapsAnyNode(Offset position, {String? movingNodeId}) {
     final Rect probe = Rect.fromLTWH(
       position.dx,
       position.dy,
@@ -5090,8 +6166,9 @@ class CanvasLogic {
     final Map<String, String> labels = <String, String>{
       for (final NodeModel node in nodes) node.id: 'A',
     };
-    final List<NodeModel> orderedNodes =
-        _orderedNodes(nodes.map((NodeModel node) => node.id).toSet());
+    final List<NodeModel> orderedNodes = _orderedNodes(
+      nodes.map((NodeModel node) => node.id).toSet(),
+    );
 
     for (final NodeModel mergeNode in orderedNodes) {
       final List<NodeModel> parents = _immediateParents(mergeNode.id);
@@ -5152,18 +6229,24 @@ class CanvasLogic {
     int fromPortIndex,
     NodeModel toNode,
   ) {
-    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(fromNode);
-    final _EffectiveOutputPort? effectivePort = effectivePorts.cast<_EffectiveOutputPort?>().firstWhere(
-      (_EffectiveOutputPort? port) => port?.portIndex == fromPortIndex,
-      orElse: () => null,
+    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(
+      fromNode,
     );
+    final _EffectiveOutputPort? effectivePort = effectivePorts
+        .cast<_EffectiveOutputPort?>()
+        .firstWhere(
+          (_EffectiveOutputPort? port) => port?.portIndex == fromPortIndex,
+          orElse: () => null,
+        );
     if (effectivePort == null) {
       return null;
     }
     final PortType outputType = effectivePort.port.type;
-    for (int toPortIndex = 0;
-        toPortIndex < toNode.inputPorts.length;
-        toPortIndex++) {
+    for (
+      int toPortIndex = 0;
+      toPortIndex < toNode.inputPorts.length;
+      toPortIndex++
+    ) {
       if (toNode.inputPorts[toPortIndex].type == outputType) {
         return toPortIndex;
       }
@@ -5175,7 +6258,9 @@ class CanvasLogic {
     NodeModel fromNode,
     NodeModel toNode,
   ) {
-    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(fromNode);
+    final List<_EffectiveOutputPort> effectivePorts = _effectiveOutputPorts(
+      fromNode,
+    );
     for (final _EffectiveOutputPort outputPort in effectivePorts) {
       final int? toPortIndex = _matchingInputPortForOutputPort(
         fromNode,
@@ -5227,15 +6312,9 @@ class CanvasLogic {
       );
     }
     if (delta.dy >= 0) {
-      return Offset(
-        nodeCenter.dx,
-        node.position.dy + _cardHeight,
-      );
+      return Offset(nodeCenter.dx, node.position.dy + _cardHeight);
     }
-    return Offset(
-      nodeCenter.dx,
-      node.position.dy,
-    );
+    return Offset(nodeCenter.dx, node.position.dy);
   }
 
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
@@ -5254,7 +6333,11 @@ class CanvasLogic {
       }
 
       final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(fromNode, toNode, fromPortIndex: fromPort);
+      final Offset start = _outputAnchor(
+        fromNode,
+        toNode,
+        fromPortIndex: fromPort,
+      );
       final Offset end = _inputAnchor(fromNode, toNode);
       if (_isPointNearConnection(
         point,
@@ -5275,7 +6358,8 @@ class CanvasLogic {
     List<Rect> obstacles = const <Rect>[],
   }) {
     const double threshold = 12.0;
-    final bool preferVertical = (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
+    final bool preferVertical =
+        (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
     final List<Offset> points = buildConnectionPolyline(
       start: start,
       end: end,
@@ -5302,7 +6386,8 @@ class CanvasLogic {
       return (point - a).distance;
     }
 
-    final double t = (((point.dx - a.dx) * dx) + ((point.dy - a.dy) * dy)) /
+    final double t =
+        (((point.dx - a.dx) * dx) + ((point.dy - a.dy) * dy)) /
         ((dx * dx) + (dy * dy));
     final double clampedT = t.clamp(0.0, 1.0);
     final Offset projection = Offset(
@@ -5314,7 +6399,9 @@ class CanvasLogic {
 
   List<Rect> _connectionObstacles(NodeModel fromNode, NodeModel toNode) {
     return nodes
-        .where((NodeModel node) => node.id != fromNode.id && node.id != toNode.id)
+        .where(
+          (NodeModel node) => node.id != fromNode.id && node.id != toNode.id,
+        )
         .map((NodeModel node) {
           return Rect.fromLTWH(
             node.position.dx,
@@ -5355,7 +6442,8 @@ class CanvasLogic {
       (_nodeDiskSnapshotIds[nodeId]?.isNotEmpty ?? false);
 
   DatasetArtifactSnapshot? _primarySnapshotForNode(NodeModel node) {
-    final Map<String, DatasetArtifactSnapshot>? snapshots = _nodeRamSnapshots[node.id];
+    final Map<String, DatasetArtifactSnapshot>? snapshots =
+        _nodeRamSnapshots[node.id];
     if (snapshots == null || snapshots.isEmpty) {
       return null;
     }
@@ -5415,12 +6503,14 @@ class CanvasLogic {
         final int markerCount = snapshot?.timeSeries?.markers.length ?? 0;
         return _OutputHandleDescriptor(
           kind: _OutputHandleKind.markers,
-          hasOutput: snapshot?.timeSeries != null || _hasAnyDiskSnapshot(node.id),
+          hasOutput:
+              snapshot?.timeSeries != null || _hasAnyDiskSnapshot(node.id),
           badgeText: markerCount == 1 ? '' : '$markerCount',
           tooltip: '${port.name} output',
         );
       case PortType.metadata:
-        if (portName.contains('segments') && snapshot?.segmentedTimeSeries != null) {
+        if (portName.contains('segments') &&
+            snapshot?.segmentedTimeSeries != null) {
           final int segmentCount = snapshot!.segmentedTimeSeries!.segmentCount;
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.segments,
@@ -5430,7 +6520,8 @@ class CanvasLogic {
           );
         }
         if (snapshot?.timeFrequency != null &&
-            (portName.contains('time_frequency') || portName.contains('time-frequency'))) {
+            (portName.contains('time_frequency') ||
+                portName.contains('time-frequency'))) {
           return _OutputHandleDescriptor(
             kind: _OutputHandleKind.timeFrequency,
             hasOutput: true,
@@ -5475,7 +6566,8 @@ class CanvasLogic {
         );
       case PortType.matrixTransformation:
         if (snapshot?.matrixTransformation != null) {
-          final int count = snapshot!.matrixTransformation!.componentLabels.isNotEmpty
+          final int count =
+              snapshot!.matrixTransformation!.componentLabels.isNotEmpty
               ? snapshot.matrixTransformation!.componentLabels.length
               : snapshot.matrixTransformation!.matrix.length;
           return _OutputHandleDescriptor(
@@ -5496,7 +6588,7 @@ class CanvasLogic {
 
   Color _outputColorForPort(NodeModel node, int portIndex) {
     final PortSpec port = _effectiveOutputPorts(node)
-        .firstWhere(( _EffectiveOutputPort item) => item.portIndex == portIndex)
+        .firstWhere((_EffectiveOutputPort item) => item.portIndex == portIndex)
         .port;
     final _OutputHandleDescriptor? descriptor = _outputDescriptorForPort(
       node: node,
@@ -5527,7 +6619,6 @@ class CanvasLogic {
         return Colors.white70;
     }
   }
-
 }
 
 class _OutputHandleDescriptor {
@@ -5545,10 +6636,7 @@ class _OutputHandleDescriptor {
 }
 
 class _EffectiveOutputPort {
-  const _EffectiveOutputPort({
-    required this.portIndex,
-    required this.port,
-  });
+  const _EffectiveOutputPort({required this.portIndex, required this.port});
 
   final int portIndex;
   final PortSpec port;

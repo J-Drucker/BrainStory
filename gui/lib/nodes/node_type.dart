@@ -20,7 +20,13 @@ enum NodeCategory {
   other,
 }
 
-enum NodeStoragePolicy { automatic, preferRam, preferDisk, ramAndDisk, onDemand }
+enum NodeStoragePolicy {
+  automatic,
+  preferRam,
+  preferDisk,
+  ramAndDisk,
+  onDemand,
+}
 
 extension NodeCategoryPresentation on NodeCategory {
   String get label {
@@ -122,17 +128,11 @@ class PortSpec {
   final String name;
   final PortType type;
 
-  const PortSpec({
-    required this.name,
-    required this.type,
-  });
+  const PortSpec({required this.name, required this.type});
 }
 
 class NodePlacement {
-  const NodePlacement({
-    required this.category,
-    required this.subcategory,
-  });
+  const NodePlacement({required this.category, required this.subcategory});
 
   final NodeCategory category;
   final String subcategory;
@@ -164,6 +164,27 @@ class NodeDatasetStatusSnapshot {
   final Set<String> diskSavedDatasetIds;
 }
 
+class NodePortStatusSummary {
+  const NodePortStatusSummary({required this.inputs, required this.outputs});
+
+  final List<NodePortDatasetSummary> inputs;
+  final List<NodePortDatasetSummary> outputs;
+}
+
+class NodePortDatasetSummary {
+  const NodePortDatasetSummary({
+    required this.label,
+    required this.type,
+    required this.readyCount,
+    required this.totalCount,
+  });
+
+  final String label;
+  final PortType type;
+  final int readyCount;
+  final int totalCount;
+}
+
 class NodeDatasetActions {
   const NodeDatasetActions({
     required this.supportsDisk,
@@ -180,39 +201,57 @@ class NodeDatasetActions {
 
   final bool supportsDisk;
   final Future<NodeDatasetStatusSnapshot> Function(Map<String, dynamic> params)
-      refresh;
+  refresh;
   final Future<bool> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) hasLoadableDiskCache;
+  )
+  hasLoadableDiskCache;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) runAllPrevious;
+  )
+  runAllPrevious;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) runThisNode;
+  )
+  runThisNode;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) clearResults;
+  )
+  clearResults;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) loadFromDisk;
+  )
+  loadFromDisk;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) purgeActiveMemory;
+  )
+  purgeActiveMemory;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) saveToDisk;
+  )
+  saveToDisk;
   final Future<String> Function(
     Map<String, dynamic> params,
     Set<String> datasetIds,
-  ) purgeFromDisk;
+  )
+  purgeFromDisk;
+}
+
+class NodeExecutionContext {
+  const NodeExecutionContext({
+    required this.setProgress,
+    required this.yieldIfNeeded,
+  });
+
+  final Future<void> Function(String detail) setProgress;
+  final Future<void> Function() yieldIfNeeded;
 }
 
 abstract class NodeType {
@@ -222,10 +261,8 @@ abstract class NodeType {
   List<NodePlacement> get additionalPlacements => const <NodePlacement>[];
   Map<String, dynamic> get defaultParams;
 
-  NodePlacement get primaryPlacement => NodePlacement(
-        category: category,
-        subcategory: subcategory,
-      );
+  NodePlacement get primaryPlacement =>
+      NodePlacement(category: category, subcategory: subcategory);
 
   List<NodePlacement> get allPlacements {
     final List<NodePlacement> placements = <NodePlacement>[primaryPlacement];
@@ -266,6 +303,8 @@ abstract class NodeType {
     required void Function(void Function()) setState,
   });
 
+  String get executionChunkingStrategy => 'monolithic';
+
   Widget buildConfigWidget(
     Map<String, dynamic> params,
     void Function(Map<String, dynamic>) onSave, {
@@ -275,6 +314,7 @@ abstract class NodeType {
     required Set<String> availableDatasetIds,
     required Map<String, List<String>> datasetSourceLabels,
     required Map<String, DatasetState> processedDatasetStates,
+    required NodePortStatusSummary portStatusSummary,
     required List<String> processingSteps,
   }) {
     return _NodeConfigDialog(
@@ -284,16 +324,26 @@ abstract class NodeType {
       availableDatasetIds: availableDatasetIds,
       datasetSourceLabels: datasetSourceLabels,
       processedDatasetStates: processedDatasetStates,
+      portStatusSummary: portStatusSummary,
       processingSteps: processingSteps,
       buildBody: buildBody,
       onSave: onSave,
       onSaveAndRun: onSaveAndRun,
       datasetActions: datasetActions,
       defaultStoragePolicy: defaultStoragePolicy,
+      showSourceFiles: title == 'Import',
     );
   }
 
   Future<void> run(Dataset dataset, Map<String, dynamic> params);
+
+  Future<void> runChunked(
+    Dataset dataset,
+    Map<String, dynamic> params,
+    NodeExecutionContext context,
+  ) {
+    return run(dataset, params);
+  }
 }
 
 class NodeParamTextField extends StatefulWidget {
@@ -356,7 +406,8 @@ class _NodeParamTextFieldState extends State<NodeParamTextField> {
 
   @override
   Widget build(BuildContext context) {
-    final InputDecoration decoration = widget.decoration ??
+    final InputDecoration decoration =
+        widget.decoration ??
         InputDecoration(
           labelText: widget.labelText,
           helperText: widget.helperText,
@@ -367,7 +418,8 @@ class _NodeParamTextFieldState extends State<NodeParamTextField> {
       decoration: decoration,
       onChanged: (String text) {
         final dynamic previousValue = widget.params[widget.paramKey];
-        final dynamic nextValue = widget.parser?.call(text, previousValue) ?? text;
+        final dynamic nextValue =
+            widget.parser?.call(text, previousValue) ?? text;
         widget.params[widget.paramKey] = nextValue;
       },
     );
@@ -393,7 +445,8 @@ class NodeParamDropdownField<T> extends StatefulWidget {
   final ValueChanged<T>? onChanged;
 
   @override
-  State<NodeParamDropdownField<T>> createState() => _NodeParamDropdownFieldState<T>();
+  State<NodeParamDropdownField<T>> createState() =>
+      _NodeParamDropdownFieldState<T>();
 }
 
 class _NodeParamDropdownFieldState<T> extends State<NodeParamDropdownField<T>> {
@@ -429,13 +482,15 @@ class _NodeParamDropdownFieldState<T> extends State<NodeParamDropdownField<T>> {
         labelText: widget.labelText,
         helperText: widget.helperText,
       ),
-      items: widget.options.map((NodeDropdownOption<T> option) {
-        return DropdownMenuItem<T>(
-          value: option.value,
-          enabled: option.enabled,
-          child: Text(option.label),
-        );
-      }).toList(growable: false),
+      items: widget.options
+          .map((NodeDropdownOption<T> option) {
+            return DropdownMenuItem<T>(
+              value: option.value,
+              enabled: option.enabled,
+              child: Text(option.label),
+            );
+          })
+          .toList(growable: false),
       onChanged: (T? value) {
         if (value == null) {
           return;

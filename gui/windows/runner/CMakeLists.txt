@@ -40,16 +40,25 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
 if(CARGO_EXECUTABLE)
-  add_custom_target(brainstory_engine_build
+  add_custom_command(
+    OUTPUT "${BRAINSTORY_ENGINE_DLL}"
     COMMAND ${CARGO_EXECUTABLE} ${BRAINSTORY_ENGINE_BUILD_ARGS}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../.."
+    DEPENDS
+      "${BRAINSTORY_ENGINE_MANIFEST}"
+      "${BRAINSTORY_ENGINE_LOCKFILE}"
+      ${BRAINSTORY_ENGINE_SOURCES}
     COMMENT "Building brainstory_engine Rust library"
+    VERBATIM
+  )
+  add_custom_target(brainstory_engine_build
+    DEPENDS "${BRAINSTORY_ENGINE_DLL}"
   )
   add_dependencies(${BINARY_NAME} brainstory_engine_build)
 
   add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-      "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll"
+      "${BRAINSTORY_ENGINE_DLL}"
       "$<TARGET_FILE_DIR:${BINARY_NAME}>/brainstory_engine.dll"
     VERBATIM
   )

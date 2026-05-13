@@ -45,14 +45,24 @@ class TopomapValueBounds {
 
 class TopomapColorScale {
   const TopomapColorScale({
-    required this.startColor,
-    required this.endColor,
+    this.startColor,
+    this.endColor,
+    this.colors,
     this.legendLabel = '',
-  });
+    this.sigmoidStrength = 0.0,
+  }) : assert(
+         (colors != null && colors.length >= 2) ||
+             (startColor != null && endColor != null),
+         'Provide either a multi-stop color list or start/end colors.',
+       );
 
-  final Color startColor;
-  final Color endColor;
+  final Color? startColor;
+  final Color? endColor;
+  final List<Color>? colors;
   final String legendLabel;
+  final double sigmoidStrength;
+
+  List<Color> get palette => colors ?? <Color>[startColor!, endColor!];
 }
 
 Color topomapColorForValue(
@@ -60,9 +70,47 @@ Color topomapColorForValue(
   TopomapValueBounds bounds,
   TopomapColorScale scale,
 ) {
-  final double t = ((value - bounds.min) / (bounds.max - bounds.min))
+  final List<Color> palette = scale.palette;
+  final double linearT = ((value - bounds.min) / (bounds.max - bounds.min))
       .clamp(0.0, 1.0);
-  return Color.lerp(scale.startColor, scale.endColor, t) ?? scale.endColor;
+  final double t = scale.sigmoidStrength <= 0
+      ? linearT
+      : _sigmoidNormalizedColorPosition(linearT, scale.sigmoidStrength);
+  if (palette.length == 2) {
+    return Color.lerp(palette.first, palette.last, t) ?? palette.last;
+  }
+  final double scaled = t * (palette.length - 1);
+  final int lowerIndex = scaled.floor().clamp(0, palette.length - 2);
+  final int upperIndex = lowerIndex + 1;
+  final double segmentT = scaled - lowerIndex;
+  return Color.lerp(
+        palette[lowerIndex],
+        palette[upperIndex],
+        segmentT,
+      ) ??
+      palette[upperIndex];
+}
+
+double _sigmoidNormalizedColorPosition(double t, double strength) {
+  final double centered = (t * 2.0) - 1.0;
+  final double denom = _tanh(strength);
+  if (denom.abs() < 1e-6) {
+    return t;
+  }
+  final double warped = _tanh(centered * strength) / denom;
+  return ((warped + 1.0) / 2.0).clamp(0.0, 1.0);
+}
+
+double _tanh(double value) {
+  if (value > 12) {
+    return 1.0;
+  }
+  if (value < -12) {
+    return -1.0;
+  }
+  final double positive = math.exp(value);
+  final double negative = math.exp(-value);
+  return (positive - negative) / (positive + negative);
 }
 
 class TopomapLegendBar extends StatelessWidget {
@@ -98,10 +146,7 @@ class TopomapLegendBar extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
             gradient: LinearGradient(
-              colors: <Color>[
-                scale.startColor,
-                scale.endColor,
-              ],
+              colors: scale.palette,
             ),
           ),
         ),
@@ -112,7 +157,7 @@ class TopomapLegendBar extends StatelessWidget {
               child: Text(
                 '${bounds.min.toStringAsFixed(1)}$suffix',
                 style: TextStyle(
-                  color: scale.startColor,
+                  color: scale.palette.first,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -123,7 +168,7 @@ class TopomapLegendBar extends StatelessWidget {
                 '${bounds.max.toStringAsFixed(1)}$suffix',
                 textAlign: TextAlign.right,
                 style: TextStyle(
-                  color: scale.endColor,
+                  color: scale.palette.last,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -142,13 +187,17 @@ class InterpolatedTopomap extends StatelessWidget {
     required this.points,
     required this.scale,
     required this.bounds,
+    this.showElectrodes = false,
     this.showLabels = true,
+    this.sampleDensity = 1.0,
   });
 
   final List<TopomapPointValue> points;
   final TopomapColorScale scale;
   final TopomapValueBounds bounds;
+  final bool showElectrodes;
   final bool showLabels;
+  final double sampleDensity;
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +213,9 @@ class InterpolatedTopomap extends StatelessWidget {
                 points: points,
                 scale: scale,
                 bounds: bounds,
+                showElectrodes: showElectrodes,
                 showLabels: showLabels,
+                sampleDensity: sampleDensity,
               ),
             ),
           ),
@@ -179,13 +230,17 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     required this.points,
     required this.scale,
     required this.bounds,
+    required this.showElectrodes,
     required this.showLabels,
+    required this.sampleDensity,
   });
 
   final List<TopomapPointValue> points;
   final TopomapColorScale scale;
   final TopomapValueBounds bounds;
+  final bool showElectrodes;
   final bool showLabels;
+  final double sampleDensity;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -211,7 +266,9 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     );
     _paintInterpolatedField(canvas, center, radius, geometry);
     _paintHeadChrome(canvas, center, radius, headOutlinePaint);
-    _paintElectrodes(canvas, geometry.points);
+    if (showElectrodes) {
+      _paintElectrodes(canvas, geometry.points);
+    }
   }
 
   void _paintInterpolatedField(
@@ -220,8 +277,9 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     double radius,
     _ProjectedTopomapGeometry geometry,
   ) {
-    final double step = math.max(4.0, radius / 44.0);
-    final double sampleRadius = step * 0.78;
+    final double density = sampleDensity.clamp(1.0, 4.0).toDouble();
+    final double baseStep = math.max(3.0, radius / 56.0);
+    final double step = math.max(1.5, baseStep / density);
     final double softeningDistance = radius * 0.14;
     final double softeningDistanceSquared =
         softeningDistance * softeningDistance;
@@ -253,12 +311,15 @@ class _InterpolatedTopomapPainter extends CustomPainter {
         if (value == null) {
           continue;
         }
-        final double edgeFade =
-            1 - math.pow(radialDistance / radius, 2).toDouble();
-        fieldPaint.color = topomapColorForValue(value, bounds, scale).withValues(
-          alpha: (0.22 + (edgeFade * 0.38)).clamp(0.0, 0.6),
+        fieldPaint.color = topomapColorForValue(value, bounds, scale);
+        canvas.drawRect(
+          Rect.fromCenter(
+            center: sample,
+            width: step + 1,
+            height: step + 1,
+          ),
+          fieldPaint,
         );
-        canvas.drawCircle(sample, sampleRadius, fieldPaint);
       }
     }
 
@@ -338,15 +399,17 @@ class _InterpolatedTopomapPainter extends CustomPainter {
   }
 
   void _paintElectrodes(Canvas canvas, List<_ProjectedPoint> points) {
-    final Paint pointFillPaint = Paint()
-      ..color = const Color(0xFF0F1217)
-      ..style = PaintingStyle.fill;
     final Paint pointOutlinePaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.72)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1;
 
     for (final _ProjectedPoint point in points) {
+      final Paint pointFillPaint = Paint()
+        ..color = topomapColorForValue(point.value, bounds, scale).withValues(
+          alpha: 0.96,
+        )
+        ..style = PaintingStyle.fill;
       canvas.drawCircle(point.position, 6.5, pointFillPaint);
       canvas.drawCircle(point.position, 6.5, pointOutlinePaint);
       if (!showLabels) {
@@ -378,7 +441,9 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     return oldDelegate.points != points ||
         oldDelegate.scale != scale ||
         oldDelegate.bounds != bounds ||
-        oldDelegate.showLabels != showLabels;
+        oldDelegate.showElectrodes != showElectrodes ||
+        oldDelegate.showLabels != showLabels ||
+        oldDelegate.sampleDensity != sampleDensity;
   }
 }
 
@@ -419,7 +484,7 @@ _ProjectedTopomapGeometry _projectGeometry(
       return _ProjectedPoint(
         label: point.label,
         position: Offset(
-          center.dx + (point.coordinate.x * scale),
+          center.dx - (point.coordinate.x * scale),
           center.dy - (point.coordinate.y * scale),
         ),
         value: point.value,
