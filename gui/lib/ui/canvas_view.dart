@@ -778,7 +778,7 @@ class _CanvasViewState extends State<CanvasView> {
   }
 }
 
-class _RecentJobsOverlay extends StatelessWidget {
+class _RecentJobsOverlay extends StatefulWidget {
   const _RecentJobsOverlay({
     required this.runActivity,
     required this.jobs,
@@ -798,6 +798,20 @@ class _RecentJobsOverlay extends StatelessWidget {
   final VoidCallback onToggleCollapsed;
 
   @override
+  State<_RecentJobsOverlay> createState() => _RecentJobsOverlayState();
+}
+
+class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
+  String? _copiedKey;
+
+  RunActivity? get runActivity => widget.runActivity;
+  List<RunJobEntry> get jobs => widget.jobs;
+  List<RunJobEntry> get queuedJobs => widget.queuedJobs;
+  ProcessingResponsiveness get processingResponsiveness =>
+      widget.processingResponsiveness;
+  bool get visualizerPriorityActive => widget.visualizerPriorityActive;
+
+  @override
   Widget build(BuildContext context) {
     if (runActivity == null &&
         !visualizerPriorityActive &&
@@ -806,12 +820,12 @@ class _RecentJobsOverlay extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    if (collapsed && runActivity == null && !visualizerPriorityActive) {
+    if (widget.collapsed && runActivity == null && !visualizerPriorityActive) {
       return Positioned(
         right: 16,
         bottom: 16,
         child: FilledButton.tonalIcon(
-          onPressed: onToggleCollapsed,
+          onPressed: widget.onToggleCollapsed,
           icon: const Icon(Icons.history, size: 18),
           label: Text('Recent jobs (${jobs.length})'),
           style: FilledButton.styleFrom(
@@ -858,7 +872,22 @@ class _RecentJobsOverlay extends StatelessWidget {
                       ),
                     ),
                     IconButton(
-                      onPressed: onToggleCollapsed,
+                      onPressed: () => _copyText(
+                        context,
+                        key: 'all',
+                        _recentJobsClipboardText(),
+                        message: 'Copied recent jobs.',
+                      ),
+                      icon: Icon(
+                        _copiedKey == 'all' ? Icons.check : Icons.copy,
+                        size: 18,
+                      ),
+                      color: Colors.white70,
+                      tooltip: 'Copy recent jobs',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      onPressed: widget.onToggleCollapsed,
                       icon: const Icon(Icons.expand_more),
                       color: Colors.white70,
                       tooltip: 'Collapse',
@@ -872,16 +901,28 @@ class _RecentJobsOverlay extends StatelessWidget {
                     detail: runActivity!.detail,
                     statusLabel: _activityStatusLabel(runActivity!),
                     color: _activityStatusColor(runActivity!),
+                    onCopy: () => _copyText(
+                      context,
+                      key: 'activity',
+                      _activityClipboardText(runActivity!),
+                    ),
+                    copied: _copiedKey == 'activity',
                   ),
                   const SizedBox(height: 8),
                 ],
                 if (visualizerPriorityActive) ...<Widget>[
-                  const _RecentJobCard(
+                  _RecentJobCard(
                     title: 'Visualizer priority',
                     detail:
                         'Visualizer work is running monolithically; queued processing is paused.',
                     statusLabel: 'Priority',
-                    color: Color(0xFFFFD166),
+                    color: const Color(0xFFFFD166),
+                    onCopy: () => _copyText(
+                      context,
+                      key: 'visualizer-priority',
+                      'Priority: Visualizer priority\nVisualizer work is running monolithically; queued processing is paused.',
+                    ),
+                    copied: _copiedKey == 'visualizer-priority',
                   ),
                   const SizedBox(height: 8),
                 ],
@@ -892,6 +933,12 @@ class _RecentJobsOverlay extends StatelessWidget {
                         '${processingResponsiveness.label}: ${processingResponsiveness.description}',
                     statusLabel: processingResponsiveness.label,
                     color: const Color(0xFF6DD3FF),
+                    onCopy: () => _copyText(
+                      context,
+                      key: 'execution-chunking',
+                      'Execution chunking: ${processingResponsiveness.label}\n${processingResponsiveness.description}',
+                    ),
+                    copied: _copiedKey == 'execution-chunking',
                   ),
                   const SizedBox(height: 8),
                 ],
@@ -904,6 +951,13 @@ class _RecentJobsOverlay extends StatelessWidget {
                         detail: job.detail,
                         statusLabel: 'Queued',
                         color: const Color(0xFFC0CAD4),
+                        onCopy: () => _copyText(
+                          context,
+                          key: 'queued-${job.label}-${job.detail}',
+                          _jobClipboardText(job, statusLabel: 'Queued'),
+                        ),
+                        copied:
+                            _copiedKey == 'queued-${job.label}-${job.detail}',
                       ),
                     ),
                   ),
@@ -926,6 +980,21 @@ class _RecentJobsOverlay extends StatelessWidget {
                         color: job.state == RunJobState.done
                             ? const Color(0xFF43C26B)
                             : const Color(0xFFFF8A65),
+                        onCopy: () => _copyText(
+                          context,
+                          key:
+                              'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
+                          _jobClipboardText(
+                            job,
+                            statusLabel: job.state == RunJobState.done
+                                ? 'Done'
+                                : 'Failed',
+                            detail: _jobDetail(job),
+                          ),
+                        ),
+                        copied:
+                            _copiedKey ==
+                            'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
                       ),
                     ),
                   ),
@@ -944,6 +1013,84 @@ class _RecentJobsOverlay extends StatelessWidget {
     return base.isEmpty
         ? 'Finished in $durationLabel.'
         : '$base • $durationLabel';
+  }
+
+  String _recentJobsClipboardText() {
+    final List<String> lines = <String>['BrainStory recent jobs'];
+    if (runActivity != null) {
+      lines.add(_activityClipboardText(runActivity!));
+    }
+    if (visualizerPriorityActive) {
+      lines.add(
+        'Priority: Visualizer priority\nVisualizer work is running monolithically; queued processing is paused.',
+      );
+    }
+    if (runActivity != null) {
+      lines.add(
+        'Execution chunking: ${processingResponsiveness.label}\n${processingResponsiveness.description}',
+      );
+    }
+    for (final RunJobEntry job in queuedJobs) {
+      lines.add(_jobClipboardText(job, statusLabel: 'Queued'));
+    }
+    for (final RunJobEntry job in jobs) {
+      lines.add(
+        _jobClipboardText(
+          job,
+          statusLabel: job.state == RunJobState.done ? 'Done' : 'Failed',
+          detail: _jobDetail(job),
+        ),
+      );
+    }
+    if (lines.length == 1) {
+      lines.add('No recent jobs.');
+    }
+    return lines.join('\n\n');
+  }
+
+  String _activityClipboardText(RunActivity activity) {
+    final String detail = activity.detail.trim();
+    final String label = _activityStatusLabel(activity);
+    return detail.isEmpty
+        ? '$label: ${activity.label}'
+        : '$label: ${activity.label}\n$detail';
+  }
+
+  String _jobClipboardText(
+    RunJobEntry job, {
+    required String statusLabel,
+    String? detail,
+  }) {
+    final String resolvedDetail = (detail ?? job.detail).trim();
+    return resolvedDetail.isEmpty
+        ? '$statusLabel: ${job.label}'
+        : '$statusLabel: ${job.label}\n$resolvedDetail';
+  }
+
+  Future<void> _copyText(
+    BuildContext context,
+    String text, {
+    required String key,
+    String message = 'Copied job details.',
+  }) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      setState(() {
+        _copiedKey = key;
+      });
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        if (mounted && _copiedKey == key) {
+          setState(() {
+            _copiedKey = null;
+          });
+        }
+      });
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
   String _activityStatusLabel(RunActivity activity) {
@@ -1095,12 +1242,16 @@ class _RecentJobCard extends StatelessWidget {
     required this.detail,
     required this.statusLabel,
     required this.color,
+    this.onCopy,
+    this.copied = false,
   });
 
   final String title;
   final String detail;
   final String statusLabel;
   final Color color;
+  final VoidCallback? onCopy;
+  final bool copied;
 
   @override
   Widget build(BuildContext context) {
@@ -1138,7 +1289,7 @@ class _RecentJobCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
+                  child: SelectableText(
                     title,
                     style: const TextStyle(
                       color: Colors.white,
@@ -1146,11 +1297,24 @@ class _RecentJobCard extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (onCopy != null)
+                  IconButton(
+                    onPressed: onCopy,
+                    icon: Icon(copied ? Icons.check : Icons.copy, size: 16),
+                    color: Colors.white60,
+                    tooltip: copied ? 'Copied' : 'Copy job details',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
               ],
             ),
             if (detail.trim().isNotEmpty) ...<Widget>[
               const SizedBox(height: 6),
-              Text(
+              SelectableText(
                 detail,
                 style: const TextStyle(
                   color: Colors.white70,

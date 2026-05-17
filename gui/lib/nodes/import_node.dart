@@ -59,15 +59,16 @@ class ImportNodeType extends NodeType {
 
   @override
   Widget buildBody(
-      Map<String, dynamic> params, {
-        required Map<String, Dataset> datasets,
-        required void Function(void Function()) setState,
-      }) {
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
     final List<MapEntry<String, Dataset>> entries = datasets.entries.toList()
       ..sort((a, b) => a.value.label.compareTo(b.value.label));
     params.putIfAbsent('datasetAliases', () => <String, dynamic>{});
-    final Map<String, dynamic> aliases =
-        Map<String, dynamic>.from(params['datasetAliases'] as Map? ?? <String, dynamic>{});
+    final Map<String, dynamic> aliases = Map<String, dynamic>.from(
+      params['datasetAliases'] as Map? ?? <String, dynamic>{},
+    );
 
     return SizedBox(
       height: 320,
@@ -109,8 +110,9 @@ class ImportNodeType extends NodeType {
                         onChanged: (String value) {
                           final Map<String, dynamic> nextAliases =
                               Map<String, dynamic>.from(
-                            params['datasetAliases'] as Map? ?? <String, dynamic>{},
-                          );
+                                params['datasetAliases'] as Map? ??
+                                    <String, dynamic>{},
+                              );
                           nextAliases[dataset.id] = value;
                           params['datasetAliases'] = nextAliases;
                         },
@@ -132,8 +134,7 @@ class ImportNodeType extends NodeType {
       dataset.path,
       fallbackSampleRate: fallbackSampleRate,
       fileBytes: dataset.sourceBytes,
-      sourceDescription:
-          dataset.path.isNotEmpty ? dataset.path : dataset.label,
+      sourceDescription: dataset.path.isNotEmpty ? dataset.path : dataset.label,
     );
 
     dataset.loaded = true;
@@ -150,8 +151,9 @@ class ImportNodeType extends NodeType {
     Map<String, dynamic> params,
     Iterable<Dataset> datasets,
   ) {
-    final Map<String, dynamic> aliases =
-        Map<String, dynamic>.from(params['datasetAliases'] as Map? ?? <String, dynamic>{});
+    final Map<String, dynamic> aliases = Map<String, dynamic>.from(
+      params['datasetAliases'] as Map? ?? <String, dynamic>{},
+    );
     for (final Dataset dataset in datasets) {
       final String sourceName = datasetSourceName(dataset);
       final String alias = aliases[dataset.id]?.toString().trim() ?? '';
@@ -181,10 +183,10 @@ String eeglabMetadataPathForSelection(String path) {
   if (trimmed.isEmpty) {
     return trimmed;
   }
-  final String normalized = trimmed.replaceAll('/', '\\');
+  final String normalized = _normalizePathLike(trimmed);
   final String lower = normalized.toLowerCase();
   if (!lower.endsWith('.fdt')) {
-    return trimmed;
+    return normalized;
   }
   return '${normalized.substring(0, normalized.length - 4)}.set';
 }
@@ -194,12 +196,12 @@ String brainVisionHeaderPathForSelection(String path) {
   if (trimmed.isEmpty) {
     return trimmed;
   }
-  final String normalized = trimmed.replaceAll('/', '\\');
+  final String normalized = _normalizePathLike(trimmed);
   final String lower = normalized.toLowerCase();
   if (lower.endsWith('.eeg') || lower.endsWith('.vmrk')) {
     return '${normalized.substring(0, normalized.length - 4)}.vhdr';
   }
-  return trimmed;
+  return normalized;
 }
 
 Future<ParsedSignalData> loadDatasetSignal(
@@ -212,7 +214,8 @@ Future<ParsedSignalData> loadDatasetSignal(
     eeglabMetadataPathForSelection(path),
   );
   final String resolvedSourceDescription =
-      sourceDescription ?? (normalizedPath.isEmpty ? 'synthetic' : normalizedPath);
+      sourceDescription ??
+      (normalizedPath.isEmpty ? 'synthetic' : normalizedPath);
   final String normalizedSourceDescription = brainVisionHeaderPathForSelection(
     eeglabMetadataPathForSelection(resolvedSourceDescription),
   );
@@ -224,7 +227,8 @@ Future<ParsedSignalData> loadDatasetSignal(
 
   final String lowerPath = normalizedSourceDescription.toLowerCase();
   if (lowerPath.endsWith('.edf')) {
-    final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);
+    final Uint8List bytes =
+        fileBytes ?? await readBytesFromPath(normalizedPath);
     return parseEdfBytes(bytes, sourceDescription: normalizedSourceDescription);
   }
   if (lowerPath.endsWith('.cnt')) {
@@ -243,7 +247,8 @@ Future<ParsedSignalData> loadDatasetSignal(
     );
   }
   if (lowerPath.endsWith('.set')) {
-    final Uint8List bytes = fileBytes ?? await readBytesFromPath(normalizedPath);
+    final Uint8List bytes =
+        fileBytes ?? await readBytesFromPath(normalizedPath);
     final ParsedEeglabSetData parsedSet = parseEeglabSetBytes(
       bytes,
       sourceDescription: normalizedSourceDescription,
@@ -291,14 +296,12 @@ Future<ParsedSignalData> loadDatasetSignal(
       siblingName: header.markerFileName,
     );
     final Uint8List eegBytes = await readBytesFromPath(eegPath);
-    final String vmrkText =
-        vmrkPath.isEmpty ? '' : await readTextFromPath(vmrkPath);
+    final String vmrkText = vmrkPath.isEmpty
+        ? ''
+        : await readTextFromPath(vmrkPath);
     final List<TimeMarker> markers = vmrkText.trim().isEmpty
         ? const <TimeMarker>[]
-        : parseBrainVisionMarkerText(
-            vmrkText,
-            sampleRate: header.sampleRate,
-          );
+        : parseBrainVisionMarkerText(vmrkText, sampleRate: header.sampleRate);
     return parseBrainVisionEegBytes(
       eegBytes,
       metadata: header,
@@ -351,7 +354,9 @@ ParsedSignalData parseSignalText(
       .reduce((int left, int right) => left < right ? left : right);
 
   if (_looksLikeTimeSeries(rows)) {
-    final List<double> timeColumn = rows.map((List<double> row) => row[0]).toList();
+    final List<double> timeColumn = rows
+        .map((List<double> row) => row[0])
+        .toList();
     final int channelCount = math.max(1, columnCount - 1);
     final List<List<double>> channelSamples = List<List<double>>.generate(
       channelCount,
@@ -426,28 +431,30 @@ ParsedBrainVisionHeader parseBrainVisionHeaderText(
       double.tryParse(common['SamplingInterval'] ?? '') ?? double.nan;
   final String dataFileName = (common['DataFile'] ?? '').trim();
   final String markerFileName = (common['MarkerFile'] ?? '').trim();
-  final String dataOrientation =
-      (common['DataOrientation'] ?? 'MULTIPLEXED').trim().toUpperCase();
-  final String binaryFormat =
-      (binary['BinaryFormat'] ?? 'INT_16').trim().toUpperCase();
+  final String dataOrientation = (common['DataOrientation'] ?? 'MULTIPLEXED')
+      .trim()
+      .toUpperCase();
+  final String binaryFormat = (binary['BinaryFormat'] ?? 'INT_16')
+      .trim()
+      .toUpperCase();
 
   if (channelCount <= 0 ||
       samplingIntervalMicros.isNaN ||
       samplingIntervalMicros <= 0 ||
       dataFileName.isEmpty) {
-    throw FormatException('BrainVision header in $sourceDescription is incomplete.');
+    throw FormatException(
+      'BrainVision header in $sourceDescription is incomplete.',
+    );
   }
 
   final double sampleRate = 1000000.0 / samplingIntervalMicros;
-  final List<String> channelLabels = List<String>.generate(
-    channelCount,
-    (int index) {
-      final String line = channels['Ch${index + 1}'] ?? '';
-      final String label = line.split(',').first.trim();
-      return label.isEmpty ? 'Ch ${index + 1}' : label;
-    },
-    growable: false,
-  );
+  final List<String> channelLabels = List<String>.generate(channelCount, (
+    int index,
+  ) {
+    final String line = channels['Ch${index + 1}'] ?? '';
+    final String label = line.split(',').first.trim();
+    return label.isEmpty ? 'Ch ${index + 1}' : label;
+  }, growable: false);
 
   return ParsedBrainVisionHeader(
     channelCount: channelCount,
@@ -484,8 +491,9 @@ List<TimeMarker> parseBrainVisionMarkerText(
     final String kind = parts[0].trim();
     final String label = parts[1].trim().isEmpty ? kind : parts[1].trim();
     final int position = int.tryParse(parts[2].trim()) ?? 0;
-    final int points =
-        parts.length >= 4 ? (int.tryParse(parts[3].trim()) ?? 0) : 0;
+    final int points = parts.length >= 4
+        ? (int.tryParse(parts[3].trim()) ?? 0)
+        : 0;
     if (position <= 0) {
       continue;
     }
@@ -515,8 +523,8 @@ ParsedSignalData parseBrainVisionEegBytes(
     'UINT_16' => 2,
     'IEEE_FLOAT_32' => 4,
     _ => throw FormatException(
-        'BrainVision binary format ${metadata.binaryFormat} is not supported yet.',
-      ),
+      'BrainVision binary format ${metadata.binaryFormat} is not supported yet.',
+    ),
   };
   final int totalValues = bytes.lengthInBytes ~/ bytesPerSample;
   if (metadata.channelCount <= 0 ||
@@ -537,7 +545,11 @@ ParsedSignalData parseBrainVisionEegBytes(
 
   int offset = 0;
   if (metadata.dataOrientation == 'VECTORIZED') {
-    for (int channelIndex = 0; channelIndex < metadata.channelCount; channelIndex++) {
+    for (
+      int channelIndex = 0;
+      channelIndex < metadata.channelCount;
+      channelIndex++
+    ) {
       for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
         channelSamples[channelIndex][sampleIndex] = _brainVisionValueAt(
           data,
@@ -549,7 +561,11 @@ ParsedSignalData parseBrainVisionEegBytes(
     }
   } else {
     for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
-      for (int channelIndex = 0; channelIndex < metadata.channelCount; channelIndex++) {
+      for (
+        int channelIndex = 0;
+        channelIndex < metadata.channelCount;
+        channelIndex++
+      ) {
         channelSamples[channelIndex][sampleIndex] = _brainVisionValueAt(
           data,
           offset,
@@ -574,7 +590,9 @@ ParsedSignalData parseEdfBytes(
   required String sourceDescription,
 }) {
   if (bytes.length < 256) {
-    throw const FormatException('EDF file is too small to contain a valid header.');
+    throw const FormatException(
+      'EDF file is too small to contain a valid header.',
+    );
   }
 
   final ByteData data = ByteData.sublistView(bytes);
@@ -598,27 +616,35 @@ ParsedSignalData parseEdfBytes(
     throw const FormatException('No non-annotation EDF channels were found.');
   }
 
-  final double targetSampleRate =
-      dataSignals.first.sampleRate(header.recordDurationSeconds);
+  final double targetSampleRate = dataSignals.first.sampleRate(
+    header.recordDurationSeconds,
+  );
   final List<_EdfSignalHeader> selectedSignals = dataSignals
       .where(
         (_EdfSignalHeader signal) =>
-            (signal.sampleRate(header.recordDurationSeconds) - targetSampleRate).abs() <
+            (signal.sampleRate(header.recordDurationSeconds) - targetSampleRate)
+                .abs() <
             0.001,
       )
       .toList(growable: false);
   final Map<int, int> selectedChannelIndexBySignalIndex = <int, int>{};
   for (int signalIndex = 0; signalIndex < signals.length; signalIndex++) {
     final _EdfSignalHeader signal = signals[signalIndex];
-    for (int channelIndex = 0; channelIndex < selectedSignals.length; channelIndex++) {
+    for (
+      int channelIndex = 0;
+      channelIndex < selectedSignals.length;
+      channelIndex++
+    ) {
       if (identical(selectedSignals[channelIndex], signal)) {
         selectedChannelIndexBySignalIndex[signalIndex] = channelIndex;
         break;
       }
     }
   }
-  final int recordByteSize =
-      signals.fold<int>(0, (int sum, _EdfSignalHeader signal) => sum + signal.samplesPerRecord * 2);
+  final int recordByteSize = signals.fold<int>(
+    0,
+    (int sum, _EdfSignalHeader signal) => sum + signal.samplesPerRecord * 2,
+  );
   final int totalSamples =
       header.numDataRecords * selectedSignals.first.samplesPerRecord;
   final List<List<double>> channelSamples = List<List<double>>.generate(
@@ -637,10 +663,17 @@ ParsedSignalData parseEdfBytes(
       final int? channelIndex = selectedChannelIndexBySignalIndex[signalIndex];
 
       if (channelIndex != null) {
-        for (int sampleIndex = 0; sampleIndex < signal.samplesPerRecord; sampleIndex++) {
-          final int rawValue = data.getInt16(signalStart + (sampleIndex * 2), Endian.little);
-          channelSamples[channelIndex][outputIndexes[channelIndex]++] =
-              signal.toPhysicalValue(rawValue);
+        for (
+          int sampleIndex = 0;
+          sampleIndex < signal.samplesPerRecord;
+          sampleIndex++
+        ) {
+          final int rawValue = data.getInt16(
+            signalStart + (sampleIndex * 2),
+            Endian.little,
+          );
+          channelSamples[channelIndex][outputIndexes[channelIndex]++] = signal
+              .toPhysicalValue(rawValue);
         }
       }
       final _EdfSignalHeader? annotationSignal =
@@ -708,11 +741,9 @@ Uint8List _normalizeEdfAnnotationBytes(Uint8List bytes) {
     }
   }
   if (oddCount > 0 && oddZeroCount / oddCount > 0.9) {
-    return Uint8List.fromList(
-      <int>[
-        for (int index = 0; index < bytes.length; index += 2) bytes[index],
-      ],
-    );
+    return Uint8List.fromList(<int>[
+      for (int index = 0; index < bytes.length; index += 2) bytes[index],
+    ]);
   }
   return bytes;
 }
@@ -747,23 +778,25 @@ List<TimeMarker> _parseEdfTalEntry(List<int> entryBytes) {
     return const <TimeMarker>[];
   }
 
-  return annotations.map((String label) {
-    return TimeMarker(
-      onsetMicros: onsetMicros,
-      durationMicros: durationMicros,
-      label: label,
-      markerType: _edfAnnotationMarkerType(label, durationMicros: durationMicros),
-      attributes: const <String, dynamic>{
-        'brainstory.importSource': 'edf_annotation',
-      },
-    );
-  }).toList(growable: false);
+  return annotations
+      .map((String label) {
+        return TimeMarker(
+          onsetMicros: onsetMicros,
+          durationMicros: durationMicros,
+          label: label,
+          markerType: _edfAnnotationMarkerType(
+            label,
+            durationMicros: durationMicros,
+          ),
+          attributes: const <String, dynamic>{
+            'brainstory.importSource': 'edf_annotation',
+          },
+        );
+      })
+      .toList(growable: false);
 }
 
-String _edfAnnotationMarkerType(
-  String label, {
-  required int durationMicros,
-}) {
+String _edfAnnotationMarkerType(String label, {required int durationMicros}) {
   final String lowerLabel = label.toLowerCase();
   if (lowerLabel.contains('artifact') ||
       lowerLabel.contains('bad') ||
@@ -846,16 +879,16 @@ double _brainVisionValueAt(ByteData data, int offset, String binaryFormat) {
     'UINT_16' => data.getUint16(offset, Endian.little).toDouble(),
     'IEEE_FLOAT_32' => data.getFloat32(offset, Endian.little).toDouble(),
     _ => throw FormatException(
-        'BrainVision binary format $binaryFormat is not supported yet.',
-      ),
+      'BrainVision binary format $binaryFormat is not supported yet.',
+    ),
   };
 }
 
 List<String> _splitRow(String line) {
   final String delimiter = _preferredDelimiter(line);
   return (delimiter.isEmpty
-      ? line.split(RegExp(r'\s+'))
-      : line.split(delimiter))
+          ? line.split(RegExp(r'\s+'))
+          : line.split(delimiter))
       .map((String token) => token.trim())
       .where((String token) => token.isNotEmpty)
       .toList(growable: false);
@@ -978,14 +1011,18 @@ ParsedEeglabSetData parseEeglabSetBytes(
   final int trialCount = math.max(1, _matInt(fields['trials']));
   final double sampleRate = _matDouble(fields['srate']);
   if (channelCount <= 0 || pointsPerTrial <= 0 || sampleRate <= 0) {
-    throw FormatException('EEGLAB metadata in $sourceDescription is incomplete.');
+    throw FormatException(
+      'EEGLAB metadata in $sourceDescription is incomplete.',
+    );
   }
 
   final String dataFileName = _matString(fields['datfile']).isNotEmpty
       ? _matString(fields['datfile'])
       : _matString(fields['data']);
   if (dataFileName.isEmpty) {
-    throw FormatException('EEGLAB dataset $sourceDescription does not point to a .fdt file.');
+    throw FormatException(
+      'EEGLAB dataset $sourceDescription does not point to a .fdt file.',
+    );
   }
 
   final List<String> channelLabels = _extractEeglabChannelLabels(
@@ -1030,8 +1067,15 @@ ParsedSignalData parseEeglabFdtBytes(
   // interleaved by channel for each timepoint.
   int offset = 0;
   for (int sampleIndex = 0; sampleIndex < totalSamples; sampleIndex++) {
-    for (int channelIndex = 0; channelIndex < metadata.channelCount; channelIndex++) {
-      channelSamples[channelIndex][sampleIndex] = data.getFloat32(offset, Endian.little);
+    for (
+      int channelIndex = 0;
+      channelIndex < metadata.channelCount;
+      channelIndex++
+    ) {
+      channelSamples[channelIndex][sampleIndex] = data.getFloat32(
+        offset,
+        Endian.little,
+      );
       offset += 4;
     }
   }
@@ -1052,36 +1096,51 @@ String _resolveSiblingPath({
   if (basePath.trim().isEmpty || siblingName.trim().isEmpty) {
     return '';
   }
-  final String normalizedSibling = siblingName.replaceAll('/', '\\');
-  if (RegExp(r'^[A-Za-z]:\\').hasMatch(normalizedSibling) ||
-      normalizedSibling.startsWith('\\\\')) {
-    return _normalizeWindowsPath(normalizedSibling);
+  final String normalizedBase = _normalizePathLike(basePath);
+  final String separator = _pathSeparatorFor(normalizedBase);
+  final String normalizedSibling = _normalizePathLike(
+    siblingName,
+    preferredSeparator: separator,
+  );
+  if (_isAbsolutePathLike(normalizedSibling)) {
+    return normalizedSibling;
   }
-  final String normalizedBase = _normalizeWindowsPath(basePath.replaceAll('/', '\\'));
-  final int separatorIndex = normalizedBase.lastIndexOf('\\');
+  final int separatorIndex = normalizedBase.lastIndexOf(separator);
   if (separatorIndex < 0) {
-    return _normalizeWindowsPath(normalizedSibling);
+    return normalizedSibling;
   }
   final String baseDirectory = normalizedBase.substring(0, separatorIndex + 1);
   final String baseFolderName = _lastPathSegment(
     baseDirectory.substring(0, math.max(0, baseDirectory.length - 1)),
   ).toLowerCase();
   final List<String> siblingParts = normalizedSibling
-      .split('\\')
+      .split(separator)
       .where((String part) => part.isNotEmpty)
       .toList(growable: false);
-  final String relativeSibling = siblingParts.length > 1 &&
+  final String relativeSibling =
+      siblingParts.length > 1 &&
           siblingParts.first.toLowerCase() == baseFolderName
-      ? siblingParts.skip(1).join('\\')
+      ? siblingParts.skip(1).join(separator)
       : normalizedSibling;
-  return _normalizeWindowsPath('$baseDirectory$relativeSibling');
+  return _normalizePathLike(
+    '$baseDirectory$relativeSibling',
+    preferredSeparator: separator,
+  );
 }
 
-String _normalizeWindowsPath(String path) {
-  final String normalized = path.replaceAll('/', '\\');
-  final bool hasDrive = RegExp(r'^[A-Za-z]:\\').hasMatch(normalized);
-  final bool isUnc = normalized.startsWith('\\\\');
-  final List<String> rawParts = normalized.split('\\');
+String _normalizePathLike(String path, {String? preferredSeparator}) {
+  final String trimmed = path.trim();
+  if (trimmed.isEmpty) {
+    return '';
+  }
+  final String separator = preferredSeparator ?? _pathSeparatorFor(trimmed);
+  final String otherSeparator = separator == '/' ? '\\' : '/';
+  final String normalized = trimmed.replaceAll(otherSeparator, separator);
+  final bool hasDrive = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(trimmed);
+  final bool isUnc = trimmed.startsWith(r'\\') || trimmed.startsWith('//');
+  final bool isPosixAbsolute =
+      !hasDrive && !isUnc && normalized.startsWith('/');
+  final List<String> rawParts = normalized.split(separator);
   final List<String> output = <String>[];
   int startIndex = 0;
   if (hasDrive) {
@@ -1091,6 +1150,9 @@ String _normalizeWindowsPath(String path) {
     output.add('');
     output.add('');
     startIndex = 2;
+  } else if (isPosixAbsolute) {
+    output.add('');
+    startIndex = 1;
   }
   for (int i = startIndex; i < rawParts.length; i++) {
     final String part = rawParts[i];
@@ -1114,20 +1176,45 @@ String _normalizeWindowsPath(String path) {
     return '';
   }
   if (isUnc) {
-    return '\\\\${output.skip(2).join('\\')}';
+    return '$separator$separator${output.skip(2).join(separator)}';
   }
-  return output.join('\\');
+  if (isPosixAbsolute && output.length == 1) {
+    return separator;
+  }
+  return output.join(separator);
+}
+
+String _pathSeparatorFor(String path) {
+  if (path.contains('/') && !RegExp(r'^[A-Za-z]:\\').hasMatch(path)) {
+    return '/';
+  }
+  if (path.contains(r'\')) {
+    final bool hasDrive = RegExp(r'^[A-Za-z]:\\').hasMatch(path);
+    final bool isUnc = path.startsWith(r'\\');
+    return hasDrive || isUnc ? '\\' : '/';
+  }
+  return '/';
+}
+
+bool _isAbsolutePathLike(String path) {
+  return path.startsWith('/') ||
+      RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path) ||
+      path.startsWith(r'\\') ||
+      path.startsWith('//');
 }
 
 String _lastPathSegment(String path) {
-  final String normalized = path.replaceAll('/', '\\');
-  final int separatorIndex = normalized.lastIndexOf('\\');
+  final String normalized = _normalizePathLike(path);
+  final int slashIndex = normalized.lastIndexOf('/');
+  final int backslashIndex = normalized.lastIndexOf(r'\');
+  final int separatorIndex = math.max(slashIndex, backslashIndex);
   return separatorIndex >= 0
       ? normalized.substring(separatorIndex + 1)
       : normalized;
 }
 
-List<String> _extractEeglabChannelLabels(_MatValue? value, {
+List<String> _extractEeglabChannelLabels(
+  _MatValue? value, {
   required int expectedCount,
 }) {
   if (value is _MatStructArrayValue) {
@@ -1168,8 +1255,8 @@ List<TimeMarker> _extractEeglabMarkers(
     final String kind = lowerLabel.contains('artifact')
         ? 'artifact'
         : lowerLabel.contains('boundary')
-            ? 'boundary'
-            : 'event';
+        ? 'boundary'
+        : 'event';
     markers.add(
       TimeMarker(
         onsetMicros: (((latency - 1.0) / sampleRate) * 1000000.0).round(),
@@ -1227,8 +1314,7 @@ class _MatStructArrayValue extends _MatValue {
 }
 
 class _MatFileReader {
-  _MatFileReader(this.bytes)
-      : data = ByteData.sublistView(bytes);
+  _MatFileReader(this.bytes) : data = ByteData.sublistView(bytes);
 
   final Uint8List bytes;
   final ByteData data;
@@ -1255,7 +1341,10 @@ class _MatFileReader {
         continue;
       }
       try {
-        final _ParsedMatrix matrix = _parseMatrix(header.dataOffset, header.numBytes);
+        final _ParsedMatrix matrix = _parseMatrix(
+          header.dataOffset,
+          header.numBytes,
+        );
         if (matrix.name.isNotEmpty) {
           result[matrix.name] = matrix.value;
         }
@@ -1279,10 +1368,14 @@ class _MatFileReader {
     final ByteData flagsData = ByteData.sublistView(flagsBytes);
     final int arrayClass = flagsData.getUint8(0);
 
-    final _MatElementHeader dimensionsHeader = _readElementHeader(flagsHeader.nextOffset);
+    final _MatElementHeader dimensionsHeader = _readElementHeader(
+      flagsHeader.nextOffset,
+    );
     final List<int> dimensions = _readIntValues(dimensionsHeader);
 
-    final _MatElementHeader nameHeader = _readElementHeader(dimensionsHeader.nextOffset);
+    final _MatElementHeader nameHeader = _readElementHeader(
+      dimensionsHeader.nextOffset,
+    );
     final String name = _readCharBytes(nameHeader);
 
     int contentOffset = nameHeader.nextOffset;
@@ -1291,10 +1384,18 @@ class _MatFileReader {
       final _MatElementHeader realHeader = _readElementHeader(contentOffset);
       value = _MatCharValue(_readCharacterData(realHeader, dimensions));
     } else if (arrayClass == _mxStructClass) {
-      final _MatElementHeader fieldNameLengthHeader = _readElementHeader(contentOffset);
-      final int fieldNameLength = _readIntValues(fieldNameLengthHeader).firstOrNull ?? 0;
-      final _MatElementHeader fieldNamesHeader = _readElementHeader(fieldNameLengthHeader.nextOffset);
-      final List<String> fieldNames = _readFieldNames(fieldNamesHeader, fieldNameLength);
+      final _MatElementHeader fieldNameLengthHeader = _readElementHeader(
+        contentOffset,
+      );
+      final int fieldNameLength =
+          _readIntValues(fieldNameLengthHeader).firstOrNull ?? 0;
+      final _MatElementHeader fieldNamesHeader = _readElementHeader(
+        fieldNameLengthHeader.nextOffset,
+      );
+      final List<String> fieldNames = _readFieldNames(
+        fieldNamesHeader,
+        fieldNameLength,
+      );
       contentOffset = fieldNamesHeader.nextOffset;
       final int elementCount = dimensions.isEmpty
           ? 1
@@ -1325,11 +1426,12 @@ class _MatFileReader {
     required int elementCount,
     Set<String>? selectedFields,
   }) {
-    final List<Map<String, _MatValue>> elements = List<Map<String, _MatValue>>.generate(
-      elementCount,
-      (_) => <String, _MatValue>{},
-      growable: false,
-    );
+    final List<Map<String, _MatValue>> elements =
+        List<Map<String, _MatValue>>.generate(
+          elementCount,
+          (_) => <String, _MatValue>{},
+          growable: false,
+        );
     int offset = contentOffset;
     for (int elementIndex = 0; elementIndex < elementCount; elementIndex++) {
       for (final String fieldName in fieldNames) {
@@ -1363,9 +1465,13 @@ class _MatFileReader {
     }
     final ByteData flagsData = ByteData.sublistView(flagsBytes);
     final int arrayClass = flagsData.getUint8(0);
-    final _MatElementHeader dimensionsHeader = _readElementHeader(flagsHeader.nextOffset);
+    final _MatElementHeader dimensionsHeader = _readElementHeader(
+      flagsHeader.nextOffset,
+    );
     final List<int> dimensions = _readIntValues(dimensionsHeader);
-    final _MatElementHeader nameHeader = _readElementHeader(dimensionsHeader.nextOffset);
+    final _MatElementHeader nameHeader = _readElementHeader(
+      dimensionsHeader.nextOffset,
+    );
     final int contentOffset = nameHeader.nextOffset;
     if (arrayClass == _mxCharClass) {
       final _MatElementHeader realHeader = _readElementHeader(contentOffset);
@@ -1413,9 +1519,14 @@ class _MatFileReader {
       _miInt8 || _miUint8 => header.numBytes,
       _ => 0,
     };
-    final List<double> values = List<double>.filled(count, 0.0, growable: false);
+    final List<double> values = List<double>.filled(
+      count,
+      0.0,
+      growable: false,
+    );
     for (int i = 0; i < count; i++) {
-      final int itemOffset = header.dataOffset +
+      final int itemOffset =
+          header.dataOffset +
           (switch (header.type) {
             _miDouble => i * 8,
             _miSingle || _miInt32 || _miUint32 => i * 4,
@@ -1452,7 +1563,8 @@ class _MatFileReader {
       final int count = header.numBytes ~/ 2;
       final List<int> codeUnits = List<int>.generate(
         count,
-        (int index) => data.getUint16(header.dataOffset + (index * 2), Endian.little),
+        (int index) =>
+            data.getUint16(header.dataOffset + (index * 2), Endian.little),
         growable: false,
       );
       return String.fromCharCodes(codeUnits).replaceAll('\u0000', '').trim();
@@ -1466,9 +1578,16 @@ class _MatFileReader {
       header.dataOffset + header.numBytes,
     );
     final List<String> fieldNames = <String>[];
-    for (int offset = 0; offset + fieldNameLength <= raw.length; offset += fieldNameLength) {
+    for (
+      int offset = 0;
+      offset + fieldNameLength <= raw.length;
+      offset += fieldNameLength
+    ) {
       final String fieldName = ascii
-          .decode(raw.sublist(offset, offset + fieldNameLength), allowInvalid: true)
+          .decode(
+            raw.sublist(offset, offset + fieldNameLength),
+            allowInvalid: true,
+          )
           .replaceAll('\u0000', '')
           .trim();
       if (fieldName.isNotEmpty) {
@@ -1494,10 +1613,7 @@ class _MatElementHeader {
 }
 
 class _ParsedMatrix {
-  const _ParsedMatrix({
-    required this.name,
-    required this.value,
-  });
+  const _ParsedMatrix({required this.name, required this.value});
 
   final String name;
   final _MatValue value;
@@ -1505,7 +1621,9 @@ class _ParsedMatrix {
 
 _EdfHeader _parseEdfHeader(Uint8List bytes) {
   String readAscii(int start, int length) {
-    return ascii.decode(bytes.sublist(start, start + length), allowInvalid: true).trim();
+    return ascii
+        .decode(bytes.sublist(start, start + length), allowInvalid: true)
+        .trim();
   }
 
   return _EdfHeader(
@@ -1516,9 +1634,14 @@ _EdfHeader _parseEdfHeader(Uint8List bytes) {
   );
 }
 
-List<_EdfSignalHeader> _parseEdfSignalHeaders(Uint8List bytes, _EdfHeader header) {
+List<_EdfSignalHeader> _parseEdfSignalHeaders(
+  Uint8List bytes,
+  _EdfHeader header,
+) {
   String readAscii(int start, int length) {
-    return ascii.decode(bytes.sublist(start, start + length), allowInvalid: true).trim();
+    return ascii
+        .decode(bytes.sublist(start, start + length), allowInvalid: true)
+        .trim();
   }
 
   int offset = 256;
@@ -1676,9 +1799,7 @@ class _DatasetAliasFieldState extends State<_DatasetAliasField> {
         children: <Widget>[
           Text(
             widget.sourceName,
-            style: const TextStyle(
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
           TextField(

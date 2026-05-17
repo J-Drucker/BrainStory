@@ -41,13 +41,44 @@ Future<void> deleteNodeSnapshotFromDisk({
   }
 }
 
-File _snapshotFile({
-  required String nodeId,
-  required String datasetId,
-}) {
-  final Directory root =
-      Directory('${Directory.current.path}${Platform.pathSeparator}.brainstory_cache');
-  final Directory nodeDir =
-      Directory('${root.path}${Platform.pathSeparator}nodes${Platform.pathSeparator}$nodeId');
-  return File('${nodeDir.path}${Platform.pathSeparator}$datasetId.json');
+File _snapshotFile({required String nodeId, required String datasetId}) {
+  final Directory root = _cacheRoot();
+  final Directory nodeDir = Directory(
+    _joinPath(<String>[root.path, 'nodes', nodeId]),
+  );
+  return File(_joinPath(<String>[nodeDir.path, '$datasetId.json']));
+}
+
+Directory _cacheRoot() {
+  final String? home = Platform.environment['HOME'];
+  if (Platform.isMacOS && home != null && home.trim().isNotEmpty) {
+    return Directory(
+      _joinPath(<String>[
+        home,
+        'Library',
+        'Application Support',
+        'BrainStory',
+        'cache',
+      ]),
+    );
+  }
+
+  final String appData =
+      Platform.environment['LOCALAPPDATA'] ??
+      Platform.environment['APPDATA'] ??
+      Platform.environment['USERPROFILE'] ??
+      '';
+  if (Platform.isWindows && appData.trim().isNotEmpty) {
+    return Directory(_joinPath(<String>[appData, 'BrainStory', 'cache']));
+  }
+
+  return Directory(
+    _joinPath(<String>[Directory.systemTemp.path, 'BrainStory', 'cache']),
+  );
+}
+
+String _joinPath(List<String> parts) {
+  return parts
+      .where((String part) => part.trim().isNotEmpty)
+      .join(Platform.pathSeparator);
 }
