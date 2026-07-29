@@ -222,8 +222,13 @@ if (-not (Test-Path $installerPath)) {
 
 $hash = Get-FileHash $installerPath -Algorithm SHA256
 $hashPath = "$installerPath.sha256"
-"$($hash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($installerPath))" |
-  Set-Content $hashPath -Encoding Ascii
+$checksumLine =
+  "$($hash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($installerPath))"
+[IO.File]::WriteAllText(
+  $hashPath,
+  "$checksumLine`n",
+  [Text.Encoding]::ASCII
+)
 
 Write-Host "Installer: $installerPath"
 Write-Host "SHA256:   $($hash.Hash.ToLowerInvariant())"
