@@ -1,0 +1,33 @@
+category,subcategory,node name,current implementation,visible
+Data Wrangling,Subcategory 1,Import,dart,yes
+Data Wrangling,Subcategory 1,Edit Channels,dart,yes
+Data Wrangling,Quality Control,Bridge Detector,dart,yes
+Data Wrangling,Subcategory 1,Resample,dart,yes
+Signal Processing,Frequency Domain,Bandpass Filter,dart,yes
+Signal Processing,Time Domain,Amplitude Features,dart,yes
+Signal Processing,Frequency Domain,PSD,dart,yes
+Signal Processing,Frequency Domain,PSD Average,dart,no
+Signal Processing,Frequency Domain,FOOOF,toy,yes
+Signal Processing,Frequency Domain,Spectral Features,dart,yes
+Signal Processing,Matrix Transformation,Microstates,toy,no
+Signal Processing,Matrix Transformation,PCA,toy,no
+Signal Processing,Matrix Transformation,ICA,toy,no
+Signal Processing,Matrix Transformation,Eigenvalue Decomposition,toy,no
+Signal Processing,Matrix Transformation,Source Reconstruction,toy,no
+Multimodal,Electrocardiography (EKG),Detect Peaks,toy,yes
+Multimodal,Electrocardiography (EKG),Interbeat-interval (IBI),toy,yes
+Multimodal,Electrocardiography (EKG),Heart rate variability (HRV),toy,yes
+Machine Learning,Subcategory 1,K-Means,toy,no
+Machine Learning,Subcategory 1,CNN,toy,no
+Markers and Metadata,Subcategory 1,Add/Remove Markers,dart,yes
+Markers and Metadata,Subcategory 1,Edit Channels and Markers,dart,yes
+Markers and Metadata,Subcategory 1,Recode Markers,dart,yes
+Markers and Metadata,Subcategory 1,Segmentation,dart,yes
+Markers and Metadata,Subcategory 1,Eye Blinks,pass-through (no change),yes
+Markers and Metadata,Subcategory 1,Sleep Staging,toy,yes
+Markers and Metadata,Subcategory 1,Realign,dart,yes
+Endpoints,Visualize,Impedances,toy,no
+Endpoints,Visualize,EEG Visualization,pass-through (no change),no
+Endpoints,Visualize,Debug Output,pass-through (no change),no
+Endpoints,Export,Export,dart,no
+Endpoints,Export,Publish,toy,no

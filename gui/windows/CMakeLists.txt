@@ -50,21 +50,23 @@ set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 find_program(CARGO_EXECUTABLE cargo)
-if(CARGO_EXECUTABLE)
-  set(BRAINSTORY_ENGINE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.toml")
-  set(BRAINSTORY_ENGINE_LOCKFILE "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.lock")
-  set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/debug")
-  set(BRAINSTORY_ENGINE_BUILD_ARGS build --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
-  set(BRAINSTORY_ENGINE_DLL "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll")
-  file(GLOB_RECURSE BRAINSTORY_ENGINE_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/src/*.rs")
-
-  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "Profile")
-    set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/release")
-    set(BRAINSTORY_ENGINE_BUILD_ARGS build --release --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
-    set(BRAINSTORY_ENGINE_DLL "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll")
-  endif()
+if(NOT CARGO_EXECUTABLE)
+  message(FATAL_ERROR
+    "Cargo is required to build BrainStory's native engine. "
+    "Install Rust from https://rustup.rs and restart the terminal.")
 endif()
+set(BRAINSTORY_ENGINE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.toml")
+set(BRAINSTORY_ENGINE_LOCKFILE "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.lock")
+set(BRAINSTORY_ENGINE_BUILD_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/build.rs")
+# Visual Studio is a multi-configuration generator, so CMAKE_BUILD_TYPE is
+# empty even for a Flutter release build. Build one optimized engine for every
+# Windows configuration to keep the selected DLL deterministic.
+set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/release")
+set(BRAINSTORY_ENGINE_BUILD_ARGS build --release --locked --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
+set(BRAINSTORY_ENGINE_DLL "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll")
+file(GLOB_RECURSE BRAINSTORY_ENGINE_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/src/*.rs"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/vendor/libeep/src/*")
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -104,11 +106,9 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
-if(CARGO_EXECUTABLE)
-  install(FILES "${BRAINSTORY_ENGINE_OUTPUT_DIR}/brainstory_engine.dll"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
-endif()
+install(FILES "${BRAINSTORY_ENGINE_DLL}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")

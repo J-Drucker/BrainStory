@@ -166,6 +166,8 @@ class SegmentationNodeType extends NodeType {
     final Map<String, dynamic> includedMarkers = Map<String, dynamic>.from(
       params['includedMarkers'] as Map? ?? <String, dynamic>{},
     );
+    final Map<String, dynamic>? previousRunParams =
+        _previousRunParamsForDataset(params, dataset.id);
     final List<SignalSegmentData> segments;
 
     switch (mode) {
@@ -197,14 +199,22 @@ class SegmentationNodeType extends NodeType {
         break;
       case 'events':
       default:
-        final List<SignalSegmentData> eventSegments = _buildEventSegments(
-          timeSeries: timeSeries,
-          includedMarkers: includedMarkers,
-          windowStartMs:
-              (params['eventWindowStartMs'] as num?)?.toDouble() ?? -200.0,
-          windowStopMs:
-              (params['eventWindowStopMs'] as num?)?.toDouble() ?? 800.0,
-        );
+        final List<SignalSegmentData> eventSegments =
+            _canReuseEventSegmentsForBaselineOnlyChange(
+              params: params,
+              previousRunParams: previousRunParams,
+              existingSegmented: dataset.segmentedTimeSeries,
+            )
+            ? _reuseExistingEventSegments(dataset.segmentedTimeSeries!)
+            : _buildEventSegments(
+                timeSeries: timeSeries,
+                includedMarkers: includedMarkers,
+                windowStartMs:
+                    (params['eventWindowStartMs'] as num?)?.toDouble() ??
+                    -200.0,
+                windowStopMs:
+                    (params['eventWindowStopMs'] as num?)?.toDouble() ?? 800.0,
+              );
         segments = params['eventApplyBaseline'] as bool? ?? false
             ? _baselineCorrectEventSegments(
                 timeSeries: timeSeries,
@@ -321,6 +331,86 @@ Map<String, dynamic> _precomputeConditionAverages({
     };
   }
   return averages;
+}
+
+Map<String, dynamic>? _previousRunParamsForDataset(
+  Map<String, dynamic> params,
+  String datasetId,
+) {
+  final Map<String, dynamic> byDataset = Map<String, dynamic>.from(
+    params['_lastRunParamsByDataset'] as Map? ?? const <String, dynamic>{},
+  );
+  final dynamic rawParams = byDataset[datasetId];
+  if (rawParams is Map) {
+    return Map<String, dynamic>.from(rawParams);
+  }
+  return null;
+}
+
+bool _canReuseEventSegmentsForBaselineOnlyChange({
+  required Map<String, dynamic> params,
+  required Map<String, dynamic>? previousRunParams,
+  required SegmentedTimeSeriesData? existingSegmented,
+}) {
+  if (previousRunParams == null ||
+      existingSegmented == null ||
+      existingSegmented.segments.isEmpty ||
+      (params['mode'] ?? 'events').toString() != 'events' ||
+      (previousRunParams['mode'] ?? 'events').toString() != 'events') {
+    return false;
+  }
+
+  const Set<String> ignoredKeys = <String>{
+    'eventApplyBaseline',
+    'eventBaselineConfigured',
+    'eventBaselineStartMs',
+    'eventBaselineStopMs',
+    'selectedDatasetIds',
+    'storagePolicy',
+  };
+  final Set<String> keys = <String>{
+    ...params.keys.where((String key) => !key.startsWith('_')),
+    ...previousRunParams.keys.where((String key) => !key.startsWith('_')),
+  }..removeAll(ignoredKeys);
+
+  for (final String key in keys) {
+    if (!_paramValuesEquivalent(params[key], previousRunParams[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _paramValuesEquivalent(dynamic left, dynamic right) {
+  if (left is num && right is num) {
+    return (left.toDouble() - right.toDouble()).abs() < 0.000001;
+  }
+  if (left is Map || right is Map || left is List || right is List) {
+    return left.toString() == right.toString();
+  }
+  return left == right;
+}
+
+List<SignalSegmentData> _reuseExistingEventSegments(
+  SegmentedTimeSeriesData segmented,
+) {
+  return segmented.segments
+      .map((SignalSegmentData segment) {
+        if (segment.sourceStartSample != null &&
+            segment.sourceStopSampleExclusive != null) {
+          return segment.copyWith(channelSamples: const <List<double>>[]);
+        }
+        final int startSample = (segment.startSeconds * segmented.sampleRate)
+            .round();
+        final int stopSample = (segment.stopSeconds * segmented.sampleRate)
+            .round();
+        return segment.copyWith(
+          channelSamples: const <List<double>>[],
+          sourceStartSample: startSample,
+          sourceStopSampleExclusive: stopSample,
+        );
+      })
+      .toList(growable: false);
 }
 
 List<SignalSegmentData> _buildEventSegments({

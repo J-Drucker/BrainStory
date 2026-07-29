@@ -1,30 +1,22 @@
 import 'package:flutter/material.dart';
 
+import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import 'node_type.dart';
+import 'visualization_node.dart';
 
-class ImpedancesNodeType extends NodeType {
+class ImpedancesNodeType extends VisualizationNodeType {
   @override
   String get title => 'Impedances';
 
   @override
-  NodeCategory get category => NodeCategory.endpoints;
-
-  @override
-  String get subcategory => 'Visualize';
-
-  @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'display_mode': 'panel',
-      };
-
-  @override
-  List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
-
-  @override
-  List<PortSpec> get outputs => const <PortSpec>[];
+    'display_mode': 'window',
+    'impedance_channel': '',
+    'impedance_quantity': 'impedance',
+    'impedance_y_scale': 'linear',
+    'impedance_line_mode': 'line',
+  };
 
   @override
   Widget buildBody(
@@ -32,48 +24,98 @@ class ImpedancesNodeType extends NodeType {
     required Map<String, Dataset> datasets,
     required void Function(void Function()) setState,
   }) {
-    params.putIfAbsent('display_mode', () => 'panel');
+    for (final MapEntry<String, dynamic> entry in defaultParams.entries) {
+      params.putIfAbsent(entry.key, () => entry.value);
+    }
+    final List<String> channelLabels =
+        datasets.values
+            .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
+            .whereType<ImpedanceData>()
+            .expand((ImpedanceData data) => data.channelLabels)
+            .toSet()
+            .toList()
+          ..sort();
+    final String selectedChannel =
+        params['impedance_channel']?.toString() ?? '';
+    if (selectedChannel.isNotEmpty &&
+        !channelLabels.contains(selectedChannel)) {
+      params['impedance_channel'] = '';
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        const Text(
-          'Placeholder impedance viewer. This node will eventually extract impedances and graph them.',
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'impedance_channel',
+          labelText: 'Channel',
+          options: <NodeDropdownOption<String>>[
+            const NodeDropdownOption<String>(
+              value: '',
+              label: 'First available channel',
+            ),
+            ...channelLabels.map(
+              (String label) =>
+                  NodeDropdownOption<String>(value: label, label: label),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Display',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        RadioGroup<String>(
-          groupValue: params['display_mode']?.toString() ?? 'panel',
-          onChanged: (String? value) {
-            if (value == null) {
-              return;
-            }
-            setState(() {
-              params['display_mode'] = value;
-            });
-          },
-          child: Column(
-            children: const <Widget>[
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                title: Text('Show in panel'),
-                value: 'panel',
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: <Widget>[
+            SizedBox(
+              width: 150,
+              child: NodeParamDropdownField<String>(
+                params: params,
+                paramKey: 'impedance_quantity',
+                labelText: 'Quantity',
+                options: const <NodeDropdownOption<String>>[
+                  NodeDropdownOption<String>(
+                    value: 'impedance',
+                    label: 'Impedance',
+                  ),
+                  NodeDropdownOption<String>(
+                    value: 'admittance',
+                    label: 'Admittance',
+                  ),
+                ],
               ),
-              RadioListTile<String>(
-                contentPadding: EdgeInsets.zero,
-                title: Text('New window'),
-                value: 'window',
+            ),
+            SizedBox(
+              width: 128,
+              child: NodeParamDropdownField<String>(
+                params: params,
+                paramKey: 'impedance_y_scale',
+                labelText: 'Y axis',
+                options: const <NodeDropdownOption<String>>[
+                  NodeDropdownOption<String>(value: 'linear', label: 'Linear'),
+                  NodeDropdownOption<String>(value: 'log', label: 'Log10'),
+                ],
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Impedance parsing and graphing are not implemented yet.',
+            ),
+            SizedBox(
+              width: 176,
+              child: NodeParamDropdownField<String>(
+                params: params,
+                paramKey: 'impedance_line_mode',
+                labelText: 'Line',
+                options: const <NodeDropdownOption<String>>[
+                  NodeDropdownOption<String>(
+                    value: 'none',
+                    label: 'Points only',
+                  ),
+                  NodeDropdownOption<String>(value: 'line', label: 'Straight'),
+                  NodeDropdownOption<String>(
+                    value: 'smooth',
+                    label: 'Smooth spline',
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -81,7 +123,6 @@ class ImpedancesNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
-    await Future<void>.delayed(const Duration(milliseconds: 50));
     dataset.ram['impedances.config'] = Map<String, dynamic>.from(params);
   }
 }

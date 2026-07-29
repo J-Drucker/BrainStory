@@ -27,32 +27,42 @@ class ArtifactTemplatePreview extends StatelessWidget {
     required this.templates,
     required this.channelLabels,
     required this.channelCoordinates,
+    required this.pixelsPerSecond,
   });
 
   final List<ArtifactTemplateSummary> templates;
   final List<String> channelLabels;
   final Map<String, ChannelCoordinate> channelCoordinates;
+  final double pixelsPerSecond;
 
   @override
   Widget build(BuildContext context) {
-    final List<List<TopomapPointValue>> templatePointSets =
-        templates
-            .map(
-              (ArtifactTemplateSummary template) => _templateTopomapPoints(
-                template,
-                channelLabels: channelLabels,
-                channelCoordinates: channelCoordinates,
-              ),
-            )
-            .toList(growable: false);
-    final bool hasTopomapData =
-        templatePointSets.any((List<TopomapPointValue> points) => points.length >= 3);
+    final List<List<TopomapPointValue>> templatePointSets = templates
+        .map(
+          (ArtifactTemplateSummary template) => _templateTopomapPoints(
+            template,
+            channelLabels: channelLabels,
+            channelCoordinates: channelCoordinates,
+          ),
+        )
+        .toList(growable: false);
+    final bool hasTopomapData = templatePointSets.any(
+      (List<TopomapPointValue> points) => points.length >= 3,
+    );
     final TopomapColorScale sharedScale = _artifactTemplateTopomapScale();
     final TopomapValueBounds sharedBounds = _artifactTemplateSharedBounds(
       templatePointSets,
     );
+    final double waveformWidth = templates
+        .map(
+          (ArtifactTemplateSummary template) =>
+              (template.durationMicros / 1000000.0) * pixelsPerSecond,
+        )
+        .fold<double>(0, math.max)
+        .clamp(80.0, 280.0);
 
     return Container(
+      width: hasTopomapData ? double.infinity : waveformWidth + 20,
       height: hasTopomapData ? 308 : 132,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.18),
@@ -64,7 +74,9 @@ class ArtifactTemplatePreview extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            hasTopomapData ? 'Current template topomap' : 'Current template summary',
+            hasTopomapData
+                ? 'Current template topomap'
+                : 'Current template summary',
             style: const TextStyle(
               color: Colors.white70,
               fontWeight: FontWeight.w600,
@@ -77,14 +89,18 @@ class ArtifactTemplatePreview extends StatelessWidget {
                     builder: (BuildContext context, BoxConstraints constraints) {
                       final double cardWidth = templates.length == 1
                           ? constraints.maxWidth
-                          : (constraints.maxWidth * 0.78).clamp(220.0, 260.0).toDouble();
+                          : (constraints.maxWidth * 0.78)
+                                .clamp(220.0, 260.0)
+                                .toDouble();
                       return ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: templates.length,
                         separatorBuilder: (_, __) => const SizedBox(width: 10),
                         itemBuilder: (BuildContext context, int index) {
-                          final ArtifactTemplateSummary template = templates[index];
-                          final List<TopomapPointValue> points = templatePointSets[index];
+                          final ArtifactTemplateSummary template =
+                              templates[index];
+                          final List<TopomapPointValue> points =
+                              templatePointSets[index];
                           if (points.length < 3) {
                             return SizedBox(
                               width: cardWidth,
@@ -100,9 +116,9 @@ class ArtifactTemplatePreview extends StatelessWidget {
                                 color: Colors.white.withValues(alpha: 0.03),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: artifactTemplateColor(template.label).withValues(
-                                    alpha: 0.22,
-                                  ),
+                                  color: artifactTemplateColor(
+                                    template.label,
+                                  ).withValues(alpha: 0.22),
                                 ),
                               ),
                               child: Padding(
@@ -113,7 +129,9 @@ class ArtifactTemplatePreview extends StatelessWidget {
                                     Text(
                                       template.label,
                                       style: TextStyle(
-                                        color: artifactTemplateColor(template.label),
+                                        color: artifactTemplateColor(
+                                          template.label,
+                                        ),
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
@@ -278,9 +296,7 @@ int _peakGfpSampleIndex(List<List<double>> channels) {
 }
 
 class _ArtifactTemplateWaveformFallback extends StatelessWidget {
-  const _ArtifactTemplateWaveformFallback({
-    required this.templates,
-  });
+  const _ArtifactTemplateWaveformFallback({required this.templates});
 
   final List<ArtifactTemplateSummary> templates;
 
@@ -294,9 +310,7 @@ class _ArtifactTemplateWaveformFallback extends StatelessWidget {
 }
 
 class _ArtifactTemplatePainter extends CustomPainter {
-  const _ArtifactTemplatePainter({
-    required this.templates,
-  });
+  const _ArtifactTemplatePainter({required this.templates});
 
   final List<ArtifactTemplateSummary> templates;
 

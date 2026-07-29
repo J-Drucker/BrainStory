@@ -13,13 +13,13 @@ import 'package:brainstory_gui/nodes/add_remove_markers_node.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
 import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_coordinates_node.dart';
-import 'package:brainstory_gui/nodes/edit_channels_node.dart';
-import 'package:brainstory_gui/nodes/edit_channels_and_markers_node.dart';
 import 'package:brainstory_gui/nodes/amplitude_features_node.dart';
+import 'package:brainstory_gui/nodes/edit_channels_node.dart';
 import 'package:brainstory_gui/nodes/export_edf_node.dart';
 import 'package:brainstory_gui/nodes/eye_blinks_node.dart';
 import 'package:brainstory_gui/nodes/fooof_node.dart';
 import 'package:brainstory_gui/nodes/import_node.dart';
+import 'package:brainstory_gui/nodes/impedances_node.dart';
 import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
@@ -87,7 +87,7 @@ void main() {
     expect(logic.recentRunJobs.value.first.state, RunJobState.done);
   });
 
-  testWidgets('canvas shows a modal resource lock while a run initializes', (
+  testWidgets('canvas shows preparing work without modal lock', (
     WidgetTester tester,
   ) async {
     final CanvasLogic logic = CanvasLogic();
@@ -102,15 +102,16 @@ void main() {
       ),
     );
 
-    expect(find.text('Initializing resources'), findsOneWidget);
     expect(find.text('Running PSD'), findsOneWidget);
+    expect(find.text('Preparing'), findsOneWidget);
+    expect(find.text('Initializing resources'), findsNothing);
     expect(
       find.byWidgetPredicate(
         (Widget widget) =>
             widget is ModalBarrier &&
             widget.semanticsLabel == 'BrainStory is busy',
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 
@@ -456,6 +457,33 @@ void main() {
     );
   });
 
+  test('impedance visualization selects imported impedance datasets', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImpedancesNodeType());
+    final NodeModel node = logic.nodes.single;
+    final Dataset dataset = Dataset('dataset-1', label: 'PVT');
+    dataset.timeSeries = TimeSeriesData(
+      samples: const <double>[0.0],
+      sampleRate: 256.0,
+      channelLabels: const <String>['Cz'],
+      impedanceData: ImpedanceData(
+        channelLabels: const <String>['Cz'],
+        measurementTimesMicros: const <int>[0, 2000000],
+        ohmsByChannel: const <List<double?>>[
+          <double?>[10000.0, 12000.0],
+        ],
+      ),
+    );
+    logic.datasets[dataset.id] = dataset;
+    node.datasetStates[dataset.id] = DatasetState.done;
+
+    expect(
+      logic.visualizationViewForNodeAndDatasets(node, <Dataset>[dataset]),
+      'impedances',
+    );
+    expect(logic.visualizationSourceRefsForNode(node.id), hasLength(1));
+  });
+
   test('artifact identity and change sets serialize cleanly', () {
     const ArtifactIdentity identity = ArtifactIdentity(
       artifactId: 'artifact-node-2-dataset-1-signal',
@@ -656,15 +684,26 @@ void main() {
     expect(spectrumIdentity!.producerNodeId, psdNode.id);
     expect(spectrumIdentity.datasetId, dataset.id);
     expect(spectrumIdentity.artifactId, '${psdNode.id}:${dataset.id}:spectrum');
+    final NodeModel markerNode = logic.nodes.firstWhere(
+      (NodeModel node) =>
+          node.type is AddRemoveMarkersNodeType &&
+          node.params['generatedMarkerLabel'] == 'FFT Window',
+    );
+    final NodeModel segmentationNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is SegmentationNodeType,
+    );
+    expect(markerNode.datasetStates[dataset.id], DatasetState.done);
+    expect(segmentationNode.datasetStates[dataset.id], DatasetState.done);
+    expect(psdNode.datasetStates[dataset.id], DatasetState.done);
     expect(
       spectrumIdentity.sourceArtifactIds,
-      contains('import-node:dataset-1:timeSeries'),
+      contains('${segmentationNode.id}:${dataset.id}:segmentedTimeSeries'),
     );
     expect(
       dataset
           .artifactIdentityFor(BrainStoryArtifactKind.timeSeries)!
           .producerNodeId,
-      'import-node',
+      markerNode.id,
     );
   });
 
@@ -777,6 +816,151 @@ void main() {
     expect(siblingView.segmentedTimeSeries, isNull);
     expect(siblingView.timeSeries, isNotNull);
   });
+
+  test(
+    'saved segmentation baseline option updates graph-run segment samples',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-1', label: 'Example');
+      dataset.timeSeries = TimeSeriesData(
+        channelSamples: <List<double>>[
+          List<double>.generate(1000, (int index) => 100.0 + index.toDouble()),
+        ],
+        sampleRate: 1000,
+        channelLabels: const <String>['Cz'],
+        markers: const <TimeMarker>[
+          TimeMarker(
+            label: 'stim',
+            onsetMicros: 500000,
+            durationMicros: 0,
+            markerType: MarkerType.event,
+          ),
+        ],
+      );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(SegmentationNodeType());
+      logic.addNode(PSDNodeType());
+
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel segmentationNode = logic.nodes[1];
+      final NodeModel psdNode = logic.nodes[2];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': segmentationNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': segmentationNode.id,
+          'fromPort': 0,
+          'toNode': psdNode.id,
+          'toPort': 0,
+        },
+      ]);
+      importNode.datasetStates[dataset.id] = DatasetState.done;
+      segmentationNode.datasetStates[dataset.id] = DatasetState.ready;
+      psdNode.datasetStates[dataset.id] = DatasetState.done;
+      segmentationNode.params.addAll(<String, dynamic>{
+        'mode': 'events',
+        'eventWindowStartMs': -2.0,
+        'eventWindowStopMs': 2.0,
+        'eventApplyBaseline': false,
+        'includedMarkers': <String, dynamic>{'event|stim': true},
+      });
+
+      await logic.runThisStep(
+        segmentationNode.id,
+        datasetIds: <String>{dataset.id},
+      );
+      expect(
+        dataset.segmentedTimeSeries!
+            .channelSamplesForSegment(
+              dataset.segmentedTimeSeries!.segments.first,
+            )
+            .single,
+        <double>[598.0, 599.0, 600.0, 601.0],
+      );
+      dataset.timeSeries = dataset.timeSeries!.copyWith(
+        markers: const <TimeMarker>[],
+      );
+
+      logic.applyNodeParamsForTest(segmentationNode, <String, dynamic>{
+        ...segmentationNode.params,
+        'eventApplyBaseline': true,
+        'eventBaselineStartMs': -2.0,
+        'eventBaselineStopMs': 0.0,
+      });
+
+      expect(segmentationNode.datasetStates[dataset.id], DatasetState.stale);
+      expect(psdNode.datasetStates[dataset.id], DatasetState.stale);
+
+      await logic.runThisStep(
+        segmentationNode.id,
+        datasetIds: <String>{dataset.id},
+      );
+      final SignalSegmentData correctedSegment =
+          dataset.segmentedTimeSeries!.segments.first;
+      expect(correctedSegment.isSourceWindow, isFalse);
+      expect(correctedSegment.channelSamples.single, <double>[
+        -0.5,
+        0.5,
+        1.5,
+        2.5,
+      ]);
+    },
+  );
+
+  test(
+    'runThisStep refuses to recompute stale upstream dependencies',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-1', label: 'Example');
+      dataset.timeSeries = TimeSeriesData(
+        samples: List<double>.generate(128, (int index) => index.toDouble()),
+        sampleRate: 128,
+        channelLabels: const <String>['Cz'],
+      );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(SegmentationNodeType());
+      logic.addNode(PSDNodeType());
+
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel segmentationNode = logic.nodes[1];
+      final NodeModel psdNode = logic.nodes[2];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': segmentationNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': segmentationNode.id,
+          'fromPort': 0,
+          'toNode': psdNode.id,
+          'toPort': 0,
+        },
+      ]);
+      importNode.datasetStates[dataset.id] = DatasetState.done;
+      segmentationNode.datasetStates[dataset.id] = DatasetState.stale;
+      psdNode.datasetStates[dataset.id] = DatasetState.ready;
+
+      await expectLater(
+        logic.runThisStep(psdNode.id, datasetIds: <String>{dataset.id}),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message,
+            'message',
+            contains('Use Run From Start'),
+          ),
+        ),
+      );
+      expect(segmentationNode.datasetStates[dataset.id], DatasetState.stale);
+    },
+  );
 
   test('persistViewerEdits spawns a downstream edit markers node', () async {
     final CanvasLogic logic = CanvasLogic();
@@ -920,7 +1104,7 @@ void main() {
   );
 
   test(
-    'persistViewerEdits creates a combined edit node for channel and marker drafts',
+    'persistViewerEdits creates separate channel and marker edit nodes',
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -962,15 +1146,36 @@ void main() {
         },
       );
 
-      expect(message, 'Created Edit Channels and Markers.');
+      expect(message, 'Created Edit Channels -> Edit Markers.');
       expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Cz']);
 
-      final NodeModel editNode = logic.nodes.firstWhere(
-        (NodeModel node) => node.type is EditChannelsAndMarkersNodeType,
+      final NodeModel channelNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is EditChannelsNodeType,
+      );
+      final NodeModel markerNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      );
+
+      expect(
+        logic.connections.any(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == sourceNode.id &&
+              connection['toNode'] == channelNode.id,
+        ),
+        isTrue,
+      );
+      expect(
+        logic.connections.any(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == channelNode.id &&
+              connection['toNode'] == markerNode.id,
+        ),
+        isTrue,
       );
       final Dataset materialized = Dataset(dataset.id, label: 'Materialized')
         ..timeSeries = TimeSeriesData.fromJson(dataset.timeSeries!.toJson());
-      await editNode.type.run(materialized, editNode.params);
+      await channelNode.type.run(materialized, channelNode.params);
+      await markerNode.type.run(materialized, markerNode.params);
 
       expect(materialized.timeSeries!.channelLabels, <String>['Fz']);
       expect(materialized.timeSeries!.markers, hasLength(1));
@@ -1073,6 +1278,8 @@ void main() {
       const String csv = '''
 channel,x,y,z
 Fpz,-0.11,112.43,41.36
+Fp1,30.7,107.17,41.45
+Fp2,-30.7,107.13,41.35
 Cz,0.32,3.4,147.92
 ''';
       final Map<String, ChannelCoordinate> coordinates =
@@ -1093,6 +1300,8 @@ Cz,0.32,3.4,147.92
       expect(fpz!.label, 'Fpz');
       expect(fpz.y, 112.43);
       expect(fpz.units, 'mm');
+      expect(coordinates['fp1']!.x, -30.7);
+      expect(coordinates['fp2']!.x, 30.7);
       expect(cz, isNotNull);
       expect(cz!.z, 147.92);
     },
@@ -1106,9 +1315,16 @@ Cz,0.32,3.4,147.92
         channelSamples: const <List<double>>[
           <double>[1, 2, 3],
           <double>[4, 5, 6],
+          <double>[7, 8, 9],
+          <double>[10, 11, 12],
         ],
         sampleRate: 1000,
-        channelLabels: const <String>['Fpz - AVG', 'NotAnElectrode'],
+        channelLabels: const <String>[
+          'Fpz - AVG',
+          'Fp1',
+          'Fp2',
+          'NotAnElectrode',
+        ],
       );
 
       await ChannelCoordinatesNodeType().run(dataset, <String, dynamic>{
@@ -1120,6 +1336,8 @@ Cz,0.32,3.4,147.92
       expect(coordinates.keys, contains('Fpz - AVG'));
       expect(coordinates['Fpz - AVG']!.label, 'Fpz - AVG');
       expect(coordinates['Fpz - AVG']!.units, 'mm');
+      expect(coordinates['Fp1']!.x, lessThan(0));
+      expect(coordinates['Fp2']!.x, greaterThan(0));
       expect(coordinates.keys, isNot(contains('NotAnElectrode')));
       expect(
         dataset.ram['channelCoordinates.params'],
@@ -1238,6 +1456,45 @@ time,Fz,Cz
 
     expect(output.length, input.length);
     expect(output.first, isNot(closeTo(input.first, 0.0001)));
+  });
+
+  test('applyBandpassFilter notch attenuates the requested frequency', () {
+    const double sampleRate = 256.0;
+    const double targetFrequency = 60.0;
+    final List<double> input = List<double>.generate(2048, (int i) {
+      final double t = i / sampleRate;
+      return math.sin(2 * math.pi * targetFrequency * t) +
+          (0.25 * math.sin(2 * math.pi * 10.0 * t));
+    });
+
+    final List<double> withoutNotch = applyBandpassFilter(
+      input,
+      sampleRate: sampleRate,
+      lowCutHz: 1.0,
+      highCutHz: 100.0,
+      steepness: 0.8,
+    );
+    final List<double> withNotch = applyBandpassFilter(
+      input,
+      sampleRate: sampleRate,
+      lowCutHz: 1.0,
+      highCutHz: 100.0,
+      steepness: 0.8,
+      notchHz: targetFrequency,
+    );
+
+    final double powerWithoutNotch = _singleFrequencyPower(
+      withoutNotch,
+      sampleRate,
+      targetFrequency,
+    );
+    final double powerWithNotch = _singleFrequencyPower(
+      withNotch,
+      sampleRate,
+      targetFrequency,
+    );
+
+    expect(powerWithNotch, lessThan(powerWithoutNotch * 0.2));
   });
 
   test('computeSpectrum identifies the dominant frequency of a sine wave', () {
@@ -1451,6 +1708,98 @@ time,Fz,Cz
   );
 
   test(
+    'PSD can use selected parent segments instead of creating windows',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-1', label: 'Example');
+      dataset.timeSeries = TimeSeriesData(
+        samples: List<double>.generate(
+          512,
+          (int index) => math.sin(2 * math.pi * 12 * index / 256),
+        ),
+        sampleRate: 256,
+        channelLabels: const <String>['Cz'],
+        markers: const <TimeMarker>[
+          TimeMarker(
+            label: 'stim',
+            onsetMicros: 500000,
+            durationMicros: 0,
+            markerType: MarkerType.event,
+          ),
+        ],
+      );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(SegmentationNodeType());
+      logic.addNode(PSDNodeType());
+
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel segmentationNode = logic.nodes[1];
+      final NodeModel psdNode = logic.nodes[2];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': segmentationNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': psdNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': segmentationNode.id,
+          'fromPort': 0,
+          'toNode': psdNode.id,
+          'toPort': 1,
+        },
+      ]);
+      importNode.datasetStates[dataset.id] = DatasetState.done;
+      segmentationNode.datasetStates[dataset.id] = DatasetState.ready;
+      psdNode.datasetStates[dataset.id] = DatasetState.ready;
+      segmentationNode.params.addAll(<String, dynamic>{
+        'mode': 'events',
+        'eventWindowStartMs': -100.0,
+        'eventWindowStopMs': 400.0,
+        'includedMarkers': <String, dynamic>{'event|stim': true},
+      });
+      psdNode.params.addAll(<String, dynamic>{
+        'useParentSegments': true,
+        'parentSegmentsNodeId': segmentationNode.id,
+        'outputMode': 'segments',
+      });
+
+      await logic.runFromStart(psdNode.id, datasetIds: <String>{dataset.id});
+
+      expect(
+        logic.nodes.where(
+          (NodeModel node) => node.type is SegmentationNodeType,
+        ),
+        hasLength(1),
+      );
+      expect(
+        logic.nodes.any(
+          (NodeModel node) =>
+              node.type is AddRemoveMarkersNodeType &&
+              node.params['generatedMarkerLabel'] == 'FFT Window',
+        ),
+        isFalse,
+      );
+      expect(segmentationNode.datasetStates[dataset.id], DatasetState.done);
+      expect(psdNode.datasetStates[dataset.id], DatasetState.done);
+      expect(dataset.spectrum, isNotNull);
+      expect(
+        dataset
+            .artifactIdentityFor(BrainStoryArtifactKind.spectrum)!
+            .sourceArtifactIds,
+        contains('${segmentationNode.id}:${dataset.id}:segmentedTimeSeries'),
+      );
+    },
+  );
+
+  test(
     'running standalone equal-window segmentation creates named window markers',
     () async {
       final CanvasLogic logic = CanvasLogic();
@@ -1608,6 +1957,34 @@ time,Fz,Cz
     },
   );
 
+  testWidgets('Edit Channels controls fit without internal overflow', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(385, 260));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: ChannelEditConfigEditor(
+              channelLabels: const <String>['ECG1'],
+              config: const <String, dynamic>{},
+              initialVisibleChannelIndices: const <int>[0],
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Import channel coordinates'), findsOneWidget);
+    expect(find.text('Rereference'), findsOneWidget);
+  });
+
   test('loadDatasetSignal imports the sample EDF fixture', () async {
     final ParsedSignalData parsed = await loadDatasetSignal(
       '..\\tests\\Zhao_Alex_2024-09-24_16-47-37_highpass_Segment_0.edf',
@@ -1653,9 +2030,15 @@ time,Fz,Cz
       }
     });
 
-    final File vhdrFile = File('${tempDir.path}\\sample.vhdr');
-    final File eegFile = File('${tempDir.path}\\sample.eeg');
-    final File vmrkFile = File('${tempDir.path}\\sample.vmrk');
+    final File vhdrFile = File(
+      '${tempDir.path}${Platform.pathSeparator}sample.vhdr',
+    );
+    final File eegFile = File(
+      '${tempDir.path}${Platform.pathSeparator}sample.eeg',
+    );
+    final File vmrkFile = File(
+      '${tempDir.path}${Platform.pathSeparator}sample.vmrk',
+    );
 
     await vhdrFile.writeAsString('''
 Brain Vision Data Exchange Header File Version 1.0
@@ -1719,6 +2102,14 @@ Mk2=Artifact,Bad Segment,11,5,0
       'channelCount': 2,
       'sampleCount': 3,
       'channelLabels': <String>['Fp1', 'Fp2'],
+      'impedance': <String, dynamic>{
+        'channelLabels': <String>['Fp1', 'Fp2'],
+        'measurementTimesMicros': <int>[2000, 4000],
+        'ohmsByChannel': <List<double?>>[
+          <double?>[12.5, 11.0],
+          <double?>[18.0, null],
+        ],
+      },
       'markers': <Map<String, dynamic>>[
         <String, dynamic>{
           'label': 'Stim',
@@ -1738,6 +2129,26 @@ Mk2=Artifact,Bad Segment,11,5,0
     ]);
     expect(parsed.markers.single.label, 'Stim');
     expect(parsed.markers.single.onsetMicros, 2000);
+    expect(parsed.impedanceData?.channelLabels, <String>['Fp1', 'Fp2']);
+    expect(parsed.impedanceData?.measurementTimesMicros, <int>[2000, 4000]);
+    expect(parsed.impedanceData?.ohmsByChannel, <List<double?>>[
+      <double?>[12.5, 11.0],
+      <double?>[18.0, null],
+    ]);
+
+    final TimeSeriesData restored = TimeSeriesData.fromJson(
+      TimeSeriesData(
+        channelSamples: parsed.channelSamples,
+        sampleRate: parsed.sampleRate,
+        channelLabels: parsed.channelLabels,
+        impedanceData: parsed.impedanceData,
+        markers: parsed.markers,
+      ).toJson(),
+    );
+    expect(restored.impedanceData?.ohmsByChannel, <List<double?>>[
+      <double?>[12.5, 11.0],
+      <double?>[18.0, null],
+    ]);
   });
 
   test('buildSingleChannelEdfBytes round-trips through EDF parsing', () async {
@@ -2782,4 +3193,21 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(node.markerChange.isEmpty, isTrue);
     expect(node.markerChange.rows, isEmpty);
   });
+}
+
+double _singleFrequencyPower(
+  List<double> samples,
+  double sampleRate,
+  double frequency,
+) {
+  final int start = samples.length ~/ 2;
+  double real = 0.0;
+  double imaginary = 0.0;
+  for (int i = start; i < samples.length; i++) {
+    final double phase = 2 * math.pi * frequency * i / sampleRate;
+    real += samples[i] * math.cos(phase);
+    imaginary -= samples[i] * math.sin(phase);
+  }
+  final int count = samples.length - start;
+  return (real * real + imaginary * imaginary) / (count * count);
 }

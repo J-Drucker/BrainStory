@@ -4,10 +4,13 @@ gui/.brainstory_cache/
 # Local tool state
 .dart-tool-home/
 .dart_tool/
+.DS_Store
+.idea/
 
 # Build outputs
 engine/target/
 gui/build/
+dist/
 
 # Local scratch files
 tmp_*.dart

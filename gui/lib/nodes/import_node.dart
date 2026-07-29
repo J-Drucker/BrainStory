@@ -17,6 +17,7 @@ class ParsedSignalData {
     required this.channelLabels,
     required this.sourceDescription,
     this.markers = const <TimeMarker>[],
+    this.impedanceData,
   });
 
   final List<List<double>> channelSamples;
@@ -24,6 +25,7 @@ class ParsedSignalData {
   final List<String> channelLabels;
   final String sourceDescription;
   final List<TimeMarker> markers;
+  final ImpedanceData? impedanceData;
 
   List<double> get samples =>
       channelSamples.isEmpty ? const <double>[] : channelSamples.first;
@@ -82,7 +84,7 @@ class ImportNodeType extends NodeType {
           ),
           const SizedBox(height: 12),
           const Text(
-            'CSV, TSV, whitespace-delimited text, EDF, ANT Neuro .cnt, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. ANT CNT imports use MNE/antio/libeep through BrainStory\'s Python helper. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
+            'CSV, TSV, whitespace-delimited text, EDF, ANT Neuro .cnt, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. ANT CNT imports use BrainStory\'s bundled native LIBEEP reader and preserve markers and impedance measurements. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
           ),
           const SizedBox(height: 12),
           const Text(
@@ -142,6 +144,7 @@ class ImportNodeType extends NodeType {
       channelSamples: parsed.channelSamples,
       sampleRate: parsed.sampleRate,
       channelLabels: parsed.channelLabels,
+      impedanceData: parsed.impedanceData,
       markers: parsed.markers,
       source: parsed.sourceDescription,
     );
@@ -244,6 +247,7 @@ Future<ParsedSignalData> loadDatasetSignal(
       channelLabels: imported.channelLabels,
       sourceDescription: imported.sourceDescription,
       markers: imported.markers,
+      impedanceData: imported.impedanceData,
     );
   }
   if (lowerPath.endsWith('.set')) {

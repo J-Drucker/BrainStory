@@ -14,10 +14,7 @@ Future<void> showChannelPositionsDialog(
       return Dialog(
         backgroundColor: const Color(0xFF111316),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: 960,
-            maxHeight: 760,
-          ),
+          constraints: const BoxConstraints(maxWidth: 960, maxHeight: 760),
           child: _ChannelPositionsDialog(dataset: dataset),
         ),
       );
@@ -25,21 +22,16 @@ Future<void> showChannelPositionsDialog(
   );
 }
 
-enum _TopomapValueAxis {
-  x,
-  y,
-  z,
-}
+enum _TopomapValueAxis { x, y, z }
 
 class _ChannelPositionsDialog extends StatefulWidget {
-  const _ChannelPositionsDialog({
-    required this.dataset,
-  });
+  const _ChannelPositionsDialog({required this.dataset});
 
   final Dataset dataset;
 
   @override
-  State<_ChannelPositionsDialog> createState() => _ChannelPositionsDialogState();
+  State<_ChannelPositionsDialog> createState() =>
+      _ChannelPositionsDialogState();
 }
 
 class _ChannelPositionsDialogState extends State<_ChannelPositionsDialog> {
@@ -123,7 +115,8 @@ class _ChannelPositionsDialogState extends State<_ChannelPositionsDialog> {
                               children: <Widget>[
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: <Widget>[
                                       const Text(
                                         'Scalp map',
@@ -156,7 +149,10 @@ class _ChannelPositionsDialogState extends State<_ChannelPositionsDialog> {
                             const SizedBox(height: 12),
                             Expanded(
                               child: InterpolatedTopomap(
-                                points: _topomapPointsForAxis(rows, _selectedAxis),
+                                points: _topomapPointsForAxis(
+                                  rows,
+                                  _selectedAxis,
+                                ),
                                 scale: _topomapScaleForAxis(_selectedAxis),
                                 bounds: _boundsForAxis(rows, _selectedAxis),
                               ),
@@ -185,10 +181,7 @@ class _ChannelPositionsDialogState extends State<_ChannelPositionsDialog> {
                       ),
                       child: Padding(
                         padding: const EdgeInsets.all(12),
-                        child: _ChannelPositionTable(
-                          rows: rows,
-                          units: units,
-                        ),
+                        child: _ChannelPositionTable(rows: rows, units: units),
                       ),
                     ),
                   ),
@@ -202,10 +195,7 @@ class _ChannelPositionsDialogState extends State<_ChannelPositionsDialog> {
 }
 
 class _AxisToggleBar extends StatelessWidget {
-  const _AxisToggleBar({
-    required this.selectedAxis,
-    required this.onSelected,
-  });
+  const _AxisToggleBar({required this.selectedAxis, required this.onSelected});
 
   final _TopomapValueAxis selectedAxis;
   final ValueChanged<_TopomapValueAxis> onSelected;
@@ -222,42 +212,44 @@ class _AxisToggleBar extends StatelessWidget {
         padding: const EdgeInsets.all(4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          children: _TopomapValueAxis.values.map((_TopomapValueAxis axis) {
-            final _AxisVisualSpec spec = _axisSpec(axis);
-            final bool selected = axis == selectedAxis;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: InkWell(
-                onTap: () => onSelected(axis),
-                borderRadius: BorderRadius.circular(999),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 120),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? spec.scale.palette.last.withValues(alpha: 0.22)
-                        : Colors.transparent,
+          children: _TopomapValueAxis.values
+              .map((_TopomapValueAxis axis) {
+                final _AxisVisualSpec spec = _axisSpec(axis);
+                final bool selected = axis == selectedAxis;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: InkWell(
+                    onTap: () => onSelected(axis),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: selected
-                          ? spec.scale.palette.last.withValues(alpha: 0.7)
-                          : Colors.white.withValues(alpha: 0.08),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? spec.scale.palette.last.withValues(alpha: 0.22)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: selected
+                              ? spec.scale.palette.last.withValues(alpha: 0.7)
+                              : Colors.white.withValues(alpha: 0.08),
+                        ),
+                      ),
+                      child: Text(
+                        spec.label,
+                        style: TextStyle(
+                          color: selected ? Colors.white : Colors.white70,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                   ),
-                  child: Text(
-                    spec.label,
-                    style: TextStyle(
-                      color: selected ? Colors.white : Colors.white70,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }).toList(growable: false),
+                );
+              })
+              .toList(growable: false),
         ),
       ),
     );
@@ -265,10 +257,7 @@ class _AxisToggleBar extends StatelessWidget {
 }
 
 class _ChannelPositionTable extends StatelessWidget {
-  const _ChannelPositionTable({
-    required this.rows,
-    required this.units,
-  });
+  const _ChannelPositionTable({required this.rows, required this.units});
 
   final List<_ChannelPositionRow> rows;
   final String units;
@@ -291,10 +280,8 @@ class _ChannelPositionTable extends StatelessWidget {
         Expanded(
           child: ListView.separated(
             itemCount: rows.length,
-            separatorBuilder: (_, __) => Divider(
-              height: 1,
-              color: Colors.white.withValues(alpha: 0.06),
-            ),
+            separatorBuilder: (_, __) =>
+                Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
             itemBuilder: (BuildContext context, int index) {
               final _ChannelPositionRow row = rows[index];
               return Padding(
@@ -357,34 +344,53 @@ class _ChannelPositionTableHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       children: <Widget>[
-        Expanded(
+        const Expanded(
           flex: 3,
           child: Text(
             'Channel',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
-        Expanded(
+        const Expanded(
           flex: 2,
-          child: Text(
-            'X',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
-          ),
+          child: _AxisHeaderCell(axis: _TopomapValueAxis.x),
         ),
-        Expanded(
+        const Expanded(
           flex: 2,
-          child: Text(
-            'Y',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
-          ),
+          child: _AxisHeaderCell(axis: _TopomapValueAxis.y),
         ),
-        Expanded(
+        const Expanded(
           flex: 2,
-          child: Text(
-            'Z',
-            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600),
+          child: _AxisHeaderCell(axis: _TopomapValueAxis.z),
+        ),
+      ],
+    );
+  }
+}
+
+class _AxisHeaderCell extends StatelessWidget {
+  const _AxisHeaderCell({required this.axis});
+
+  final _TopomapValueAxis axis;
+
+  @override
+  Widget build(BuildContext context) {
+    final _AxisVisualSpec spec = _axisSpec(axis);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _AxisOrientationIcon(axis: axis, colors: spec.scale.palette),
+        const SizedBox(width: 6),
+        Text(
+          spec.label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
@@ -392,11 +398,103 @@ class _ChannelPositionTableHeader extends StatelessWidget {
   }
 }
 
-class _CoordinateValueCell extends StatelessWidget {
-  const _CoordinateValueCell({
-    required this.value,
-    required this.color,
+class _AxisOrientationIcon extends StatelessWidget {
+  const _AxisOrientationIcon({required this.axis, required this.colors});
+
+  final _TopomapValueAxis axis;
+  final List<Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool sagittal = axis == _TopomapValueAxis.z;
+    return CustomPaint(
+      size: Size(sagittal ? 24 : 14, sagittal ? 12 : 24),
+      painter: _AxisOrientationIconPainter(sagittal: sagittal, colors: colors),
+    );
+  }
+}
+
+class _AxisOrientationIconPainter extends CustomPainter {
+  const _AxisOrientationIconPainter({
+    required this.sagittal,
+    required this.colors,
   });
+
+  final bool sagittal;
+  final List<Color> colors;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Rect paintBounds = Offset.zero & size;
+    final Paint fillPaint = Paint()
+      ..shader = LinearGradient(colors: colors).createShader(paintBounds)
+      ..style = PaintingStyle.fill;
+    final Paint strokePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.32)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8;
+
+    if (sagittal) {
+      final Rect ovalRect = Rect.fromLTWH(
+        1.0,
+        1.0,
+        size.width - 2,
+        size.height - 2,
+      );
+      canvas.drawOval(ovalRect, fillPaint);
+      canvas.drawOval(ovalRect, strokePaint);
+      return;
+    }
+
+    final double width = size.width;
+    final double height = size.height;
+    final Path path = Path()
+      ..moveTo(width * 0.5, height * 0.04)
+      ..cubicTo(
+        width * 0.2,
+        height * 0.12,
+        width * 0.08,
+        height * 0.38,
+        width * 0.08,
+        height * 0.55,
+      )
+      ..cubicTo(
+        width * 0.08,
+        height * 0.9,
+        width * 0.32,
+        height * 0.98,
+        width * 0.5,
+        height * 0.98,
+      )
+      ..cubicTo(
+        width * 0.68,
+        height * 0.98,
+        width * 0.92,
+        height * 0.9,
+        width * 0.92,
+        height * 0.55,
+      )
+      ..cubicTo(
+        width * 0.92,
+        height * 0.38,
+        width * 0.8,
+        height * 0.12,
+        width * 0.5,
+        height * 0.04,
+      )
+      ..close();
+    canvas.drawPath(path, fillPaint);
+    canvas.drawPath(path, strokePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AxisOrientationIconPainter oldDelegate) {
+    return oldDelegate.sagittal != sagittal || oldDelegate.colors != colors;
+  }
+}
+
+class _CoordinateValueCell extends StatelessWidget {
+  const _CoordinateValueCell({required this.value, required this.color});
 
   final double value;
   final Color color;
@@ -409,9 +507,7 @@ class _CoordinateValueCell extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: color.withValues(alpha: 0.5),
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
       child: Text(
         value.toStringAsFixed(2),
@@ -477,14 +573,20 @@ List<_ChannelPositionRow> _rowsForTimeSeries(TimeSeriesData? timeSeries) {
     orderedEntries.add(entry);
   }
 
-  final TopomapValueBounds xBounds = TopomapValueBounds.fromValues(
-    orderedEntries.map((MapEntry<String, ChannelCoordinate> entry) => entry.value.x),
+  final TopomapValueBounds xBounds = _symmetricBoundsForValues(
+    orderedEntries.map(
+      (MapEntry<String, ChannelCoordinate> entry) => entry.value.x,
+    ),
   );
-  final TopomapValueBounds yBounds = TopomapValueBounds.fromValues(
-    orderedEntries.map((MapEntry<String, ChannelCoordinate> entry) => entry.value.y),
+  final TopomapValueBounds yBounds = _symmetricBoundsForValues(
+    orderedEntries.map(
+      (MapEntry<String, ChannelCoordinate> entry) => entry.value.y,
+    ),
   );
-  final TopomapValueBounds zBounds = TopomapValueBounds.fromValues(
-    orderedEntries.map((MapEntry<String, ChannelCoordinate> entry) => entry.value.z),
+  final TopomapValueBounds zBounds = _symmetricBoundsForValues(
+    orderedEntries.map(
+      (MapEntry<String, ChannelCoordinate> entry) => entry.value.z,
+    ),
   );
 
   return orderedEntries
@@ -504,13 +606,15 @@ List<TopomapPointValue> _topomapPointsForAxis(
   List<_ChannelPositionRow> rows,
   _TopomapValueAxis axis,
 ) {
-  return rows.map((_ChannelPositionRow row) {
-    return TopomapPointValue(
-      label: row.label,
-      coordinate: row.coordinate,
-      value: _axisValue(row, axis),
-    );
-  }).toList(growable: false);
+  return rows
+      .map((_ChannelPositionRow row) {
+        return TopomapPointValue(
+          label: row.label,
+          coordinate: row.coordinate,
+          value: _axisValue(row, axis),
+        );
+      })
+      .toList(growable: false);
 }
 
 double _axisValue(_ChannelPositionRow row, _TopomapValueAxis axis) {
@@ -544,36 +648,53 @@ TopomapValueBounds _boundsForAxis(
 _AxisVisualSpec _axisSpec(_TopomapValueAxis axis) {
   switch (axis) {
     case _TopomapValueAxis.x:
-      return const _AxisVisualSpec(
+      const Color negativeColor = Color(0xFF3C7EBE);
+      const Color neutralColor = Color(0xFF7A7A7A);
+      const Color positiveColor = Color(0xFFA76C12);
+      return _AxisVisualSpec(
         label: 'X',
         description: 'Transverse / left-right',
         scale: TopomapColorScale(
-          startColor: Color(0xFF00E5FF),
-          endColor: Color(0xFFFF5252),
+          colors: <Color>[negativeColor, neutralColor, positiveColor],
           legendLabel: 'Left to right',
         ),
       );
     case _TopomapValueAxis.y:
-      return const _AxisVisualSpec(
+      const Color negativeColor = Color(0xFF628835);
+      const Color neutralColor = Color(0xFF7A7A7A);
+      const Color positiveColor = Color(0xFF9064AF);
+      return _AxisVisualSpec(
         label: 'Y',
         description: 'Posterior-anterior',
         scale: TopomapColorScale(
-          startColor: Color(0xFFFF4DFF),
-          endColor: Color(0xFF00E676),
+          colors: <Color>[negativeColor, neutralColor, positiveColor],
           legendLabel: 'Posterior to anterior',
         ),
       );
     case _TopomapValueAxis.z:
-      return const _AxisVisualSpec(
+      const Color negativeColor = Color(0xFF00908A);
+      const Color neutralColor = Color(0xFF7A7A7A);
+      const Color positiveColor = Color(0xFFB5596A);
+      return _AxisVisualSpec(
         label: 'Z',
         description: 'Craniocaudal / inferior-superior',
         scale: TopomapColorScale(
-          startColor: Color(0xFFFFFF66),
-          endColor: Color(0xFF40C4FF),
+          colors: <Color>[negativeColor, neutralColor, positiveColor],
           legendLabel: 'Inferior to superior',
         ),
       );
   }
+}
+
+TopomapValueBounds _symmetricBoundsForValues(Iterable<double> values) {
+  double maxAbs = 0;
+  for (final double value in values) {
+    maxAbs = maxAbs < value.abs() ? value.abs() : maxAbs;
+  }
+  if (maxAbs == 0) {
+    return const TopomapValueBounds(min: -1, max: 1);
+  }
+  return TopomapValueBounds(min: -maxAbs, max: maxAbs);
 }
 
 TopomapColorScale _topomapScaleForAxis(_TopomapValueAxis axis) {
@@ -585,9 +706,5 @@ Color _colorForAxis(
   double value,
   TopomapValueBounds bounds,
 ) {
-  return topomapColorForValue(
-    value,
-    bounds,
-    _topomapScaleForAxis(axis),
-  );
+  return topomapColorForValue(value, bounds, _topomapScaleForAxis(axis));
 }

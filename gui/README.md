@@ -1,16 +1,15 @@
 # brainstory_gui
 
-A new Flutter project.
+Flutter desktop UI for BrainStory.
 
-## Getting Started
+## ANT CNT Import
 
-This project is a starting point for a Flutter application.
+ANT Neuro `.cnt` files are imported natively by the Rust engine, which bundles
+an unmodified copy of LIBEEP. This preserves channel data, event markers, and
+time-stamped impedance measurements without requiring Python, MNE, or antio.
 
-A few resources to get you started if this is your first Flutter project:
+LIBEEP is LGPL-3.0 with ANT's static-linking addendum. Its source and license
+notices are in `../engine/vendor/libeep/`.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The app does not fall back to Python for ANT CNT imports. A missing native
+engine is reported immediately instead of launching an external importer.

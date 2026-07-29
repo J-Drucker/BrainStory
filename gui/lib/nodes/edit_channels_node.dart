@@ -20,8 +20,8 @@ class EditChannelsNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'channelEditsByDataset': <String, dynamic>{},
-      };
+    'channelEditsByDataset': <String, dynamic>{},
+  };
 
   static const String coordinateImportNone = 'none';
   static const String coordinateImportStandard = 'standard';
@@ -30,13 +30,13 @@ class EditChannelsNodeType extends NodeType {
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   Widget buildBody(
@@ -225,8 +225,10 @@ class EditChannelsNodeType extends NodeType {
       );
       final String rename = (edit['rename'] ?? '').toString().trim();
       final bool remove = edit['remove'] == true;
-      final String removeMode =
-          (edit['removeMode'] ?? 'delete').toString().trim().toLowerCase();
+      final String removeMode = (edit['removeMode'] ?? 'delete')
+          .toString()
+          .trim()
+          .toLowerCase();
       final String legacyPoolName = (edit['poolName'] ?? '').toString().trim();
 
       if (rename.isNotEmpty) {
@@ -307,7 +309,9 @@ class EditChannelsNodeType extends NodeType {
     ValueChanged<String>? warningSink,
   }) {
     final List<List<double>> sourceChannels = timeSeries.channels
-        .map((List<double> channel) => List<double>.from(channel, growable: false))
+        .map(
+          (List<double> channel) => List<double>.from(channel, growable: false),
+        )
         .toList(growable: false);
     final List<String> sourceLabels = _channelLabelsForSeries(timeSeries);
     final Map<String, dynamic> edits = Map<String, dynamic>.from(
@@ -344,10 +348,14 @@ class EditChannelsNodeType extends NodeType {
         edits['$index'] as Map? ?? const <String, dynamic>{},
       );
       final bool remove = edit['remove'] == true;
-      final String removeMode =
-          (edit['removeMode'] ?? 'delete').toString().trim().toLowerCase();
+      final String removeMode = (edit['removeMode'] ?? 'delete')
+          .toString()
+          .trim()
+          .toLowerCase();
       final String renamedLabel = (edit['rename'] ?? '').toString().trim();
-      final String label = renamedLabel.isEmpty ? sourceLabels[index] : renamedLabel;
+      final String label = renamedLabel.isEmpty
+          ? sourceLabels[index]
+          : renamedLabel;
 
       if (remove && removeMode == 'delete') {
         continue;
@@ -378,18 +386,19 @@ class EditChannelsNodeType extends NodeType {
         continue;
       }
       final List<int> addIndices = _intList(newChannel['addSourceIndices']);
-      final List<int> subtractIndices =
-          _intList(newChannel['subtractSourceIndices']);
+      final List<int> subtractIndices = _intList(
+        newChannel['subtractSourceIndices'],
+      );
       final bool normalize = newChannel['normalize'] == true;
 
       final List<int> effectiveAdd =
           addIndices.isNotEmpty || subtractIndices.isNotEmpty
-              ? addIndices
-              : (legacyPoolAssignments[name] ?? const <int>[]);
+          ? addIndices
+          : (legacyPoolAssignments[name] ?? const <int>[]);
       final List<int> effectiveSubtract =
           addIndices.isNotEmpty || subtractIndices.isNotEmpty
-              ? subtractIndices
-              : const <int>[];
+          ? subtractIndices
+          : const <int>[];
       final int totalInputs = effectiveAdd.length + effectiveSubtract.length;
       if (effectiveAdd.isEmpty && effectiveSubtract.isEmpty) {
         continue;
@@ -455,25 +464,22 @@ class EditChannelsNodeType extends NodeType {
     );
     final String coordinateImportMode =
         (map['coordinateImportMode'] ?? coordinateImportNone).toString();
-    final String rereferenceMode =
-        (map['rereferenceMode'] ?? rereferenceNone).toString();
+    final String rereferenceMode = (map['rereferenceMode'] ?? rereferenceNone)
+        .toString();
 
     return <String, dynamic>{
       'edits': edits.map<String, dynamic>(
-        (String key, dynamic value) => MapEntry<String, dynamic>(
-          key,
-          () {
-            final Map<String, dynamic> valueMap = Map<String, dynamic>.from(
-              value is Map ? value : const <String, dynamic>{},
-            );
-            return <String, dynamic>{
-              'rename': valueMap['rename']?.toString() ?? '',
-              'remove': valueMap['remove'] == true,
-              'removeMode': (valueMap['removeMode'] ?? 'delete').toString(),
-              'poolName': valueMap['poolName']?.toString() ?? '',
-            };
-          }(),
-        ),
+        (String key, dynamic value) => MapEntry<String, dynamic>(key, () {
+          final Map<String, dynamic> valueMap = Map<String, dynamic>.from(
+            value is Map ? value : const <String, dynamic>{},
+          );
+          return <String, dynamic>{
+            'rename': valueMap['rename']?.toString() ?? '',
+            'remove': valueMap['remove'] == true,
+            'removeMode': (valueMap['removeMode'] ?? 'delete').toString(),
+            'poolName': valueMap['poolName']?.toString() ?? '',
+          };
+        }()),
       ),
       'newChannels': newChannels,
       'visibleChannelIndices': visibleChannelIndices,
@@ -527,10 +533,10 @@ class EditChannelsNodeType extends NodeType {
   ) async {
     final Map<String, ChannelCoordinate> standardCoordinates =
         ChannelCoordinatesNodeType.parseChannelCoordinateCsv(
-      await rootBundle.loadString(
-        ChannelCoordinatesNodeType.standardCoordinatesAsset,
-      ),
-    );
+          await rootBundle.loadString(
+            ChannelCoordinatesNodeType.standardCoordinatesAsset,
+          ),
+        );
     final List<String> labels = _channelLabelsForSeries(timeSeries);
     final Map<String, ChannelCoordinate> next = <String, ChannelCoordinate>{
       ...timeSeries.channelCoordinates,
@@ -538,9 +544,9 @@ class EditChannelsNodeType extends NodeType {
     for (final String label in labels) {
       final ChannelCoordinate? coordinate =
           ChannelCoordinatesNodeType.coordinateForChannelLabel(
-        standardCoordinates,
-        label,
-      );
+            standardCoordinates,
+            label,
+          );
       if (coordinate == null) {
         continue;
       }
@@ -553,7 +559,9 @@ class EditChannelsNodeType extends NodeType {
         units: coordinate.units,
       );
     }
-    next.removeWhere((String key, ChannelCoordinate _) => !labels.contains(key));
+    next.removeWhere(
+      (String key, ChannelCoordinate _) => !labels.contains(key),
+    );
     return timeSeries.copyWith(channelCoordinates: next);
   }
 
@@ -592,7 +600,8 @@ class ChannelEditConfigEditor extends StatefulWidget {
   final int currentCoordinateCount;
 
   @override
-  State<ChannelEditConfigEditor> createState() => _ChannelEditConfigEditorState();
+  State<ChannelEditConfigEditor> createState() =>
+      _ChannelEditConfigEditorState();
 }
 
 class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
@@ -629,15 +638,16 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     for (final TextEditingController controller in _renameControllers.values) {
       controller.dispose();
     }
-    for (final TextEditingController controller in _newChannelControllers.values) {
+    for (final TextEditingController controller
+        in _newChannelControllers.values) {
       controller.dispose();
     }
     super.dispose();
   }
 
   Map<String, dynamic> get _edits => Map<String, dynamic>.from(
-        _config['edits'] as Map? ?? const <String, dynamic>{},
-      );
+    _config['edits'] as Map? ?? const <String, dynamic>{},
+  );
 
   List<Map<String, dynamic>> get _newChannels =>
       EditChannelsNodeType._normalizeNewChannels(
@@ -645,64 +655,84 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       );
 
   String get _coordinateImportMode =>
-      (_config['coordinateImportMode'] ?? EditChannelsNodeType.coordinateImportNone)
+      (_config['coordinateImportMode'] ??
+              EditChannelsNodeType.coordinateImportNone)
           .toString();
 
   String get _rereferenceMode =>
-      (_config['rereferenceMode'] ?? EditChannelsNodeType.rereferenceNone).toString();
+      (_config['rereferenceMode'] ?? EditChannelsNodeType.rereferenceNone)
+          .toString();
 
   List<int> get _visibleChannelIndices {
-    final List<int> configured = EditChannelsNodeType._intList(
-      _config['visibleChannelIndices'] as List<dynamic>? ?? const <dynamic>[],
-    ).where((int index) => index >= 0 && index < widget.channelLabels.length).toList(
-          growable: false,
-        );
+    final List<int> configured =
+        EditChannelsNodeType._intList(
+              _config['visibleChannelIndices'] as List<dynamic>? ??
+                  const <dynamic>[],
+            )
+            .where(
+              (int index) => index >= 0 && index < widget.channelLabels.length,
+            )
+            .toList(growable: false);
     if (configured.isNotEmpty) {
       return configured;
     }
     if (widget.initialVisibleChannelIndices != null &&
         widget.initialVisibleChannelIndices!.isNotEmpty) {
       return widget.initialVisibleChannelIndices!
-          .where((int index) => index >= 0 && index < widget.channelLabels.length)
+          .where(
+            (int index) => index >= 0 && index < widget.channelLabels.length,
+          )
           .toList(growable: false);
     }
-    return List<int>.generate(widget.channelLabels.length, (int index) => index);
+    return List<int>.generate(
+      widget.channelLabels.length,
+      (int index) => index,
+    );
   }
 
-  List<int> get _remainingChannelIndices => List<int>.generate(
-        widget.channelLabels.length,
-        (int index) => index,
-      ).where((int index) => !_visibleChannelIndices.contains(index)).toList(
-            growable: false,
-          );
+  List<int> get _remainingChannelIndices =>
+      List<int>.generate(widget.channelLabels.length, (int index) => index)
+          .where((int index) => !_visibleChannelIndices.contains(index))
+          .toList(growable: false);
 
   void _ensureVisibleChannelIndices() {
-    if ((_config['visibleChannelIndices'] as List<dynamic>? ?? const <dynamic>[])
-        .isNotEmpty) {
+    final List<int> configured = EditChannelsNodeType._intList(
+      _config['visibleChannelIndices'] as List<dynamic>? ?? const <dynamic>[],
+    );
+    if (configured.isNotEmpty) {
+      _config['visibleChannelIndices'] = <int>{
+        ...configured,
+        ...?widget.initialVisibleChannelIndices,
+      }.toList()..sort();
       return;
     }
-    _config['visibleChannelIndices'] = widget.initialVisibleChannelIndices != null &&
+    _config['visibleChannelIndices'] =
+        widget.initialVisibleChannelIndices != null &&
             widget.initialVisibleChannelIndices!.isNotEmpty
         ? widget.initialVisibleChannelIndices!
         : List<int>.generate(widget.channelLabels.length, (int index) => index);
   }
 
   void _syncControllers() {
-    final Set<String> activeRenameKeys =
-        Set<String>.from(widget.channelLabels.asMap().keys.map((int i) => '$i'));
+    final Set<String> activeRenameKeys = Set<String>.from(
+      widget.channelLabels.asMap().keys.map((int i) => '$i'),
+    );
     for (final String key in _renameControllers.keys.toList(growable: false)) {
       if (!activeRenameKeys.contains(key)) {
         _renameControllers.remove(key)?.dispose();
       }
     }
     for (final String key in activeRenameKeys) {
-      final String rename = (Map<String, dynamic>.from(
-            _edits[key] as Map? ?? const <String, dynamic>{},
-          )['rename'] ??
-          '')
-          .toString();
-      final TextEditingController controller =
-          _renameControllers.putIfAbsent(key, () => TextEditingController(text: rename));
+      final String rename =
+          (Map<String, dynamic>.from(
+                    _edits[key] as Map? ?? const <String, dynamic>{},
+                  )['rename'] ??
+                  '')
+              .toString();
+      final TextEditingController controller = _renameControllers.putIfAbsent(
+        key,
+        () => TextEditingController(text: rename),
+      );
       if (controller.text != rename) {
         controller.value = TextEditingValue(
           text: rename,
@@ -711,9 +741,12 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       }
     }
 
-    final Set<String> activeNewIds =
-        Set<String>.from(_newChannels.map((Map<String, dynamic> row) => row['id'].toString()));
-    for (final String key in _newChannelControllers.keys.toList(growable: false)) {
+    final Set<String> activeNewIds = Set<String>.from(
+      _newChannels.map((Map<String, dynamic> row) => row['id'].toString()),
+    );
+    for (final String key in _newChannelControllers.keys.toList(
+      growable: false,
+    )) {
       if (!activeNewIds.contains(key)) {
         _newChannelControllers.remove(key)?.dispose();
       }
@@ -721,8 +754,8 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     for (final Map<String, dynamic> row in _newChannels) {
       final String id = row['id'].toString();
       final String name = row['name']?.toString() ?? '';
-      final TextEditingController controller =
-          _newChannelControllers.putIfAbsent(id, () => TextEditingController(text: name));
+      final TextEditingController controller = _newChannelControllers
+          .putIfAbsent(id, () => TextEditingController(text: name));
       if (controller.text != name) {
         controller.value = TextEditingValue(
           text: name,
@@ -787,12 +820,9 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     _emitConfig();
   }
 
-  void _addOriginalChannelRow(int index) {
+  void _promoteOriginalChannelRow(int index) {
     final List<int> updated = <int>[..._visibleChannelIndices, index]..sort();
-    setState(() {
-      _setVisibleChannelIndices(updated);
-      _syncControllers();
-    });
+    _setVisibleChannelIndices(updated);
   }
 
   void _hideOriginalChannelRow(int index) {
@@ -834,23 +864,24 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
   }
 
   Future<void> _editFormulaRow(Map<String, dynamic> row) async {
-    final Map<String, dynamic>? updated = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (BuildContext context) {
-        return _NewChannelFormulaDialog(
-          channelLabels: widget.channelLabels,
-          channelName: row['name']?.toString() ?? '',
-          addIndices: EditChannelsNodeType._intList(
-            row['addSourceIndices'] as List<dynamic>? ?? const <dynamic>[],
-          ),
-          subtractIndices: EditChannelsNodeType._intList(
-            row['subtractSourceIndices'] as List<dynamic>? ??
-                const <dynamic>[],
-          ),
-          normalize: row['normalize'] == true,
+    final Map<String, dynamic>? updated =
+        await showDialog<Map<String, dynamic>>(
+          context: context,
+          builder: (BuildContext context) {
+            return _NewChannelFormulaDialog(
+              channelLabels: widget.channelLabels,
+              channelName: row['name']?.toString() ?? '',
+              addIndices: EditChannelsNodeType._intList(
+                row['addSourceIndices'] as List<dynamic>? ?? const <dynamic>[],
+              ),
+              subtractIndices: EditChannelsNodeType._intList(
+                row['subtractSourceIndices'] as List<dynamic>? ??
+                    const <dynamic>[],
+              ),
+              normalize: row['normalize'] == true,
+            );
+          },
         );
-      },
-    );
     if (updated == null) {
       return;
     }
@@ -891,7 +922,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                 controller: _horizontalController,
                 scrollDirection: Axis.horizontal,
                 child: SizedBox(
-                  width: math.max(760, constraints.maxWidth),
+                  width: math.max(860, constraints.maxWidth),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
@@ -900,35 +931,31 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                       _buildHeaderRow(),
                       const SizedBox(height: 8),
                       ..._visibleChannelIndices.map(_buildExistingRow),
-                      if (_remainingChannelIndices.isNotEmpty)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: PopupMenuButton<int>(
-                            onSelected: _addOriginalChannelRow,
-                            itemBuilder: (BuildContext context) {
-                              return _remainingChannelIndices
-                                  .map(
-                                    (int index) => PopupMenuItem<int>(
-                                      value: index,
-                                      child: Text(widget.channelLabels[index]),
-                                    ),
-                                  )
-                                  .toList(growable: false);
-                            },
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: <Widget>[
-                                  Icon(Icons.add, size: 18),
-                                  SizedBox(width: 4),
-                                  Text('Add original channel'),
-                                ],
-                              ),
-                            ),
+                      if (_remainingChannelIndices.isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 4),
+                        Divider(
+                          height: 1,
+                          color: Colors.black.withValues(alpha: 0.12),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Other channels',
+                          style: TextStyle(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                      const SizedBox(height: 14),
+                        const SizedBox(height: 8),
+                        ..._remainingChannelIndices.map(
+                          (int index) => _buildExistingRow(
+                            index,
+                            promoteOnEdit: true,
+                            showHideButton: false,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
                       const Divider(height: 1),
                       const SizedBox(height: 12),
                       Row(
@@ -938,10 +965,13 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                             style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(width: 8),
-                          Text(
-                            'Create derived channels from add/subtract formulas.',
-                            style: TextStyle(
-                              color: Colors.black.withValues(alpha: 0.6),
+                          Expanded(
+                            child: Text(
+                              'Create derived channels from add/subtract formulas.',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.black.withValues(alpha: 0.6),
+                              ),
                             ),
                           ),
                         ],
@@ -980,6 +1010,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           width: 280,
           child: DropdownButtonFormField<String>(
             initialValue: _coordinateImportMode,
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Import channel coordinates',
               border: OutlineInputBorder(),
@@ -1009,6 +1040,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           width: 220,
           child: DropdownButtonFormField<String>(
             initialValue: _rereferenceMode,
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: 'Rereference',
               border: OutlineInputBorder(),
@@ -1049,20 +1081,26 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         SizedBox(width: 10),
         _HeaderCell(width: 180, text: 'Rename'),
         SizedBox(width: 10),
-        _HeaderCell(width: 300, text: 'Remove'),
+        _HeaderCell(width: 400, text: 'Remove'),
         SizedBox(width: 10),
         _HeaderCell(width: 40, text: ''),
       ],
     );
   }
 
-  Widget _buildExistingRow(int index) {
+  Widget _buildExistingRow(
+    int index, {
+    bool promoteOnEdit = false,
+    bool showHideButton = true,
+  }) {
     final Map<String, dynamic> edit = Map<String, dynamic>.from(
       _edits['$index'] as Map? ?? const <String, dynamic>{},
     );
     final bool remove = edit['remove'] == true;
-    final String removeMode =
-        (edit['removeMode'] ?? 'delete').toString().trim().toLowerCase();
+    final String removeMode = (edit['removeMode'] ?? 'delete')
+        .toString()
+        .trim()
+        .toLowerCase();
     final TextEditingController controller =
         _renameControllers['$index'] ?? TextEditingController();
 
@@ -1086,6 +1124,9 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
               hintText: 'Rename',
               onChanged: (String value) {
                 setState(() {
+                  if (promoteOnEdit) {
+                    _promoteOriginalChannelRow(index);
+                  }
                   _updateExistingEdit(index, rename: value);
                 });
               },
@@ -1093,13 +1134,16 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           ),
           const SizedBox(width: 10),
           SizedBox(
-            width: 300,
+            width: 400,
             child: Row(
               children: <Widget>[
                 Checkbox(
                   value: remove,
                   onChanged: (bool? value) {
                     setState(() {
+                      if (promoteOnEdit) {
+                        _promoteOriginalChannelRow(index);
+                      }
                       _updateExistingEdit(index, remove: value == true);
                     });
                   },
@@ -1117,6 +1161,9 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                           return;
                         }
                         setState(() {
+                          if (promoteOnEdit) {
+                            _promoteOriginalChannelRow(index);
+                          }
                           _updateExistingEdit(index, removeMode: value);
                         });
                       },
@@ -1152,16 +1199,18 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           const SizedBox(width: 10),
           SizedBox(
             width: 40,
-            child: Tooltip(
-              message: 'Hide this original channel row',
-              child: IconButton(
-                visualDensity: VisualDensity.compact,
-                onPressed: _visibleChannelIndices.length > 1
-                    ? () => _hideOriginalChannelRow(index)
-                    : null,
-                icon: const Icon(Icons.close),
-              ),
-            ),
+            child: showHideButton
+                ? Tooltip(
+                    message: 'Move to other channels',
+                    child: IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _visibleChannelIndices.length > 1
+                          ? () => _hideOriginalChannelRow(index)
+                          : null,
+                      icon: const Icon(Icons.close),
+                    ),
+                  )
+                : null,
           ),
         ],
       ),
@@ -1258,7 +1307,8 @@ class _NewChannelFormulaDialog extends StatefulWidget {
   final bool normalize;
 
   @override
-  State<_NewChannelFormulaDialog> createState() => _NewChannelFormulaDialogState();
+  State<_NewChannelFormulaDialog> createState() =>
+      _NewChannelFormulaDialogState();
 }
 
 class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
@@ -1275,11 +1325,14 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
     _normalize = widget.normalize;
   }
 
-  List<int> get _availableIndices => List<int>.generate(
-        widget.channelLabels.length,
-        (int index) => index,
-      ).where((int index) => !_addIndices.contains(index) && !_subtractIndices.contains(index))
-      .toList(growable: false);
+  List<int> get _availableIndices =>
+      List<int>.generate(widget.channelLabels.length, (int index) => index)
+          .where(
+            (int index) =>
+                !_addIndices.contains(index) &&
+                !_subtractIndices.contains(index),
+          )
+          .toList(growable: false);
 
   void _moveSelectedTo(List<int> destination) {
     if (_selectedMiddleIndices.isEmpty) {
@@ -1319,10 +1372,7 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 920,
-          maxHeight: 720,
-        ),
+        constraints: const BoxConstraints(maxWidth: 920, maxHeight: 720),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1330,11 +1380,11 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
             children: <Widget>[
               Center(
                 child: Text(
-                widget.channelName.trim().isEmpty
-                    ? 'Configure New Channel'
-                    : 'Configure ${widget.channelName}',
-                style: Theme.of(context).textTheme.titleLarge,
-                textAlign: TextAlign.center,
+                  widget.channelName.trim().isEmpty
+                      ? 'Configure New Channel'
+                      : 'Configure ${widget.channelName}',
+                  style: Theme.of(context).textTheme.titleLarge,
+                  textAlign: TextAlign.center,
                 ),
               ),
               const SizedBox(height: 12),
@@ -1348,7 +1398,8 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
                         color: Colors.red.shade100,
                         indices: _subtractIndices,
                         labels: widget.channelLabels,
-                        onRemove: (int index) => _removeFrom(_subtractIndices, index),
+                        onRemove: (int index) =>
+                            _removeFrom(_subtractIndices, index),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1373,24 +1424,23 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
                               child: ListView.builder(
                                 itemCount: _availableIndices.length,
                                 itemBuilder: (BuildContext context, int index) {
-                                  final int channelIndex = _availableIndices[index];
-                                  final bool selected =
-                                      _selectedMiddleIndices.contains(channelIndex);
+                                  final int channelIndex =
+                                      _availableIndices[index];
+                                  final bool selected = _selectedMiddleIndices
+                                      .contains(channelIndex);
                                   return ListTile(
                                     dense: true,
                                     tileColor: selected
-                                        ? Theme.of(context)
-                                            .colorScheme
-                                            .primary
-                                            .withValues(alpha: 0.22)
+                                        ? Theme.of(context).colorScheme.primary
+                                              .withValues(alpha: 0.22)
                                         : null,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(8),
                                       side: selected
                                           ? BorderSide(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .primary,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
                                               width: 1.4,
                                             )
                                           : BorderSide.none,
@@ -1411,9 +1461,13 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
                                     onTap: () {
                                       setState(() {
                                         if (selected) {
-                                          _selectedMiddleIndices.remove(channelIndex);
+                                          _selectedMiddleIndices.remove(
+                                            channelIndex,
+                                          );
                                         } else {
-                                          _selectedMiddleIndices.add(channelIndex);
+                                          _selectedMiddleIndices.add(
+                                            channelIndex,
+                                          );
                                         }
                                       });
                                     },
@@ -1452,7 +1506,8 @@ class _NewChannelFormulaDialogState extends State<_NewChannelFormulaDialog> {
                         color: Colors.green.shade100,
                         indices: _addIndices,
                         labels: widget.channelLabels,
-                        onRemove: (int index) => _removeFrom(_addIndices, index),
+                        onRemove: (int index) =>
+                            _removeFrom(_addIndices, index),
                       ),
                     ),
                   ],
@@ -1524,10 +1579,7 @@ class _FormulaColumn extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w700),
-        ),
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         Expanded(
           child: DecoratedBox(
@@ -1540,7 +1592,9 @@ class _FormulaColumn extends StatelessWidget {
                 ? Center(
                     child: Text(
                       'None',
-                      style: TextStyle(color: Colors.black.withValues(alpha: 0.45)),
+                      style: TextStyle(
+                        color: Colors.black.withValues(alpha: 0.45),
+                      ),
                     ),
                   )
                 : ListView(
@@ -1586,7 +1640,9 @@ class _GlowTextField extends StatelessWidget {
         boxShadow: active
             ? <BoxShadow>[
                 BoxShadow(
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.22),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.22),
                   blurRadius: 10,
                   spreadRadius: 1,
                 ),
@@ -1607,10 +1663,7 @@ class _GlowTextField extends StatelessWidget {
 }
 
 class _HeaderCell extends StatelessWidget {
-  const _HeaderCell({
-    required this.width,
-    required this.text,
-  });
+  const _HeaderCell({required this.width, required this.text});
 
   final double width;
   final String text;

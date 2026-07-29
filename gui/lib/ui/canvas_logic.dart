@@ -18,6 +18,7 @@ import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/import_node.dart';
+import '../nodes/impedances_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/node_registry.dart';
 import '../nodes/node_type.dart';
@@ -106,8 +107,6 @@ class RunActivity {
   final String label;
   final String detail;
   final RunActivityPhase phase;
-
-  bool get locksInterface => phase != RunActivityPhase.running;
 
   RunActivity copyWith({
     String? label,
@@ -562,10 +561,14 @@ class _ProcessingPolicyControl extends StatelessWidget {
   const _ProcessingPolicyControl({
     required this.value,
     required this.onChanged,
+    this.showHeader = true,
+    this.showDescription = true,
   });
 
   final ProcessingResponsiveness value;
   final ValueChanged<ProcessingResponsiveness> onChanged;
+  final bool showHeader;
+  final bool showDescription;
 
   @override
   Widget build(BuildContext context) {
@@ -580,14 +583,16 @@ class _ProcessingPolicyControl extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Text(
-              'Processing',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+            if (showHeader) ...<Widget>[
+              const Text(
+                'Processing',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
+              const SizedBox(height: 6),
+            ],
             DropdownButtonFormField<ProcessingResponsiveness>(
               initialValue: value,
               dropdownColor: const Color(0xFF20262E),
@@ -618,17 +623,225 @@ class _ProcessingPolicyControl extends StatelessWidget {
                 }
               },
             ),
-            const SizedBox(height: 6),
-            Text(
-              value.description,
-              style: const TextStyle(
-                color: Colors.white60,
-                fontSize: 11.5,
-                height: 1.25,
+            if (showDescription) ...<Widget>[
+              const SizedBox(height: 6),
+              Text(
+                value.description,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 11.5,
+                  height: 1.25,
+                ),
               ),
-            ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ProcessingActionControl extends StatefulWidget {
+  const _ProcessingActionControl({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final ProcessingResponsiveness value;
+  final ValueChanged<ProcessingResponsiveness> onChanged;
+
+  @override
+  State<_ProcessingActionControl> createState() =>
+      _ProcessingActionControlState();
+}
+
+class _ProcessingActionControlState extends State<_ProcessingActionControl> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _ProjectActionButton(
+          label: 'Processing',
+          icon: Icons.speed,
+          onPressed: () {
+            setState(() {
+              _expanded = !_expanded;
+            });
+          },
+        ),
+        AnimatedCrossFade(
+          duration: const Duration(milliseconds: 120),
+          firstCurve: Curves.easeOut,
+          secondCurve: Curves.easeOut,
+          sizeCurve: Curves.easeOut,
+          crossFadeState: _expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: _ProcessingPolicyControl(
+              value: widget.value,
+              onChanged: widget.onChanged,
+              showHeader: false,
+              showDescription: false,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProjectActionsMenu extends StatelessWidget {
+  const _ProjectActionsMenu({
+    required this.collapsed,
+    required this.onToggleCollapsed,
+    required this.publish,
+    required this.memory,
+    required this.export,
+    required this.load,
+    required this.clear,
+    required this.processingResponsiveness,
+    required this.onProcessingResponsivenessChanged,
+  });
+
+  final bool collapsed;
+  final VoidCallback onToggleCollapsed;
+  final VoidCallback publish;
+  final VoidCallback memory;
+  final VoidCallback export;
+  final VoidCallback load;
+  final VoidCallback clear;
+  final ProcessingResponsiveness processingResponsiveness;
+  final ValueChanged<ProcessingResponsiveness>
+  onProcessingResponsivenessChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Divider(
+            height: 20,
+            thickness: 1,
+            color: Colors.white.withValues(alpha: 0.18),
+          ),
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onToggleCollapsed,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+              ),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    collapsed ? Icons.chevron_right : Icons.expand_more,
+                    color: Colors.white70,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Project',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const Icon(Icons.more_horiz, color: Colors.white54, size: 18),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 140),
+            firstCurve: Curves.easeOut,
+            secondCurve: Curves.easeOut,
+            sizeCurve: Curves.easeOut,
+            crossFadeState: collapsed
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _ProjectActionButton(
+                    label: 'Publish',
+                    icon: Icons.upload,
+                    onPressed: publish,
+                  ),
+                  const SizedBox(height: 10),
+                  _ProjectActionButton(
+                    label: 'Memory',
+                    icon: Icons.memory,
+                    onPressed: memory,
+                  ),
+                  const SizedBox(height: 10),
+                  _ProcessingActionControl(
+                    value: processingResponsiveness,
+                    onChanged: onProcessingResponsivenessChanged,
+                  ),
+                  const SizedBox(height: 10),
+                  _ProjectActionButton(
+                    label: 'Load BrainStory',
+                    icon: Icons.folder_open,
+                    onPressed: load,
+                  ),
+                  const SizedBox(height: 10),
+                  _ProjectActionButton(
+                    label: 'Export BrainStory',
+                    icon: Icons.save_alt,
+                    onPressed: export,
+                  ),
+                  const SizedBox(height: 10),
+                  _ProjectActionButton(
+                    label: 'Clear All',
+                    icon: Icons.delete_outline,
+                    onPressed: clear,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectActionButton extends StatelessWidget {
+  const _ProjectActionButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
       ),
     );
   }
@@ -652,6 +865,8 @@ dynamic _deepCloneJsonValue(dynamic value) {
 }
 
 class CanvasLogic {
+  static const String _lastRunParamsByDatasetKey = '_lastRunParamsByDataset';
+
   CanvasLogic({this.runUiYieldsEnabled = true});
 
   @visibleForTesting
@@ -659,6 +874,7 @@ class CanvasLogic {
 
   /// Registry of available node types in the sidebar.
   late final List<NodeType> availableNodes = NodeRegistry.entries
+      .where((NodeRegistryEntry entry) => entry.visible)
       .map((NodeRegistryEntry entry) => entry.create())
       .toList(growable: false);
 
@@ -678,7 +894,7 @@ class CanvasLogic {
   );
   final ValueNotifier<ProcessingResponsiveness> processingResponsiveness =
       ValueNotifier<ProcessingResponsiveness>(
-        ProcessingResponsiveness.balanced,
+        ProcessingResponsiveness.responsive,
       );
   final ValueNotifier<bool> visualizerPriorityActive = ValueNotifier<bool>(
     false,
@@ -723,12 +939,9 @@ class CanvasLogic {
   final List<_CanvasUndoSnapshot> _undoStack = <_CanvasUndoSnapshot>[];
 
   bool get canUndo => _undoStack.isNotEmpty;
-  bool get interfaceLocked => runActivity.value?.locksInterface ?? false;
+  bool get hasActiveRun => runActivity.value != null;
 
   bool get selectedMutationBlocked {
-    if (interfaceLocked) {
-      return true;
-    }
     final int? connectionIndex = selectedConnectionIndex;
     if (connectionIndex != null) {
       return _connectionMutationLockedAtIndex(connectionIndex);
@@ -740,11 +953,18 @@ class CanvasLogic {
   }
 
   bool isNodeMutationLocked(String nodeId) {
-    if (interfaceLocked) {
-      return true;
+    return hasActiveRun && _runLockedNodeIds.contains(nodeId);
+  }
+
+  bool isDatasetMutationLocked(String datasetId) {
+    if (!hasActiveRun) {
+      return false;
     }
-    return runActivity.value?.phase == RunActivityPhase.running &&
-        _runLockedNodeIds.contains(nodeId);
+    return nodes.any(
+      (NodeModel node) =>
+          _runLockedNodeIds.contains(node.id) &&
+          _datasetsForNode(node).contains(datasetId),
+    );
   }
 
   String? undoLast() {
@@ -836,6 +1056,9 @@ class CanvasLogic {
   }
 
   void clearAll({bool recordUndo = true}) {
+    if (hasActiveRun) {
+      return;
+    }
     if (recordUndo &&
         (nodes.isNotEmpty ||
             connections.isNotEmpty ||
@@ -933,6 +1156,9 @@ class CanvasLogic {
   }
 
   Future<void> removeDataset(String datasetId) async {
+    if (isDatasetMutationLocked(datasetId)) {
+      return;
+    }
     final MapEntry<String, Dataset>? entry = datasets.entries
         .cast<MapEntry<String, Dataset>?>()
         .firstWhere(
@@ -1121,12 +1347,7 @@ class CanvasLogic {
   }
 
   bool _connectionMutationLockedAtIndex(int index) {
-    if (interfaceLocked) {
-      return true;
-    }
-    if (runActivity.value?.phase != RunActivityPhase.running ||
-        index < 0 ||
-        index >= connections.length) {
+    if (!hasActiveRun || index < 0 || index >= connections.length) {
       return false;
     }
     final Map<String, dynamic> connection = connections[index];
@@ -1441,6 +1662,15 @@ class CanvasLogic {
   }
 
   Future<void> loadBrainStory(BuildContext context) async {
+    if (hasActiveRun) {
+      if (context.mounted) {
+        _showStatusSnackBar(
+          context,
+          'Project loading is paused until the active job finishes.',
+        );
+      }
+      return;
+    }
     final XFile? file = await openFile(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(label: 'BrainStory Project', extensions: <String>['bst']),
@@ -1683,7 +1913,7 @@ class CanvasLogic {
               'type': node.type.title,
               'x': node.position.dx,
               'y': node.position.dy,
-              'params': node.params,
+              'params': _exportableNodeParams(node.params),
               'markerChange': node.markerChange.toJson(),
               'datasetStates': node.datasetStates.map(
                 (dynamic key, DatasetState value) =>
@@ -1699,6 +1929,14 @@ class CanvasLogic {
           )
           .toList(growable: false),
     };
+  }
+
+  Map<String, dynamic> _exportableNodeParams(Map<String, dynamic> params) {
+    return Map<String, dynamic>.fromEntries(
+      params.entries.where((MapEntry<String, dynamic> entry) {
+        return !entry.key.startsWith('_');
+      }),
+    );
   }
 
   void importProjectJson(Map<String, dynamic> jsonMap) {
@@ -1788,6 +2026,8 @@ class CanvasLogic {
     required VoidCallback export,
     required VoidCallback load,
     required VoidCallback clear,
+    required bool projectActionsCollapsed,
+    required VoidCallback toggleProjectActionsCollapsed,
     required VoidCallback update,
   }) {
     final List<NodeCategory> categoryOrder = <NodeCategory>[
@@ -1821,78 +2061,20 @@ class CanvasLogic {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Divider(
-              height: 20,
-              thickness: 1,
-              color: Colors.white.withValues(alpha: 0.18),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: publish,
-                child: const Text('Publish'),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: memory,
-                child: const Text('Memory'),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: _ProcessingPolicyControl(
-              value: processingResponsiveness.value,
-              onChanged: (ProcessingResponsiveness value) {
-                processingResponsiveness.value = value;
-                update();
-              },
-            ),
-          ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: load,
-                child: const Text('Load BrainStory'),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: export,
-                child: const Text('Export BrainStory'),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: clear,
-                child: const Text('Clear All'),
-              ),
-            ),
+          _ProjectActionsMenu(
+            collapsed: projectActionsCollapsed,
+            onToggleCollapsed: toggleProjectActionsCollapsed,
+            publish: publish,
+            memory: memory,
+            export: export,
+            load: load,
+            clear: clear,
+            processingResponsiveness: processingResponsiveness.value,
+            onProcessingResponsivenessChanged:
+                (ProcessingResponsiveness value) {
+                  processingResponsiveness.value = value;
+                  update();
+                },
           ),
           const SizedBox(height: 20),
         ],
@@ -2159,7 +2341,7 @@ class CanvasLogic {
     required void Function(NodeModel node) openVisualizationWindow,
   }) async {
     final bool mutationLocked = isNodeMutationLocked(node.id);
-    final bool queueRun = runActivity.value?.phase == RunActivityPhase.running;
+    final bool queueRun = hasActiveRun;
     final Set<String> nodeDatasetIds = _datasetsForNode(node);
     final bool canLoadFromDisk = await _nodeHasLoadableDiskCache(
       node: node,
@@ -2409,10 +2591,16 @@ class CanvasLogic {
     required NodeModel node,
     required VoidCallback update,
   }) {
+    final Map<String, dynamic> editorParams = Map<String, dynamic>.from(
+      node.params,
+    );
+    if (node.type is PSDNodeType) {
+      editorParams['_parentSegmentOptions'] = _psdParentSegmentOptions(node);
+    }
     showDialog<void>(
       context: context,
       builder: (_) => node.type.buildConfigWidget(
-        node.params,
+        editorParams,
         (params) {
           _applyNodeParams(node: node, params: params, update: update);
         },
@@ -2459,15 +2647,24 @@ class CanvasLogic {
       return;
     }
     _recordUndo('edit ${node.title} parameters');
-    node.params = params;
+    final Map<String, dynamic> nextParams = Map<String, dynamic>.from(params);
+    for (final MapEntry<String, dynamic> entry in node.params.entries) {
+      if (entry.key.startsWith('_')) {
+        nextParams[entry.key] = entry.value;
+      }
+    }
+    node.params = nextParams;
     if (node.type is ImportNodeType) {
-      ImportNodeType.applyDatasetAliases(params, datasets.values);
+      ImportNodeType.applyDatasetAliases(node.params, datasets.values);
     }
     final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
     for (final Dataset dataset in datasets.values) {
-      node.datasetStates[dataset.id] = availableDatasetIds.contains(dataset.id)
-          ? DatasetState.ready
-          : DatasetState.notReady;
+      if (!availableDatasetIds.contains(dataset.id)) {
+        node.datasetStates[dataset.id] = DatasetState.notReady;
+        continue;
+      }
+      node.datasetStates[dataset.id] = DatasetState.stale;
+      _markImmediateChildrenStale(node.id, dataset.id);
     }
     update();
   }
@@ -2477,28 +2674,34 @@ class CanvasLogic {
     _applyNodeParams(node: node, params: params, update: () {});
   }
 
-  bool _expandPsdRuntimePipeline(NodeModel psdNode) {
-    bool changed = false;
-    changed = _ensurePsdSegmentationParent(psdNode) || changed;
-    changed = _ensurePsdAverageChild(psdNode) || changed;
+  Set<String> _expandPsdRuntimePipeline(NodeModel psdNode) {
+    final Set<String> forcedDependencyIds = _psdUsesParentSegments(psdNode)
+        ? const <String>{}
+        : _ensurePsdSegmentationParent(psdNode);
+    _ensurePsdAverageChild(psdNode);
     psdNode.params['deferAverageToDownstream'] =
         (psdNode.params['outputMode'] ?? 'averaged').toString() == 'averaged';
-    return changed;
+    return forcedDependencyIds;
   }
 
-  bool _ensurePsdSegmentationParent(NodeModel psdNode) {
+  Set<String> _ensurePsdSegmentationParent(NodeModel psdNode) {
     final double windowWidthMs = _psdWindowWidthMs(psdNode);
     final double windowOverlapPercent = _psdWindowOverlapPercent(psdNode);
     final List<NodeModel> parents = _immediateParents(psdNode.id);
     final List<NodeModel> segmentationParents = parents
-        .where((NodeModel parent) => parent.type is SegmentationNodeType)
+        .where(
+          (NodeModel parent) =>
+              parent.type is SegmentationNodeType &&
+              _isRuntimeDependencyFor(parent, psdNode.id),
+        )
         .toList(growable: false);
     if (segmentationParents.isNotEmpty) {
-      bool changed = false;
+      final Set<String> changedParentIds = <String>{};
       for (final NodeModel segmentationParent in segmentationParents) {
         final String windowMarkerName = _equalWindowMarkerName(
           segmentationParent,
         );
+        bool changed = false;
         changed =
             _setParamIfChanged(segmentationParent, 'mode', 'equal_windows') ||
             changed;
@@ -2529,14 +2732,24 @@ class CanvasLogic {
               includedMarkers,
             ) ||
             changed;
+        if (changed) {
+          _markRuntimeDependencyStale(segmentationParent);
+          if (_isRuntimeDependencyFor(segmentationParent, psdNode.id)) {
+            changedParentIds.add(segmentationParent.id);
+          }
+        } else if (_isRuntimeDependencyFor(segmentationParent, psdNode.id) &&
+            _nodeHasPendingRuntimeDatasets(segmentationParent)) {
+          changedParentIds.add(segmentationParent.id);
+        }
       }
-      return changed;
+      return changedParentIds;
     }
-    if (parents.isEmpty) {
-      return false;
+    final List<NodeModel> sourceParents = _psdSignalParents(psdNode);
+    if (sourceParents.isEmpty) {
+      return const <String>{};
     }
 
-    final NodeModel anchorParent = parents.first;
+    final NodeModel anchorParent = sourceParents.first;
     final NodeModel segmentationNode = _buildNode(
       type: SegmentationNodeType(),
       position: _nearestAvailablePosition(
@@ -2557,6 +2770,7 @@ class CanvasLogic {
         },
         'equalWindowWidthMs': windowWidthMs,
         'equalWindowOverlapPercent': windowOverlapPercent,
+        '_runtimeGeneratedByNodeId': psdNode.id,
         if (psdNode.params['selectedDatasetIds'] != null)
           'selectedDatasetIds': List<dynamic>.from(
             psdNode.params['selectedDatasetIds'] as List<dynamic>,
@@ -2571,12 +2785,12 @@ class CanvasLogic {
             (NodeModel parent) => parent.id == connection['fromNode'],
           );
     });
-    for (final NodeModel parent in parents) {
+    for (final NodeModel parent in sourceParents) {
       _addAllMatchingConnections(parent, segmentationNode);
     }
     _addAllMatchingConnections(segmentationNode, psdNode);
     _seedNodeDatasetStates(segmentationNode);
-    return true;
+    return <String>{segmentationNode.id};
   }
 
   bool _setParamIfChanged(NodeModel node, String key, Object? value) {
@@ -2666,11 +2880,11 @@ class CanvasLogic {
     return true;
   }
 
-  bool _ensureEqualWindowMarkerParent(NodeModel segmentationNode) {
+  Set<String> _ensureEqualWindowMarkerParent(NodeModel segmentationNode) {
     if (segmentationNode.type is! SegmentationNodeType ||
         (segmentationNode.params['mode'] ?? 'events').toString() !=
             'equal_windows') {
-      return false;
+      return const <String>{};
     }
     final String windowMarkerName = _equalWindowMarkerName(segmentationNode);
     final List<NodeModel> parents = _immediateParents(segmentationNode.id);
@@ -2683,25 +2897,71 @@ class CanvasLogic {
       }
     }
     if (existingGenerator != null) {
-      existingGenerator.params['markerGenerator'] = 'fft_windows';
-      existingGenerator.params['generatedMarkerLabel'] = windowMarkerName;
-      existingGenerator.params['windowWidthMs'] =
-          (segmentationNode.params['equalWindowWidthMs'] as num?)?.toDouble() ??
-          1000.0;
-      existingGenerator.params['windowOverlapPercent'] =
-          (segmentationNode.params['equalWindowOverlapPercent'] as num?)
-              ?.toDouble() ??
-          0.0;
-      existingGenerator.params['markerDurationMode'] = 'window';
+      bool changed = false;
+      changed =
+          _setParamIfChanged(
+            existingGenerator,
+            'markerGenerator',
+            'fft_windows',
+          ) ||
+          changed;
+      changed =
+          _setParamIfChanged(
+            existingGenerator,
+            'generatedMarkerLabel',
+            windowMarkerName,
+          ) ||
+          changed;
+      changed =
+          _setParamIfChanged(
+            existingGenerator,
+            'windowWidthMs',
+            (segmentationNode.params['equalWindowWidthMs'] as num?)
+                    ?.toDouble() ??
+                1000.0,
+          ) ||
+          changed;
+      changed =
+          _setParamIfChanged(
+            existingGenerator,
+            'windowOverlapPercent',
+            (segmentationNode.params['equalWindowOverlapPercent'] as num?)
+                    ?.toDouble() ??
+                0.0,
+          ) ||
+          changed;
+      changed =
+          _setParamIfChanged(
+            existingGenerator,
+            'markerDurationMode',
+            'window',
+          ) ||
+          changed;
       if (segmentationNode.params['selectedDatasetIds'] != null) {
-        existingGenerator.params['selectedDatasetIds'] = List<dynamic>.from(
-          segmentationNode.params['selectedDatasetIds'] as List<dynamic>,
-        );
+        changed =
+            _setParamIfChanged(existingGenerator, 'selectedDatasetIds', <
+              dynamic
+            >[
+              ...List<dynamic>.from(
+                segmentationNode.params['selectedDatasetIds'] as List<dynamic>,
+              ),
+            ]) ||
+            changed;
       }
-      return false;
+      if (changed) {
+        _markRuntimeDependencyStale(existingGenerator);
+        if (_isRuntimeDependencyFor(existingGenerator, segmentationNode.id)) {
+          return <String>{existingGenerator.id};
+        }
+      }
+      if (_isRuntimeDependencyFor(existingGenerator, segmentationNode.id) &&
+          _nodeHasPendingRuntimeDatasets(existingGenerator)) {
+        return <String>{existingGenerator.id};
+      }
+      return const <String>{};
     }
     if (parents.isEmpty) {
-      return false;
+      return const <String>{};
     }
 
     final NodeModel anchorParent = parents.first;
@@ -2726,6 +2986,7 @@ class CanvasLogic {
                 ?.toDouble() ??
             0.0,
         'markerDurationMode': 'window',
+        '_runtimeGeneratedByNodeId': segmentationNode.id,
         if (segmentationNode.params['selectedDatasetIds'] != null)
           'selectedDatasetIds': List<dynamic>.from(
             segmentationNode.params['selectedDatasetIds'] as List<dynamic>,
@@ -2745,7 +3006,154 @@ class CanvasLogic {
     }
     _addAllMatchingConnections(markerNode, segmentationNode);
     _seedNodeDatasetStates(markerNode);
-    return true;
+    return <String>{markerNode.id};
+  }
+
+  void _markRuntimeDependencyStale(NodeModel node) {
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
+    for (final Dataset dataset in datasets.values) {
+      node.datasetStates[dataset.id] = availableDatasetIds.contains(dataset.id)
+          ? DatasetState.stale
+          : DatasetState.notReady;
+    }
+  }
+
+  bool _nodeHasPendingRuntimeDatasets(NodeModel node) {
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
+    for (final String datasetId in availableDatasetIds) {
+      final DatasetState state =
+          node.datasetStates[datasetId] ?? DatasetState.notReady;
+      if (state != DatasetState.done && state != DatasetState.notReady) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isRuntimeDependencyFor(NodeModel node, String ownerNodeId) {
+    return node.params['_runtimeGeneratedByNodeId'] == ownerNodeId;
+  }
+
+  bool _psdUsesParentSegments(NodeModel node) {
+    return node.type is PSDNodeType && node.params['useParentSegments'] == true;
+  }
+
+  List<NodeModel> _psdSignalParents(NodeModel psdNode) {
+    final int signalInputIndex = psdNode.inputPorts.indexWhere(
+      (PortSpec port) => port.name == 'signal',
+    );
+    if (signalInputIndex < 0) {
+      return const <NodeModel>[];
+    }
+    return connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['toNode'] == psdNode.id &&
+              (connection['toPort'] as int? ?? -1) == signalInputIndex,
+        )
+        .where((Map<String, dynamic> connection) {
+          final NodeModel? fromNode = _findNode(
+            connection['fromNode'] as String? ?? '',
+          );
+          final int fromPortIndex =
+              (connection['fromPort'] as num?)?.toInt() ?? 0;
+          return fromNode != null &&
+              fromPortIndex >= 0 &&
+              fromPortIndex < fromNode.outputPorts.length &&
+              fromNode.outputPorts[fromPortIndex].type == PortType.signal;
+        })
+        .map((Map<String, dynamic> connection) {
+          return _findNode(connection['fromNode'] as String? ?? '');
+        })
+        .whereType<NodeModel>()
+        .toList(growable: false);
+  }
+
+  List<NodeModel> _psdSegmentParents(NodeModel psdNode) {
+    final int segmentsInputIndex = psdNode.inputPorts.indexWhere(
+      (PortSpec port) => port.name == 'segments',
+    );
+    if (segmentsInputIndex < 0) {
+      return const <NodeModel>[];
+    }
+    return connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['toNode'] == psdNode.id &&
+              (connection['toPort'] as int? ?? -1) == segmentsInputIndex,
+        )
+        .map((Map<String, dynamic> connection) {
+          return _findNode(connection['fromNode'] as String? ?? '');
+        })
+        .whereType<NodeModel>()
+        .where((NodeModel node) => node.type is SegmentationNodeType)
+        .toList(growable: false);
+  }
+
+  List<NodeModel> _dependencyParentsForNode(NodeModel node) {
+    if (!_psdUsesParentSegments(node)) {
+      return _immediateParents(node.id);
+    }
+    final List<NodeModel> parents = <NodeModel>[..._psdSignalParents(node)];
+    final String? selectedSegmentParentId = _selectedPsdSegmentParentId(node);
+    if (selectedSegmentParentId == null) {
+      return parents;
+    }
+    final NodeModel? selectedParent = _findNode(selectedSegmentParentId);
+    if (selectedParent != null && !parents.contains(selectedParent)) {
+      parents.add(selectedParent);
+    }
+    return parents;
+  }
+
+  List<Map<String, dynamic>> _psdParentSegmentOptions(NodeModel psdNode) {
+    final List<Map<String, dynamic>> options = <Map<String, dynamic>>[];
+    for (final NodeModel parent in _psdSegmentParents(psdNode)) {
+      final int? segmentCount = _segmentCountForNode(parent);
+      if (segmentCount == null || segmentCount <= 0) {
+        continue;
+      }
+      options.add(<String, dynamic>{
+        'id': parent.id,
+        'label': '${_nodeDescriptor(parent)} ($segmentCount segments)',
+        'segmentCount': segmentCount,
+      });
+    }
+    return options;
+  }
+
+  int? _segmentCountForNode(NodeModel node) {
+    final DatasetArtifactSnapshot? snapshot = _primarySnapshotForNode(node);
+    final int? snapshotCount = snapshot?.segmentedTimeSeries?.segmentCount;
+    if (snapshotCount != null) {
+      return snapshotCount;
+    }
+    for (final Dataset dataset in datasets.values) {
+      if (dataset.segmentedTimeSeries != null &&
+          dataset
+                  .artifactIdentityFor(
+                    BrainStoryArtifactKind.segmentedTimeSeries,
+                  )
+                  ?.producerNodeId ==
+              node.id) {
+        return dataset.segmentedTimeSeries!.segmentCount;
+      }
+    }
+    return null;
+  }
+
+  String? _selectedPsdSegmentParentId(NodeModel psdNode) {
+    final List<NodeModel> parents = _psdSegmentParents(psdNode);
+    if (parents.isEmpty) {
+      return null;
+    }
+    final String selectedId =
+        psdNode.params['parentSegmentsNodeId']?.toString().trim() ?? '';
+    if (selectedId.isNotEmpty &&
+        parents.any((NodeModel parent) => parent.id == selectedId)) {
+      return selectedId;
+    }
+    return parents.first.id;
   }
 
   String _equalWindowMarkerName(NodeModel segmentationNode) {
@@ -2840,6 +3248,26 @@ class CanvasLogic {
     }
 
     final List<VisualizationSourceRef> refs = <VisualizationSourceRef>[];
+    if (node.type is ImpedancesNodeType) {
+      final Set<String> datasetIds = _datasetsForNode(node);
+      final List<Dataset> matchingDatasets =
+          datasets.values
+              .where((Dataset dataset) => datasetIds.contains(dataset.id))
+              .toList(growable: false)
+            ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+      for (final Dataset dataset in matchingDatasets) {
+        refs.add(
+          VisualizationSourceRef(
+            key: '${node.id}|${dataset.id}',
+            datasetId: dataset.id,
+            datasetLabel: dataset.label,
+            materializeFromNodeId: node.id,
+            sourceDescriptor: _nodeDescriptor(node),
+          ),
+        );
+      }
+      return refs;
+    }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents =
           _immediateParents(node.id)
@@ -3006,6 +3434,9 @@ class CanvasLogic {
     NodeModel node,
     List<Dataset> datasets,
   ) {
+    if (node.type is ImpedancesNodeType) {
+      return 'impedances';
+    }
     for (final Dataset dataset in datasets) {
       if (dataset.bridgeDetection != null) {
         return 'bridge';
@@ -3044,6 +3475,9 @@ class CanvasLogic {
   }
 
   String _fallbackVisualizationViewForNode(NodeModel node) {
+    if (node.type is ImpedancesNodeType) {
+      return 'impedances';
+    }
     if (node.type is SleepStagingNodeType) {
       return 'hypnogram';
     }
@@ -3305,48 +3739,65 @@ class CanvasLogic {
   }
 
   Future<void> runThisStep(String nodeId, {Set<String>? datasetIds}) async {
-    await _runNodeSet(<String>{nodeId}, datasetIds: datasetIds);
+    final Set<String> expandedNodeIds = <String>{nodeId};
+    _expandRuntimeDependencies(expandedNodeIds, includeAncestors: false);
+    _assertCanRunNodeSet(expandedNodeIds, datasetIds: datasetIds);
+    await _runNodeSet(expandedNodeIds, datasetIds: datasetIds);
+  }
+
+  void _assertCanRunNodeSet(Set<String> nodeIds, {Set<String>? datasetIds}) {
+    final List<NodeModel> orderedNodes = _orderedNodes(nodeIds);
+    final Set<String> targetDatasetIds = <String>{};
+    for (final NodeModel node in orderedNodes) {
+      targetDatasetIds.addAll(_datasetsForNode(node));
+    }
+    if (datasetIds != null) {
+      targetDatasetIds.retainAll(datasetIds);
+    }
+    for (final String datasetId in targetDatasetIds) {
+      final Dataset? dataset = _datasetById(datasetId);
+      final String datasetLabel = dataset?.label ?? datasetId;
+      for (final NodeModel node in orderedNodes) {
+        if (node.type is ImportNodeType ||
+            !_datasetsForNode(node).contains(datasetId)) {
+          continue;
+        }
+        for (final NodeModel parent in _dependencyParentsForNode(node)) {
+          if (nodeIds.contains(parent.id)) {
+            continue;
+          }
+          final DatasetState state =
+              parent.datasetStates[datasetId] ?? DatasetState.notReady;
+          if (state != DatasetState.done) {
+            throw StateError(
+              'Cannot run ${node.title} for $datasetLabel because upstream node '
+              '${parent.title} is ${_datasetStateLabel(state)}. Use Run From Start '
+              'to recompute upstream dependencies.',
+            );
+          }
+        }
+      }
+    }
   }
 
   Future<void> runFromStart(String nodeId, {Set<String>? datasetIds}) async {
     await _runNodeSet(
       _collectAncestorsInclusive(nodeId),
       datasetIds: datasetIds,
+      includeAncestors: true,
     );
   }
 
   Future<void> _runNodeSet(
     Set<String> nodeIds, {
     Set<String>? datasetIds,
+    bool includeAncestors = false,
   }) async {
     final Set<String> expandedNodeIds = Set<String>.from(nodeIds);
-    bool graphChanged;
-    do {
-      graphChanged = false;
-      for (final String nodeId in expandedNodeIds.toList(growable: false)) {
-        final NodeModel? node = _findNode(nodeId);
-        if (node == null) {
-          continue;
-        }
-        if (node.type is PSDNodeType) {
-          graphChanged = _expandPsdRuntimePipeline(node) || graphChanged;
-        }
-        if (node.type is SegmentationNodeType &&
-            (node.params['mode'] ?? 'events').toString() == 'equal_windows') {
-          graphChanged = _ensureEqualWindowMarkerParent(node) || graphChanged;
-        }
-        final int previousExpandedCount = expandedNodeIds.length;
-        expandedNodeIds.addAll(_collectAncestorsInclusive(node.id));
-        expandedNodeIds.addAll(
-          _collectDescendantsInclusive(node.id).where((String descendantId) {
-            final NodeModel? descendant = _findNode(descendantId);
-            return descendant?.type is PSDAverageNodeType;
-          }),
-        );
-        graphChanged =
-            expandedNodeIds.length != previousExpandedCount || graphChanged;
-      }
-    } while (graphChanged);
+    _expandRuntimeDependencies(
+      expandedNodeIds,
+      includeAncestors: includeAncestors,
+    );
 
     final List<NodeModel> orderedNodes = _orderedNodes(expandedNodeIds);
     if (orderedNodes.isEmpty) {
@@ -3399,10 +3850,15 @@ class CanvasLogic {
 
         _runWaitingNodeIds.remove(node.id);
         _runActiveNodeId = node.id;
+        final bool wasStale =
+            node.datasetStates[dataset.id] == DatasetState.stale;
         node.datasetStates[dataset.id] = DatasetState.ready;
         try {
           dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
+          if (wasStale) {
+            await _restoreStaleNodeOutputForRun(node, dataset);
+          }
           final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
             dataset,
           );
@@ -3420,6 +3876,7 @@ class CanvasLogic {
             ),
           );
           node.datasetStates[dataset.id] = DatasetState.done;
+          _rememberLastRunParams(node, dataset.id);
           await _materializeNodeOutput(
             node,
             dataset,
@@ -3449,6 +3906,55 @@ class CanvasLogic {
     }
   }
 
+  void _expandRuntimeDependencies(
+    Set<String> expandedNodeIds, {
+    required bool includeAncestors,
+  }) {
+    bool graphChanged;
+    do {
+      graphChanged = false;
+      for (final String nodeId in expandedNodeIds.toList(growable: false)) {
+        final NodeModel? node = _findNode(nodeId);
+        if (node == null) {
+          continue;
+        }
+        if (node.type is PSDNodeType) {
+          final Set<String> forcedDependencies = _expandPsdRuntimePipeline(
+            node,
+          );
+          final int previousExpandedCount = expandedNodeIds.length;
+          expandedNodeIds.addAll(forcedDependencies);
+          graphChanged =
+              expandedNodeIds.length != previousExpandedCount || graphChanged;
+        }
+        if (node.type is SegmentationNodeType &&
+            (node.params['mode'] ?? 'events').toString() == 'equal_windows') {
+          final Set<String> forcedDependencies = _ensureEqualWindowMarkerParent(
+            node,
+          );
+          final int previousExpandedCount = expandedNodeIds.length;
+          expandedNodeIds.addAll(forcedDependencies);
+          graphChanged =
+              expandedNodeIds.length != previousExpandedCount || graphChanged;
+        }
+        final int previousExpandedCount = expandedNodeIds.length;
+        if (includeAncestors) {
+          expandedNodeIds.addAll(_collectAncestorsInclusive(node.id));
+        }
+        if (includeAncestors) {
+          expandedNodeIds.addAll(
+            _collectDescendantsInclusive(node.id).where((String descendantId) {
+              final NodeModel? descendant = _findNode(descendantId);
+              return descendant?.type is PSDAverageNodeType;
+            }),
+          );
+        }
+        graphChanged =
+            expandedNodeIds.length != previousExpandedCount || graphChanged;
+      }
+    } while (graphChanged);
+  }
+
   Set<String> _datasetsForNode(NodeModel node) {
     if (datasets.isEmpty) {
       return <String>{};
@@ -3466,6 +3972,12 @@ class CanvasLogic {
     _collectUpstreamImports(node.id, upstreamImports, visited);
 
     if (upstreamImports.isEmpty) {
+      if (node.type is ImpedancesNodeType) {
+        return _selectedDatasetIdsForNode(
+          node,
+          datasets.values.map((Dataset dataset) => dataset.id).toSet(),
+        );
+      }
       return <String>{};
     }
 
@@ -3488,12 +4000,21 @@ class CanvasLogic {
     };
   }
 
+  Dataset? _datasetById(String datasetId) {
+    for (final Dataset dataset in datasets.values) {
+      if (dataset.id == datasetId) {
+        return dataset;
+      }
+    }
+    return null;
+  }
+
   Set<String> _availableDatasetIdsForNode(NodeModel node) {
     if (node.type is ImportNodeType) {
       return datasets.values.map((Dataset dataset) => dataset.id).toSet();
     }
 
-    final List<NodeModel> parents = _immediateParents(node.id);
+    final List<NodeModel> parents = _dependencyParentsForNode(node);
     if (parents.isEmpty) {
       return <String>{};
     }
@@ -4080,15 +4601,13 @@ class CanvasLogic {
     final List<String> createdNodeTitles = <String>[];
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
-    if (hasChannelEdits && hasMarkerEdits) {
+    if (hasChannelEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
-        type: EditChannelsAndMarkersNodeType(),
+        type: EditChannelsNodeType(),
         datasetId: dataset.id,
         params: <String, dynamic>{
-          'markers': markerEditsValue,
-          'applyEmptyMarkerSet': true,
           'channelEditsByDataset': <String, dynamic>{
             dataset.id: channelEditConfigValue,
           },
@@ -4096,36 +4615,20 @@ class CanvasLogic {
       );
       anchorNode = lastCreatedNode;
       createdNodeTitles.add(lastCreatedNode.title);
-    } else {
-      if (hasChannelEdits) {
-        lastCreatedNode = _spawnViewerEditNode(
-          sourceNode: anchorNode,
-          insertBeforeNode: insertBeforeNode,
-          type: EditChannelsNodeType(),
-          datasetId: dataset.id,
-          params: <String, dynamic>{
-            'channelEditsByDataset': <String, dynamic>{
-              dataset.id: channelEditConfigValue,
-            },
-          },
-        );
-        anchorNode = lastCreatedNode;
-        createdNodeTitles.add(lastCreatedNode.title);
-      }
-      if (hasMarkerEdits) {
-        lastCreatedNode = _spawnViewerEditNode(
-          sourceNode: anchorNode,
-          insertBeforeNode: insertBeforeNode,
-          type: AddRemoveMarkersNodeType(),
-          datasetId: dataset.id,
-          params: <String, dynamic>{
-            'markers': markerEditsValue,
-            'applyEmptyMarkerSet': true,
-          },
-        );
-        anchorNode = lastCreatedNode;
-        createdNodeTitles.add(lastCreatedNode.title);
-      }
+    }
+    if (hasMarkerEdits) {
+      lastCreatedNode = _spawnViewerEditNode(
+        sourceNode: anchorNode,
+        insertBeforeNode: insertBeforeNode,
+        type: AddRemoveMarkersNodeType(),
+        datasetId: dataset.id,
+        params: <String, dynamic>{
+          'markers': markerEditsValue,
+          'applyEmptyMarkerSet': true,
+        },
+      );
+      anchorNode = lastCreatedNode;
+      createdNodeTitles.add(lastCreatedNode.title);
     }
 
     if (lastCreatedNode == null) {
@@ -4515,6 +5018,18 @@ class CanvasLogic {
         .toList(growable: false);
   }
 
+  void _rememberLastRunParams(NodeModel node, String datasetId) {
+    final Map<String, dynamic> lastRunParamsByDataset =
+        Map<String, dynamic>.from(
+          node.params[_lastRunParamsByDatasetKey] as Map? ??
+              const <String, dynamic>{},
+        );
+    lastRunParamsByDataset[datasetId] = _deepCloneJsonMap(
+      _exportableNodeParams(node.params),
+    );
+    node.params[_lastRunParamsByDatasetKey] = lastRunParamsByDataset;
+  }
+
   void _stampArtifactIdentities({
     required NodeModel node,
     required Dataset dataset,
@@ -4796,6 +5311,21 @@ class CanvasLogic {
         return 'Done';
       case DatasetState.stale:
         return 'Stale';
+    }
+  }
+
+  String _datasetStateLabel(DatasetState state) {
+    switch (state) {
+      case DatasetState.notReady:
+        return 'not ready';
+      case DatasetState.ready:
+        return 'ready';
+      case DatasetState.partial:
+        return 'partial';
+      case DatasetState.done:
+        return 'done';
+      case DatasetState.stale:
+        return 'stale';
     }
   }
 
@@ -5177,10 +5707,14 @@ class CanvasLogic {
       final DatasetArtifactSnapshot? snapshot =
           await _loadSnapshotForNodeDataset(upstreamNode.id, dataset.id);
       if (snapshot != null && !snapshot.isEmpty) {
-        _snapshotScopedToNodeOutputs(
+        DatasetArtifactSnapshot scopedSnapshot = _snapshotScopedToNodeOutputs(
           upstreamNode,
           snapshot,
-        ).applyToDataset(view);
+        );
+        if (_shouldSuppressPsdSegmentSnapshot(node, upstreamNode)) {
+          scopedSnapshot = _withoutSegmentedTimeSeries(scopedSnapshot);
+        }
+        scopedSnapshot.applyToDataset(view);
         appliedAnySnapshot = true;
         continue;
       }
@@ -5191,6 +5725,73 @@ class CanvasLogic {
     if (appliedAnySnapshot || view.timeSeries != null) {
       _replaceDatasetRam(dataset, view);
     }
+  }
+
+  Future<void> _restoreStaleNodeOutputForRun(
+    NodeModel node,
+    Dataset dataset,
+  ) async {
+    final DatasetArtifactSnapshot? snapshot = await _loadSnapshotForNodeDataset(
+      node.id,
+      dataset.id,
+    );
+    if (snapshot == null || snapshot.isEmpty) {
+      return;
+    }
+    _snapshotScopedToNodeOutputs(node, snapshot).applyToDataset(dataset);
+  }
+
+  bool _shouldSuppressPsdSegmentSnapshot(
+    NodeModel node,
+    NodeModel upstreamNode,
+  ) {
+    if (!_psdUsesParentSegments(node) ||
+        upstreamNode.type is! SegmentationNodeType) {
+      return false;
+    }
+    final String? selectedSegmentParentId = _selectedPsdSegmentParentId(node);
+    return selectedSegmentParentId != null &&
+        upstreamNode.id != selectedSegmentParentId;
+  }
+
+  DatasetArtifactSnapshot _withoutSegmentedTimeSeries(
+    DatasetArtifactSnapshot snapshot,
+  ) {
+    final Set<BrainStoryArtifactKind> includedKinds =
+        Set<BrainStoryArtifactKind>.from(
+          snapshot.includedKinds ??
+              <BrainStoryArtifactKind>{
+                if (snapshot.timeSeries != null)
+                  BrainStoryArtifactKind.timeSeries,
+                if (snapshot.spectrum != null) BrainStoryArtifactKind.spectrum,
+                if (snapshot.fooofResult != null)
+                  BrainStoryArtifactKind.fooofResult,
+                if (snapshot.featureTable != null)
+                  BrainStoryArtifactKind.featureTable,
+                if (snapshot.bridgeDetection != null)
+                  BrainStoryArtifactKind.bridgeDetection,
+                if (snapshot.timeFrequency != null)
+                  BrainStoryArtifactKind.timeFrequency,
+                if (snapshot.matrixTransformation != null)
+                  BrainStoryArtifactKind.matrixTransformation,
+                if (snapshot.markers != null) BrainStoryArtifactKind.markers,
+                ...snapshot.artifactIdentities.keys,
+              },
+        )..remove(BrainStoryArtifactKind.segmentedTimeSeries);
+    return DatasetArtifactSnapshot(
+      timeSeries: snapshot.timeSeries,
+      spectrum: snapshot.spectrum,
+      fooofResult: snapshot.fooofResult,
+      featureTable: snapshot.featureTable,
+      bridgeDetection: snapshot.bridgeDetection,
+      timeFrequency: snapshot.timeFrequency,
+      matrixTransformation: snapshot.matrixTransformation,
+      markers: snapshot.markers,
+      artifactIdentities: Map<BrainStoryArtifactKind, ArtifactIdentity>.from(
+        snapshot.artifactIdentities,
+      )..remove(BrainStoryArtifactKind.segmentedTimeSeries),
+      includedKinds: includedKinds,
+    );
   }
 
   void _replaceDatasetRam(Dataset target, Dataset source) {
@@ -6319,8 +6920,8 @@ class CanvasLogic {
 
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
     final double dx = (toNode.position.dx - fromNode.position.dx).abs();
-    final double dy = toNode.position.dy - fromNode.position.dy;
-    return dy > 0 && dy >= dx;
+    final double dy = (toNode.position.dy - fromNode.position.dy).abs();
+    return dy >= dx;
   }
 
   int? _connectionIndexAt(Offset point) {

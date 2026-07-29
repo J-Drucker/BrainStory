@@ -97,6 +97,16 @@ class DatasetPanel extends StatelessWidget {
                                 size: 18,
                               ),
                               onPressed: () async {
+                                if (logic.isDatasetMutationLocked(ds.id)) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        '${ds.label} is being used by the active job.',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
                                 final bool? confirmed = await showDialog<bool>(
                                   context: context,
                                   builder: (BuildContext dialogContext) {

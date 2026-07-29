@@ -17,10 +17,7 @@ class TopomapPointValue {
 }
 
 class TopomapValueBounds {
-  const TopomapValueBounds({
-    required this.min,
-    required this.max,
-  });
+  const TopomapValueBounds({required this.min, required this.max});
 
   final double min;
   final double max;
@@ -83,11 +80,7 @@ Color topomapColorForValue(
   final int lowerIndex = scaled.floor().clamp(0, palette.length - 2);
   final int upperIndex = lowerIndex + 1;
   final double segmentT = scaled - lowerIndex;
-  return Color.lerp(
-        palette[lowerIndex],
-        palette[upperIndex],
-        segmentT,
-      ) ??
+  return Color.lerp(palette[lowerIndex], palette[upperIndex], segmentT) ??
       palette[upperIndex];
 }
 
@@ -145,9 +138,7 @@ class TopomapLegendBar extends StatelessWidget {
           height: 12,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            gradient: LinearGradient(
-              colors: scale.palette,
-            ),
+            gradient: LinearGradient(colors: scale.palette),
           ),
         ),
         const SizedBox(height: 6),
@@ -203,7 +194,10 @@ class InterpolatedTopomap extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double size = math.min(constraints.maxWidth, constraints.maxHeight);
+        final double size = math.min(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
         return Center(
           child: SizedBox(
             width: size,
@@ -269,6 +263,9 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     if (showElectrodes) {
       _paintElectrodes(canvas, geometry.points);
     }
+    if (showLabels) {
+      _paintLabels(canvas, geometry.points);
+    }
   }
 
   void _paintInterpolatedField(
@@ -287,13 +284,7 @@ class _InterpolatedTopomapPainter extends CustomPainter {
 
     canvas.save();
     canvas.clipPath(
-      Path()
-        ..addOval(
-          Rect.fromCircle(
-            center: center,
-            radius: radius - 2,
-          ),
-        ),
+      Path()..addOval(Rect.fromCircle(center: center, radius: radius - 2)),
     );
 
     for (double y = center.dy - radius; y <= center.dy + radius; y += step) {
@@ -313,11 +304,7 @@ class _InterpolatedTopomapPainter extends CustomPainter {
         }
         fieldPaint.color = topomapColorForValue(value, bounds, scale);
         canvas.drawRect(
-          Rect.fromCenter(
-            center: sample,
-            width: step + 1,
-            height: step + 1,
-          ),
+          Rect.fromCenter(center: sample, width: step + 1, height: step + 1),
           fieldPaint,
         );
       }
@@ -338,7 +325,8 @@ class _InterpolatedTopomapPainter extends CustomPainter {
     double weightTotal = 0;
     for (final _ProjectedPoint point in points) {
       final Offset delta = sample - point.position;
-      final double distanceSquared = (delta.dx * delta.dx) + (delta.dy * delta.dy);
+      final double distanceSquared =
+          (delta.dx * delta.dx) + (delta.dy * delta.dy);
       if (distanceSquared <= 1) {
         return point.value;
       }
@@ -406,33 +394,46 @@ class _InterpolatedTopomapPainter extends CustomPainter {
 
     for (final _ProjectedPoint point in points) {
       final Paint pointFillPaint = Paint()
-        ..color = topomapColorForValue(point.value, bounds, scale).withValues(
-          alpha: 0.96,
-        )
+        ..color = topomapColorForValue(
+          point.value,
+          bounds,
+          scale,
+        ).withValues(alpha: 0.96)
         ..style = PaintingStyle.fill;
       canvas.drawCircle(point.position, 6.5, pointFillPaint);
       canvas.drawCircle(point.position, 6.5, pointOutlinePaint);
-      if (!showLabels) {
-        continue;
-      }
+    }
+  }
+
+  void _paintLabels(Canvas canvas, List<_ProjectedPoint> points) {
+    final Paint labelBackgroundPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.62)
+      ..style = PaintingStyle.fill;
+
+    for (final _ProjectedPoint point in points) {
       final TextPainter labelPainter = TextPainter(
         text: TextSpan(
           text: point.label,
           style: const TextStyle(
-            color: Colors.white,
+            color: Colors.black,
             fontSize: 11,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w700,
           ),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      labelPainter.paint(
-        canvas,
-        Offset(
-          point.position.dx + 8,
-          point.position.dy - (labelPainter.height / 2),
-        ),
+      final Offset labelOffset = Offset(
+        point.position.dx - (labelPainter.width / 2),
+        point.position.dy - (labelPainter.height / 2),
       );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          (labelOffset & labelPainter.size).inflate(2),
+          const Radius.circular(3),
+        ),
+        labelBackgroundPaint,
+      );
+      labelPainter.paint(canvas, labelOffset);
     }
   }
 
@@ -460,9 +461,7 @@ class _ProjectedPoint {
 }
 
 class _ProjectedTopomapGeometry {
-  const _ProjectedTopomapGeometry({
-    required this.points,
-  });
+  const _ProjectedTopomapGeometry({required this.points});
 
   final List<_ProjectedPoint> points;
 }
@@ -480,15 +479,17 @@ _ProjectedTopomapGeometry _projectGeometry(
   final double scale = radius / maxExtent;
 
   return _ProjectedTopomapGeometry(
-    points: values.map((TopomapPointValue point) {
-      return _ProjectedPoint(
-        label: point.label,
-        position: Offset(
-          center.dx - (point.coordinate.x * scale),
-          center.dy - (point.coordinate.y * scale),
-        ),
-        value: point.value,
-      );
-    }).toList(growable: false),
+    points: values
+        .map((TopomapPointValue point) {
+          return _ProjectedPoint(
+            label: point.label,
+            position: Offset(
+              center.dx + (point.coordinate.x * scale),
+              center.dy - (point.coordinate.y * scale),
+            ),
+            value: point.value,
+          );
+        })
+        .toList(growable: false),
   );
 }

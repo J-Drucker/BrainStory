@@ -156,6 +156,7 @@ class ResampleNodeType extends NodeType {
       channelSamples: outputChannels,
       sampleRate: targetSampleRate,
       channelLabels: timeSeries.channelLabels,
+      impedanceData: timeSeries.impedanceData,
       markers: timeSeries.markers
           .map((TimeMarker marker) => marker.copyWith())
           .toList(growable: false),

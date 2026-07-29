@@ -56,8 +56,13 @@ extension NodeGroupLabel on NodeGroup {
 class NodeRegistryEntry {
   final NodeGroup group;
   final NodeType Function() create;
+  final bool visible;
 
-  NodeRegistryEntry({required this.group, required this.create});
+  NodeRegistryEntry({
+    required this.group,
+    required this.create,
+    this.visible = true,
+  });
 }
 
 /// Central 3-level hierarchy:
@@ -109,16 +114,27 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => MicrostatesNodeType(),
+      visible: false,
     ),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => PCANodeType()),
-    NodeRegistryEntry(group: NodeGroup.transform, create: () => ICANodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => PCANodeType(),
+      visible: false,
+    ),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => ICANodeType(),
+      visible: false,
+    ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => EigenvalueDecompositionNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => SourceReconstructionNodeType(),
+      visible: false,
     ),
 
     // Multimodal
@@ -139,10 +155,12 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.machineLearning,
       create: () => KMeansNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.machineLearning,
       create: () => CNNNodeType(),
+      visible: false,
     ),
 
     // Markers and metadata
@@ -183,18 +201,22 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.endpoints,
       create: () => VisualizationNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.endpoints,
       create: () => DebugOutputNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.endpoints,
       create: () => ExportNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.endpoints,
       create: () => PublishNodeType(),
+      visible: false,
     ),
   ];
 }

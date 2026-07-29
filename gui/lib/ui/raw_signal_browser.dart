@@ -120,9 +120,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Offset? _dragSelectionStart;
   Offset? _dragSelectionCurrent;
   Offset? _dragSelectionGlobal;
+  bool _artifactDragActive = false;
   String? _hoveredMarkerReferenceId;
   String? _viewIdentity;
   bool _renamingMarker = false;
+  bool _draftSummaryExpanded = true;
+  _SavedChangesSummary? _savedChangesSummary;
   double _lastTraceViewportWidth = 180;
   bool _traceViewportSyncScheduled = false;
 
@@ -420,71 +423,72 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                           .opaque,
                                                       onTapDown: null,
                                                       onPanStart:
-                                                          interactiveMatchingEnabled
+                                                          markerEditingEnabled
                                                           ? (
                                                               DragStartDetails
                                                               details,
                                                             ) {
-                                                              _handleArtifactDragStart(
-                                                                details
-                                                                    .localPosition,
-                                                                details
-                                                                    .globalPosition,
-                                                              );
-                                                            }
-                                                          : markerEditingEnabled
-                                                          ? (
-                                                              DragStartDetails
-                                                              details,
-                                                            ) {
-                                                              _handleMarkerDragStart(
-                                                                details
-                                                                    .localPosition,
-                                                              );
+                                                              _artifactDragActive =
+                                                                  interactiveMatchingEnabled &&
+                                                                  !HardwareKeyboard
+                                                                      .instance
+                                                                      .isShiftPressed;
+                                                              if (_artifactDragActive) {
+                                                                _handleArtifactDragStart(
+                                                                  details
+                                                                      .localPosition,
+                                                                  details
+                                                                      .globalPosition,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragStart(
+                                                                  details
+                                                                      .localPosition,
+                                                                );
+                                                              }
                                                             }
                                                           : null,
                                                       onPanUpdate:
-                                                          interactiveMatchingEnabled
+                                                          markerEditingEnabled
                                                           ? (
                                                               DragUpdateDetails
                                                               details,
                                                             ) {
-                                                              _handleArtifactDragUpdate(
-                                                                details
-                                                                    .localPosition,
-                                                                details
-                                                                    .globalPosition,
-                                                              );
-                                                            }
-                                                          : markerEditingEnabled
-                                                          ? (
-                                                              DragUpdateDetails
-                                                              details,
-                                                            ) {
-                                                              _handleMarkerDragUpdate(
-                                                                details
-                                                                    .localPosition,
-                                                              );
+                                                              if (_artifactDragActive) {
+                                                                _handleArtifactDragUpdate(
+                                                                  details
+                                                                      .localPosition,
+                                                                  details
+                                                                      .globalPosition,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragUpdate(
+                                                                  details
+                                                                      .localPosition,
+                                                                );
+                                                              }
                                                             }
                                                           : null,
                                                       onPanEnd:
-                                                          interactiveMatchingEnabled
+                                                          markerEditingEnabled
                                                           ? (
                                                               DragEndDetails
                                                               details,
                                                             ) {
-                                                              _handleArtifactDragEnd(
-                                                                pixelsPerSecond,
-                                                              );
-                                                            }
-                                                          : markerEditingEnabled
-                                                          ? (
-                                                              DragEndDetails
-                                                              details,
-                                                            ) {
-                                                              _handleMarkerDragEnd(
-                                                                pixelsPerSecond,
-                                                              );
+                                                              final bool
+                                                              artifactDrag =
+                                                                  _artifactDragActive;
+                                                              _artifactDragActive =
+                                                                  false;
+                                                              if (artifactDrag) {
+                                                                _handleArtifactDragEnd(
+                                                                  pixelsPerSecond,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragEnd(
+                                                                  pixelsPerSecond,
+                                                                );
+                                                              }
                                                             }
                                                           : null,
                                                       onTapUp:
@@ -677,6 +681,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                 interactiveArtifactDetection:
                                     interactiveArtifactDetection,
                                 markers: markers,
+                                pixelsPerSecond: pixelsPerSecond,
                                 onCollapse: () =>
                                     _updateParam('right_panel_collapsed', true),
                               ),
@@ -758,18 +763,13 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                   selected: _currentMode() == 'edit',
                   onPressed: () => _setMode('edit'),
                 ),
-                _InlineChoiceOption(
-                  label: 'interactive',
-                  selected: _currentMode() == 'interactive',
-                  onPressed: () => _setMode('interactive'),
-                ),
               ],
             ),
             if (interactiveArtifactDetection)
               Text(
                 _interactiveMatchingEnabled()
-                    ? 'Drag to label blink • Alt+drag for other artifacts'
-                    : 'Edit uses the interactive backend, with template matching disabled',
+                    ? 'Drag to label blink • Alt+drag for other artifacts • Shift+drag for markers'
+                    : 'Shift+drag adds marker ranges',
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
             const _ControlStripDivider(),
@@ -787,12 +787,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               onSpacingSelected: (double value) =>
                   _updateParam('channel_spacing_factor', value),
             ),
-            OutlinedButton.icon(
-              onPressed: () =>
-                  showChannelPositionsDialog(context, dataset: widget.dataset),
-              icon: const Icon(Icons.public, size: 18),
-              label: const Text('Channel positions'),
-            ),
           ],
         ),
       ],
@@ -802,6 +796,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Widget _buildInfoPanel({
     required bool interactiveArtifactDetection,
     required List<TimeMarker> markers,
+    required double pixelsPerSecond,
     required VoidCallback onCollapse,
   }) {
     return DecoratedBox(
@@ -838,6 +833,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               ),
               const SizedBox(height: 10),
             ],
+            if (_savedChangesSummary != null) ...<Widget>[
+              Divider(color: Colors.white.withValues(alpha: 0.12)),
+              const SizedBox(height: 6),
+              _buildSavedChangesSummary(_savedChangesSummary!),
+              const SizedBox(height: 10),
+            ],
             Expanded(
               child: SingleChildScrollView(
                 child: Column(
@@ -853,6 +854,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         channelCoordinates:
                             widget.dataset.timeSeries?.channelCoordinates ??
                             const <String, ChannelCoordinate>{},
+                        pixelsPerSecond: pixelsPerSecond,
                         exemplarsExpanded:
                             (widget.params['artifact_exemplars_expanded']
                                 as bool?) ??
@@ -934,6 +936,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         _updateParam('marker_label_expanded', next);
                       },
                       onDelete: _deleteMarker,
+                      onDeleteLabel: _deleteMarkersWithLabel,
                       onFocus: (TimeMarker marker) {
                         _jumpToTimeRange(
                           onsetMicros: marker.onsetMicros,
@@ -1024,7 +1027,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyI) {
-        _setMode('interactive');
+        _setMode('edit');
         return KeyEventResult.handled;
       }
     }
@@ -1055,14 +1058,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   void _setMode(String mode) {
     setState(() {
-      if (mode == 'interactive') {
-        widget.params['interactiveArtifactDetection'] = true;
-        widget.params['interaction_mode'] = 'interactive';
-        widget.params['interactive_template_matching_enabled'] = true;
-      } else if (mode == 'edit') {
+      if (mode == 'edit') {
         widget.params['interactiveArtifactDetection'] = true;
         widget.params['interaction_mode'] = 'edit';
-        widget.params['interactive_template_matching_enabled'] = false;
+        widget.params['interactive_template_matching_enabled'] = true;
       } else {
         widget.params['interactiveArtifactDetection'] = false;
         widget.params['interaction_mode'] = 'view';
@@ -1341,17 +1340,37 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(
-                    'Edit Channels',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Channel ${channelIndex + 1}: ${baseLabels[channelIndex]}',
-                    style: TextStyle(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      fontWeight: FontWeight.w500,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              'Edit Channels',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Channel ${channelIndex + 1}: ${baseLabels[channelIndex]}',
+                              style: TextStyle(
+                                color: Colors.black.withValues(alpha: 0.65),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => showChannelPositionsDialog(
+                          context,
+                          dataset: widget.dataset,
+                        ),
+                        icon: const Icon(Icons.public, size: 18),
+                        label: const Text('Channel positions'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 14),
                   Expanded(
@@ -1359,6 +1378,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       channelLabels: baseLabels,
                       config: _effectiveChannelEditConfig(),
                       initialVisibleChannelIndices: <int>[channelIndex],
+                      currentCoordinateCount:
+                          baseTimeSeries.channelCoordinates.length,
                       onChanged: (Map<String, dynamic> config) {
                         setState(() {
                           _draftChannelEditConfig = config;
@@ -1442,6 +1463,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
+  void _deleteMarkersWithLabel(String label) {
+    _setDraftMarkersForDataset(
+      _currentMarkersForDataset()
+          .where((TimeMarker marker) => marker.label != label)
+          .toList(growable: false),
+    );
+  }
+
   Future<String?> _promptInteractiveArtifactLabel(Offset globalPosition) async {
     return showMenu<String>(
       context: context,
@@ -1485,7 +1514,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           return TimeMarker.fromJson(payload);
         })
         .toList(growable: false);
-    if (editedMarkers.isNotEmpty) {
+    if (_draftMarkers != null || editedMarkers.isNotEmpty) {
       _markerCacheKey = cacheKey;
       _cachedMarkers = editedMarkers;
       return editedMarkers;
@@ -1799,12 +1828,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       return;
     }
     final String fingerprint = _draftSaveFingerprint(request);
+    final _SavedChangesSummary savedSummary = _SavedChangesSummary(
+      title: _savedChangesTitle(request),
+      items: _draftManifestItems(_interactiveArtifactDetectionEnabled()),
+    );
     await onPersistDrafts(request);
     if (!mounted) {
       return;
     }
     setState(() {
       _lastPersistedDraftFingerprint = fingerprint;
+      _savedChangesSummary = savedSummary;
     });
     if (runAfterSave) {
       widget.onQuit?.call();
@@ -1840,12 +1874,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final Map<String, String> draftValues = <String, String>{
       for (final String label in labels) label: '',
     };
-    final Map<String, String>?
-    recodeMap = await showDialog<Map<String, String>>(
+    final Set<String> deletedLabels = <String>{};
+    final Map<String, dynamic>? edits = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Recode markers'),
+          title: const Text('Edit markers'),
           content: SizedBox(
             width: 560,
             child: StatefulBuilder(
@@ -1858,9 +1892,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          const Text(
-                            'Rename one or more marker labels. Blank entries are ignored.',
-                          ),
+                          const Text('Rename or delete marker labels.'),
                           const SizedBox(height: 12),
                           for (
                             int index = 0;
@@ -1880,21 +1912,52 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
-                                  child: TextFormField(
-                                    initialValue:
-                                        draftValues[labels[index]] ?? '',
-                                    decoration: const InputDecoration(
-                                      isDense: true,
-                                      hintText: 'New label',
-                                      border: OutlineInputBorder(),
+                                  child: IgnorePointer(
+                                    ignoring: deletedLabels.contains(
+                                      labels[index],
                                     ),
-                                    onChanged: (String value) {
+                                    child: Opacity(
+                                      opacity:
+                                          deletedLabels.contains(labels[index])
+                                          ? 0.4
+                                          : 1,
+                                      child: TextFormField(
+                                        initialValue:
+                                            draftValues[labels[index]] ?? '',
+                                        decoration: const InputDecoration(
+                                          isDense: true,
+                                          hintText: 'New label',
+                                          border: OutlineInputBorder(),
+                                        ),
+                                        onChanged: (String value) {
+                                          setDialogState(() {
+                                            draftValues[labels[index]] = value;
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Tooltip(
+                                  message:
+                                      'Delete all ${labels[index]} markers',
+                                  child: Checkbox(
+                                    value: deletedLabels.contains(
+                                      labels[index],
+                                    ),
+                                    onChanged: (bool? value) {
                                       setDialogState(() {
-                                        draftValues[labels[index]] = value;
+                                        if (value == true) {
+                                          deletedLabels.add(labels[index]);
+                                        } else {
+                                          deletedLabels.remove(labels[index]);
+                                        }
                                       });
                                     },
                                   ),
                                 ),
+                                const Text('Delete'),
                               ],
                             ),
                           ],
@@ -1911,13 +1974,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             ),
             ElevatedButton(
               onPressed: () {
-                final Map<String, String> next = <String, String>{
+                final Map<String, String> renamedLabels = <String, String>{
                   for (final MapEntry<String, String> entry
                       in draftValues.entries)
-                    if (entry.value.trim().isNotEmpty)
+                    if (!deletedLabels.contains(entry.key) &&
+                        entry.value.trim().isNotEmpty)
                       entry.key: entry.value.trim(),
                 };
-                Navigator.of(context).pop(next);
+                Navigator.of(context).pop(<String, dynamic>{
+                  'renamedLabels': renamedLabels,
+                  'deletedLabels': deletedLabels.toList(growable: false),
+                });
               },
               child: const Text('Apply'),
             ),
@@ -1925,22 +1992,29 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         );
       },
     );
-    if (!mounted || recodeMap == null || recodeMap.isEmpty) {
+    if (!mounted || edits == null) {
+      return;
+    }
+    final Map<String, String> renamedLabels = Map<String, String>.from(
+      edits['renamedLabels'] as Map? ?? const <String, String>{},
+    );
+    final Set<String> removedLabels = Set<String>.from(
+      edits['deletedLabels'] as List<dynamic>? ?? const <dynamic>[],
+    );
+    if (renamedLabels.isEmpty && removedLabels.isEmpty) {
       return;
     }
     final List<TimeMarker> recoded = markers
+        .where((TimeMarker marker) => !removedLabels.contains(marker.label))
         .map((TimeMarker marker) {
-          final String? replacement = recodeMap[marker.label];
+          final String? replacement = renamedLabels[marker.label];
           if (replacement == null || replacement.isEmpty) {
             return marker;
           }
           return marker.copyWith(label: replacement);
         })
         .toList(growable: false);
-    setState(() {
-      _setDraftMarkersForDataset(recoded);
-      _markerCacheKey = null;
-    });
+    _setDraftMarkersForDataset(recoded);
   }
 
   ViewerDraftSaveRequest? _currentDraftSaveRequest({
@@ -2090,6 +2164,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       'interactive_template_matching_enabled',
       () => _interactiveArtifactDetectionEnabled(),
     );
+    if ((widget.params['interaction_mode'] ?? '').toString() == 'interactive') {
+      widget.params['interaction_mode'] = 'edit';
+    }
     widget.params.putIfAbsent('marker_default_label', () => 'new marker');
     widget.params.putIfAbsent('markers', () => <Map<String, dynamic>>[]);
     widget.params.putIfAbsent('channel_colors', () => <String, dynamic>{});
@@ -2108,10 +2185,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     widget.params.putIfAbsent('right_panel_collapsed', () => false);
     if (_interactiveArtifactDetectionEnabled()) {
       final String interactionMode =
-          (widget.params['interaction_mode'] ?? 'interactive').toString();
-      if (interactionMode != 'edit' && interactionMode != 'interactive') {
-        widget.params['interaction_mode'] = 'interactive';
+          (widget.params['interaction_mode'] ?? 'edit').toString();
+      if (interactionMode != 'edit') {
+        widget.params['interaction_mode'] = 'edit';
       }
+      widget.params['interactive_template_matching_enabled'] = true;
       widget.params.putIfAbsent(
         'artifactExemplars',
         () => <Map<String, dynamic>>[],
@@ -2319,10 +2397,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   String _interactionMode() {
     final String mode = (widget.params['interaction_mode'] ?? 'view')
         .toString();
-    if (mode == 'interactive') {
-      return 'interactive';
-    }
-    if (mode == 'edit' || mode == 'markers' || mode == 'channels') {
+    if (mode == 'interactive' ||
+        mode == 'edit' ||
+        mode == 'markers' ||
+        mode == 'channels') {
       return 'edit';
     }
     return 'view';
@@ -2356,27 +2434,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Widget _buildDraftSummary(bool interactiveArtifactDetection) {
-    final List<_DraftManifestItem> items = <_DraftManifestItem>[
-      if (_hasMarkerDraft)
-        _DraftManifestItem(
-          label: 'Markers',
-          detail:
-              '${_currentMarkersForDataset().length} marker instance(s) will be written into an Edit Markers node for this dataset.',
-          color: const Color(0xFFFFD54F),
-        ),
-      if (_hasChannelEditDraft)
-        _DraftManifestItem(
-          label: 'Channels',
-          detail: _channelDraftSummary(),
-          color: const Color(0xFF6DD3FF),
-        ),
-      if (_hasInteractiveArtifactDraft)
-        _DraftManifestItem(
-          label: interactiveArtifactDetection ? 'Interactive' : 'Artifacts',
-          detail: _interactiveDraftSummary(),
-          color: const Color(0xFFFF8A65),
-        ),
-    ];
+    final List<_DraftManifestItem> items = _draftManifestItems(
+      interactiveArtifactDetection,
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -2389,72 +2449,127 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Text(
-              'Pending viewer changes',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+            InkWell(
+              onTap: () => setState(() {
+                _draftSummaryExpanded = !_draftSummaryExpanded;
+              }),
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    _draftSummaryExpanded
+                        ? Icons.expand_more
+                        : Icons.chevron_right,
+                    color: Colors.white70,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Unsaved changes',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Tooltip(
+                    message:
+                        'Saving creates or updates processing nodes. The source file is not changed.',
+                    child: Icon(
+                      Icons.info_outline,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Saving here updates processing state by creating or updating node-backed edits, not by changing the source file directly.',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-                height: 1.25,
+            if (_draftSummaryExpanded) ...<Widget>[
+              const SizedBox(height: 10),
+              ..._buildDraftManifestRows(items),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_DraftManifestItem> _draftManifestItems(
+    bool interactiveArtifactDetection,
+  ) {
+    return <_DraftManifestItem>[
+      if (_hasMarkerDraft)
+        _DraftManifestItem(
+          label: 'Markers',
+          detail: _markerDraftSummary(),
+          color: const Color(0xFFFFD54F),
+        ),
+      if (_hasChannelEditDraft)
+        _DraftManifestItem(label: 'Channels', detail: _channelDraftSummary()),
+      if (_hasInteractiveArtifactDraft)
+        _DraftManifestItem(
+          label: interactiveArtifactDetection ? 'Interactive' : 'Artifacts',
+          detail: _interactiveDraftSummary(),
+          color: const Color(0xFFFF8A65),
+        ),
+    ];
+  }
+
+  Widget _buildSavedChangesSummary(_SavedChangesSummary summary) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          summary.title,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ..._buildDraftManifestRows(summary.items),
+      ],
+    );
+  }
+
+  Iterable<Widget> _buildDraftManifestRows(List<_DraftManifestItem> items) {
+    return items.map(
+      (_DraftManifestItem item) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            if (item.color != null) ...<Widget>[
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: item.color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _viewerNodeCreationSummary(),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                height: 1.25,
-              ),
-            ),
-            const SizedBox(height: 10),
-            ...items.map(
-              (_DraftManifestItem item) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3),
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: item.color,
-                          shape: BoxShape.circle,
-                        ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: RichText(
+                text: TextSpan(
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    height: 1.25,
+                  ),
+                  children: <InlineSpan>[
+                    TextSpan(
+                      text: '${item.label}: ',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: RichText(
-                        text: TextSpan(
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            height: 1.25,
-                          ),
-                          children: <InlineSpan>[
-                            TextSpan(
-                              text: '${item.label}: ',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            TextSpan(text: item.detail),
-                          ],
-                        ),
-                      ),
-                    ),
+                    TextSpan(text: item.detail),
                   ],
                 ),
               ),
@@ -2465,6 +2580,18 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
+  String _savedChangesTitle(ViewerDraftSaveRequest request) {
+    final List<String> nodes = <String>[
+      if (request.hasChannelEdits) '"Edit Channels"',
+      if (request.hasMarkerEdits || request.hasInteractiveArtifactEdits)
+        '"Edit Markers"',
+    ];
+    final String nodeText = nodes.length == 1
+        ? '${nodes.single} node'
+        : '${nodes.join(' and ')} nodes';
+    return 'Saved changes (new $nodeText created)';
+  }
+
   String _channelDraftSummary() {
     final Map<String, dynamic> config = _effectiveChannelEditConfig();
     final Map<String, dynamic> edits = Map<String, dynamic>.from(
@@ -2472,7 +2599,116 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
     final List<dynamic> newChannels =
         config['newChannels'] as List<dynamic>? ?? const <dynamic>[];
-    return '${edits.length} existing-channel edit row(s) and ${newChannels.length} derived/new channel row(s) will be written into an Edit Channels node for this dataset.';
+    final TimeSeriesData? timeSeries = widget.dataset.timeSeries;
+    final List<String> labels = timeSeries == null
+        ? const <String>[]
+        : _channelLabels(timeSeries, timeSeries.channelCount);
+    final List<String> deleted = <String>[];
+    final List<String> interpolated = <String>[];
+    final List<String> renamedChannels = <String>[];
+    final List<String> added = <String>[];
+
+    for (final MapEntry<String, dynamic> entry in edits.entries) {
+      final int? index = int.tryParse(entry.key);
+      if (index == null || index < 0 || index >= labels.length) {
+        continue;
+      }
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      final String label = labels[index];
+      final String newName = (edit['rename'] ?? '').toString().trim();
+      if (edit['remove'] == true) {
+        final String mode = (edit['removeMode'] ?? 'delete')
+            .toString()
+            .toLowerCase();
+        (mode == 'interpolate' ? interpolated : deleted).add(label);
+      } else if (newName.isNotEmpty && newName != label) {
+        renamedChannels.add('$label to $newName');
+      }
+    }
+
+    for (final dynamic value in newChannels) {
+      final Map<String, dynamic> channel = Map<String, dynamic>.from(
+        value as Map? ?? const <String, dynamic>{},
+      );
+      final String name = (channel['name'] ?? '').toString().trim();
+      added.add(name.isEmpty ? 'unnamed channel' : name);
+    }
+
+    final List<String> changes = <String>[
+      if (deleted.isNotEmpty) 'Deleted: ${deleted.join(', ')}',
+      if (interpolated.isNotEmpty) 'Interpolated: ${interpolated.join(', ')}',
+      if (renamedChannels.isNotEmpty) 'Renamed: ${renamedChannels.join(', ')}',
+      if (added.isNotEmpty) 'Added: ${added.join(', ')}',
+    ];
+    if ((config['coordinateImportMode'] ?? '').toString() ==
+        EditChannelsNodeType.coordinateImportStandard) {
+      changes.add('Coordinates: All channels');
+    }
+    if ((config['rereferenceMode'] ?? '').toString() ==
+        EditChannelsNodeType.rereferenceAverage) {
+      changes.add('Applied average reference');
+    }
+    return changes.isEmpty ? 'No channel edits' : changes.join('; ');
+  }
+
+  String _markerDraftSummary() {
+    final List<TimeMarker> savedMarkers = _savedMarkersForDataset();
+    final List<TimeMarker> currentMarkers = _currentMarkersForDataset();
+    final Map<String, int> savedCounts = _markerCountsByLabel(savedMarkers);
+    final Map<String, int> currentCounts = _markerCountsByLabel(currentMarkers);
+    final List<String> deleted = <String>[];
+    final List<String> added = <String>[];
+
+    for (final String label in {...savedCounts.keys, ...currentCounts.keys}) {
+      final int difference =
+          (currentCounts[label] ?? 0) - (savedCounts[label] ?? 0);
+      if (difference < 0) {
+        deleted.add(_markerCountLabel(label, -difference));
+      } else if (difference > 0) {
+        added.add(_markerCountLabel(label, difference));
+      }
+    }
+
+    final List<String> changes = <String>[
+      if (deleted.isNotEmpty) 'Deleted: ${deleted.join(', ')}',
+      if (added.isNotEmpty) 'Added: ${added.join(', ')}',
+    ];
+    return changes.isEmpty ? 'Markers edited' : changes.join('; ');
+  }
+
+  List<TimeMarker> _savedMarkersForDataset() {
+    final List<TimeMarker> saved =
+        (widget.params['markers'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map<String, dynamic>>()
+            .where(
+              (Map<String, dynamic> marker) =>
+                  marker['datasetId'] == widget.dataset.id,
+            )
+            .map((Map<String, dynamic> marker) {
+              final Map<String, dynamic> payload = Map<String, dynamic>.from(
+                marker,
+              );
+              payload.remove('datasetId');
+              return TimeMarker.fromJson(payload);
+            })
+            .toList(growable: false);
+    return saved.isNotEmpty
+        ? saved
+        : widget.dataset.timeSeries?.markers ?? const <TimeMarker>[];
+  }
+
+  Map<String, int> _markerCountsByLabel(List<TimeMarker> markers) {
+    final Map<String, int> counts = <String, int>{};
+    for (final TimeMarker marker in markers) {
+      counts.update(marker.label, (int count) => count + 1, ifAbsent: () => 1);
+    }
+    return counts;
+  }
+
+  String _markerCountLabel(String label, int count) {
+    return count == 1 ? label : '$label ($count)';
   }
 
   String _interactiveDraftSummary() {
@@ -2489,37 +2725,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     ).length;
     final int templateCount = _artifactTemplateSummaries().length;
     return '$exemplarCount exemplar(s), $pendingCount pending candidate(s), $acceptedCount accepted match(es), and $templateCount template(s) will be converted into marker parameters in an Edit Markers node for this dataset.';
-  }
-
-  String _viewerNodeCreationSummary() {
-    final List<String> nodeLabels = <String>[];
-    final bool markerLikeDraft =
-        _hasMarkerDraft || _hasInteractiveArtifactDraft;
-    if (_hasChannelEditDraft && markerLikeDraft) {
-      nodeLabels.add('Edit Channels and Markers');
-    } else if (_hasChannelEditDraft) {
-      nodeLabels.add('Edit Channels');
-    } else if (markerLikeDraft) {
-      nodeLabels.add('Edit Markers');
-    }
-
-    if (nodeLabels.isEmpty) {
-      return 'No node will be created until there are unsaved edits.';
-    }
-    if (nodeLabels.length == 1) {
-      return 'Saving will create a new ${nodeLabels.first} node.';
-    }
-    return 'Saving will create ${nodeLabels.length} new nodes: ${_joinNodeLabels(nodeLabels)}.';
-  }
-
-  String _joinNodeLabels(List<String> values) {
-    if (values.length == 1) {
-      return values.first;
-    }
-    if (values.length == 2) {
-      return '${values.first} and ${values.last}';
-    }
-    return '${values.sublist(0, values.length - 1).join(', ')}, and ${values.last}';
   }
 
   String _currentMode() {
@@ -3266,6 +3471,7 @@ class _MarkerSection extends StatelessWidget {
     required this.onToggleLabelExpanded,
     required this.onToggle,
     required this.onDelete,
+    required this.onDeleteLabel,
     required this.onFocus,
   });
 
@@ -3276,6 +3482,7 @@ class _MarkerSection extends StatelessWidget {
   final void Function(String label, bool expanded) onToggleLabelExpanded;
   final ValueChanged<bool> onToggle;
   final ValueChanged<TimeMarker> onDelete;
+  final ValueChanged<String> onDeleteLabel;
   final ValueChanged<TimeMarker> onFocus;
 
   @override
@@ -3295,7 +3502,7 @@ class _MarkerSection extends StatelessWidget {
               child: Row(
                 children: <Widget>[
                   Icon(
-                    expanded ? Icons.expand_less : Icons.expand_more,
+                    expanded ? Icons.expand_more : Icons.chevron_right,
                     color: Colors.white70,
                     size: 18,
                   ),
@@ -3311,7 +3518,7 @@ class _MarkerSection extends StatelessWidget {
                   if (onRecode != null)
                     TextButton(
                       onPressed: onRecode,
-                      child: const Text('Recode markers'),
+                      child: const Text('Edit markers'),
                     ),
                 ],
               ),
@@ -3356,8 +3563,8 @@ class _MarkerSection extends StatelessWidget {
                                   children: <Widget>[
                                     Icon(
                                       isExpanded
-                                          ? Icons.expand_less
-                                          : Icons.expand_more,
+                                          ? Icons.expand_more
+                                          : Icons.chevron_right,
                                       color: Colors.white70,
                                       size: 18,
                                     ),
@@ -3386,6 +3593,20 @@ class _MarkerSection extends StatelessWidget {
                                       style: const TextStyle(
                                         color: Colors.white70,
                                         fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Tooltip(
+                                      message:
+                                          'Delete all ${group.label} markers',
+                                      child: IconButton(
+                                        onPressed: () =>
+                                            onDeleteLabel(group.label),
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          size: 18,
+                                        ),
+                                        color: Colors.white70,
+                                        visualDensity: VisualDensity.compact,
                                       ),
                                     ),
                                   ],
@@ -3518,6 +3739,7 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
     required this.labelChoices,
     required this.channelLabels,
     required this.channelCoordinates,
+    required this.pixelsPerSecond,
     required this.exemplarsExpanded,
     required this.candidatesExpanded,
     required this.templates,
@@ -3539,6 +3761,7 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
   final List<String> labelChoices;
   final List<String> channelLabels;
   final Map<String, ChannelCoordinate> channelCoordinates;
+  final double pixelsPerSecond;
   final bool exemplarsExpanded;
   final bool candidatesExpanded;
   final List<ArtifactTemplateSummary> templates;
@@ -3576,6 +3799,7 @@ class _InteractiveArtifactReviewSection extends StatelessWidget {
             templates: templates,
             channelLabels: channelLabels,
             channelCoordinates: channelCoordinates,
+            pixelsPerSecond: pixelsPerSecond,
           ),
           const SizedBox(height: 10),
           Wrap(
@@ -3800,7 +4024,7 @@ class _SectionHeader extends StatelessWidget {
       child: Row(
         children: <Widget>[
           Icon(
-            expanded ? Icons.expand_less : Icons.expand_more,
+            expanded ? Icons.expand_more : Icons.chevron_right,
             color: Colors.white70,
             size: 18,
           ),
@@ -3822,12 +4046,19 @@ class _DraftManifestItem {
   const _DraftManifestItem({
     required this.label,
     required this.detail,
-    required this.color,
+    this.color,
   });
 
   final String label;
   final String detail;
-  final Color color;
+  final Color? color;
+}
+
+class _SavedChangesSummary {
+  const _SavedChangesSummary({required this.title, required this.items});
+
+  final String title;
+  final List<_DraftManifestItem> items;
 }
 
 class _TimeAxisBar extends StatelessWidget {

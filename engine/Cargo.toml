@@ -20,3 +20,6 @@ ndarray = "0.15"
 realfft = "3.0"
 biquad = "0.4"  # For filters
 uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+cc = "1.1"

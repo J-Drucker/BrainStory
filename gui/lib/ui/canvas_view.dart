@@ -41,6 +41,7 @@ class _CanvasViewState extends State<CanvasView> {
   _KeyboardPane _keyboardPane = _KeyboardPane.canvas;
   Timer? _recentJobsCollapseTimer;
   bool _recentJobsCollapsed = true;
+  bool _projectActionsCollapsed = true;
 
   CanvasLogic get logic => widget.logic;
 
@@ -90,7 +91,6 @@ class _CanvasViewState extends State<CanvasView> {
           ]),
           builder: (BuildContext context, Widget? child) {
             final RunActivity? runActivity = logic.runActivity.value;
-            final bool interfaceLocked = runActivity?.locksInterface ?? false;
             return Stack(
               children: <Widget>[
                 Shortcuts(
@@ -108,7 +108,7 @@ class _CanvasViewState extends State<CanvasView> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text(
-                                  'That edit is locked while the current job is preparing, running, or committing.',
+                                  'That edit touches a node or wire used by the active job.',
                                 ),
                               ),
                             );
@@ -175,7 +175,26 @@ class _CanvasViewState extends State<CanvasView> {
                             export: () async {
                               await logic.exportBrainStory(context);
                             },
-                            clear: () => setState(() => logic.clearAll()),
+                            clear: () {
+                              if (logic.hasActiveRun) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Clear all is paused until the active job finishes.',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              setState(() => logic.clearAll());
+                            },
+                            projectActionsCollapsed: _projectActionsCollapsed,
+                            toggleProjectActionsCollapsed: () {
+                              setState(() {
+                                _projectActionsCollapsed =
+                                    !_projectActionsCollapsed;
+                              });
+                            },
                             update: () => setState(() {}),
                           ),
                           Expanded(
@@ -372,29 +391,26 @@ class _CanvasViewState extends State<CanvasView> {
                     ),
                   ),
                 ),
-                if (!interfaceLocked)
-                  _RecentJobsOverlay(
-                    runActivity: runActivity,
-                    jobs: logic.recentRunJobs.value,
-                    queuedJobs: logic.queuedRunJobs.value,
-                    processingResponsiveness:
-                        logic.processingResponsiveness.value,
-                    visualizerPriorityActive:
-                        logic.visualizerPriorityActive.value,
-                    collapsed: _recentJobsCollapsed,
-                    onToggleCollapsed: () {
-                      setState(() {
-                        _recentJobsCollapsed = !_recentJobsCollapsed;
-                      });
-                      if (_recentJobsCollapsed) {
-                        _scheduleRecentJobsCollapse();
-                      } else {
-                        _recentJobsCollapseTimer?.cancel();
-                      }
-                    },
-                  ),
-                if (interfaceLocked && runActivity != null)
-                  _ResourceLockOverlay(runActivity: runActivity),
+                _RecentJobsOverlay(
+                  runActivity: runActivity,
+                  jobs: logic.recentRunJobs.value,
+                  queuedJobs: logic.queuedRunJobs.value,
+                  processingResponsiveness:
+                      logic.processingResponsiveness.value,
+                  visualizerPriorityActive:
+                      logic.visualizerPriorityActive.value,
+                  collapsed: _recentJobsCollapsed,
+                  onToggleCollapsed: () {
+                    setState(() {
+                      _recentJobsCollapsed = !_recentJobsCollapsed;
+                    });
+                    if (_recentJobsCollapsed) {
+                      _scheduleRecentJobsCollapse();
+                    } else {
+                      _recentJobsCollapseTimer?.cancel();
+                    }
+                  },
+                ),
               ],
             );
           },
@@ -456,11 +472,6 @@ class _CanvasViewState extends State<CanvasView> {
   }
 
   KeyEventResult _handleKeyboardEvent(FocusNode node, KeyEvent event) {
-    if (logic.interfaceLocked) {
-      return event is KeyDownEvent
-          ? KeyEventResult.handled
-          : KeyEventResult.ignored;
-    }
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
@@ -1107,132 +1118,6 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
       RunActivityPhase.running => const Color(0xFF7FE36A),
       RunActivityPhase.finalizing => const Color(0xFF6DD3FF),
     };
-  }
-}
-
-class _ResourceLockOverlay extends StatelessWidget {
-  const _ResourceLockOverlay({required this.runActivity});
-
-  final RunActivity runActivity;
-
-  @override
-  Widget build(BuildContext context) {
-    final String detail = runActivity.detail.trim();
-    final bool initializing =
-        runActivity.phase == RunActivityPhase.initializing;
-    final String title = initializing
-        ? 'Initializing resources'
-        : 'Committing results';
-    final Color accent = initializing
-        ? const Color(0xFFFFD166)
-        : const Color(0xFF6DD3FF);
-
-    return Positioned.fill(
-      child: Stack(
-        children: <Widget>[
-          ModalBarrier(
-            dismissible: false,
-            color: Colors.black.withValues(alpha: 0.56),
-            semanticsLabel: 'BrainStory is busy',
-          ),
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF11151B),
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: accent.withValues(alpha: 0.58)),
-                  boxShadow: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x99000000),
-                      blurRadius: 32,
-                      offset: Offset(0, 18),
-                    ),
-                  ],
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          SizedBox(
-                            width: 34,
-                            height: 34,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              color: accent,
-                              backgroundColor: Colors.white.withValues(
-                                alpha: 0.10,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: <Widget>[
-                                Text(
-                                  title,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  runActivity.label,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (detail.isNotEmpty) ...<Widget>[
-                        const SizedBox(height: 18),
-                        Text(
-                          detail,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 18),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          minHeight: 7,
-                          color: accent,
-                          backgroundColor: Colors.white.withValues(alpha: 0.10),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'The interface only locks during short setup and commit phases. Long processing continues in the jobs panel so more work can be queued.',
-                        style: TextStyle(
-                          color: Colors.white60,
-                          height: 1.35,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 

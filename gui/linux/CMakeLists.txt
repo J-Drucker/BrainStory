@@ -50,6 +50,24 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
+find_program(CARGO_EXECUTABLE cargo)
+if(CARGO_EXECUTABLE)
+  set(BRAINSTORY_ENGINE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.toml")
+  set(BRAINSTORY_ENGINE_LOCKFILE "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/Cargo.lock")
+  set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/debug")
+  set(BRAINSTORY_ENGINE_BUILD_ARGS build --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
+  set(BRAINSTORY_ENGINE_LIBRARY "${BRAINSTORY_ENGINE_OUTPUT_DIR}/libbrainstory_engine.so")
+  file(GLOB_RECURSE BRAINSTORY_ENGINE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/src/*.rs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/vendor/libeep/src/*")
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "Profile")
+    set(BRAINSTORY_ENGINE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/target/release")
+    set(BRAINSTORY_ENGINE_BUILD_ARGS build --release --lib --manifest-path "${BRAINSTORY_ENGINE_MANIFEST}")
+    set(BRAINSTORY_ENGINE_LIBRARY "${BRAINSTORY_ENGINE_OUTPUT_DIR}/libbrainstory_engine.so")
+  endif()
+endif()
+
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
@@ -105,6 +123,12 @@ foreach(bundled_library ${PLUGIN_BUNDLED_LIBRARIES})
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endforeach(bundled_library)
+
+if(CARGO_EXECUTABLE)
+  install(FILES "${BRAINSTORY_ENGINE_LIBRARY}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")

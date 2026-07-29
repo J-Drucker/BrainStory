@@ -119,6 +119,11 @@ class NodeCard extends StatelessWidget {
   }
 
   Widget _buildCard() {
+    final Color resolvedHighlightColor =
+        highlightColor ?? const Color(0xFFC3B15C);
+    final Color badgeAccentColor = highlighted
+        ? resolvedHighlightColor
+        : Colors.transparent;
     return SizedBox(
       width: width,
       height: height,
@@ -141,9 +146,7 @@ class NodeCard extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
             side: BorderSide(
-              color: highlighted
-                  ? (highlightColor ?? const Color(0xFFC3B15C))
-                  : Colors.transparent,
+              color: highlighted ? resolvedHighlightColor : Colors.transparent,
               width: highlighted ? 2 : 0,
             ),
           ),
@@ -160,6 +163,10 @@ class NodeCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: const Color(0xFF30343A),
                     borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: badgeAccentColor,
+                      width: highlighted ? 1.4 : 0,
+                    ),
                     boxShadow: const <BoxShadow>[
                       BoxShadow(
                         color: Color(0x44000000),
@@ -171,7 +178,9 @@ class NodeCard extends StatelessWidget {
                   child: Text(
                     '$nodeNumber',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
+                      color: highlighted
+                          ? resolvedHighlightColor
+                          : Colors.white.withValues(alpha: 0.85),
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                     ),

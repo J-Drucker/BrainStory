@@ -241,6 +241,7 @@
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				8D488E8FA0AF97B92AF00B1D /* [CP] Embed Pods Frameworks */,
+				A71C0EEDAA711001AA000001 /* Build BrainStory Engine */,
 			);
 			buildRules = (
 			);
@@ -340,6 +341,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "echo \"$PRODUCT_NAME.app\" > \"$PROJECT_DIR\"/Flutter/ephemeral/.app_filename && \"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh embed\n";
+		};
+		A71C0EEDAA711001AA000001 /* Build BrainStory Engine */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build BrainStory Engine";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nENGINE_DIR=\"$PROJECT_DIR/../../engine\"\nCARGO_BIN=\"${HOME}/.cargo/bin/cargo\"\nif [ ! -x \"$CARGO_BIN\" ]; then\n  CARGO_BIN=\"$(command -v cargo || true)\"\nfi\nif [ -z \"$CARGO_BIN\" ]; then\n  echo \"error: Cargo is required to build BrainStory's native engine. Install Rust from https://rustup.rs.\" >&2\n  exit 1\nfi\nif [ \"$CONFIGURATION\" = \"Release\" ] || [ \"$CONFIGURATION\" = \"Profile\" ]; then\n  \"$CARGO_BIN\" build --release --lib --manifest-path \"$ENGINE_DIR/Cargo.toml\"\n  ENGINE_LIBRARY=\"$ENGINE_DIR/target/release/libbrainstory_engine.dylib\"\nelse\n  \"$CARGO_BIN\" build --lib --manifest-path \"$ENGINE_DIR/Cargo.toml\"\n  ENGINE_LIBRARY=\"$ENGINE_DIR/target/debug/libbrainstory_engine.dylib\"\nfi\nDESTINATION=\"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libbrainstory_engine.dylib\"\nmkdir -p \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\ncp \"$ENGINE_LIBRARY\" \"$DESTINATION\"\nSIGNING_IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\ncodesign --force --sign \"$SIGNING_IDENTITY\" \"$DESTINATION\"\ncodesign --force --deep --sign \"$SIGNING_IDENTITY\" --preserve-metadata=identifier,entitlements,requirements,flags \"$TARGET_BUILD_DIR/$WRAPPER_NAME\"\n";
+			showEnvVarsInLog = 0;
 		};
 		33CC111E2044C6BF0003C045 /* ShellScript */ = {
 			isa = PBXShellScriptBuildPhase;

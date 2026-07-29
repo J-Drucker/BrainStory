@@ -20,18 +20,18 @@ class ChannelCoordinatesNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'mode': 'standard',
-      };
+    'mode': 'standard',
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   Widget buildBody(
@@ -100,11 +100,14 @@ class ChannelCoordinatesNodeType extends NodeType {
       return;
     }
 
-    final String csvPayload = await rootBundle.loadString(standardCoordinatesAsset);
+    final String csvPayload = await rootBundle.loadString(
+      standardCoordinatesAsset,
+    );
     final Map<String, ChannelCoordinate> standardCoordinates =
         parseChannelCoordinateCsv(csvPayload);
     final List<String> labels = _channelLabelsForSeries(timeSeries);
-    final Map<String, ChannelCoordinate> attached = <String, ChannelCoordinate>{};
+    final Map<String, ChannelCoordinate> attached =
+        <String, ChannelCoordinate>{};
     for (final String label in labels) {
       final ChannelCoordinate? coordinate = coordinateForChannelLabel(
         standardCoordinates,
@@ -153,8 +156,10 @@ class ChannelCoordinatesNodeType extends NodeType {
     final Map<String, ChannelCoordinate> coordinates =
         <String, ChannelCoordinate>{};
     for (final String line in lines.skip(1)) {
-      final List<String> cells =
-          line.split(',').map((String cell) => cell.trim()).toList(growable: false);
+      final List<String> cells = line
+          .split(',')
+          .map((String cell) => cell.trim())
+          .toList(growable: false);
       if (cells.length < 4) {
         continue;
       }
@@ -165,9 +170,10 @@ class ChannelCoordinatesNodeType extends NodeType {
       if (label.isEmpty || x == null || y == null || z == null) {
         continue;
       }
+      final double conventionalX = _coordinateXWithConventionalSign(label, x);
       coordinates[_normalizeChannelLabel(label)] = ChannelCoordinate(
         label: label,
-        x: x,
+        x: conventionalX,
         y: y,
         z: z,
         coordinateSystem: cells.length > 4 && cells[4].isNotEmpty
@@ -233,7 +239,9 @@ class ChannelCoordinatesNodeType extends NodeType {
     ]) {
       final String normalized = _normalizeChannelLabel(trimmed);
       if (normalized.endsWith(suffix)) {
-        addCandidate(normalized.substring(0, normalized.length - suffix.length));
+        addCandidate(
+          normalized.substring(0, normalized.length - suffix.length),
+        );
       }
     }
     return candidates;
@@ -241,4 +249,24 @@ class ChannelCoordinatesNodeType extends NodeType {
 
   static String _normalizeChannelLabel(String label) =>
       label.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+
+  static double _coordinateXWithConventionalSign(String label, double x) {
+    final RegExpMatch? sideMatch = RegExp(
+      r'(\d+)$',
+    ).firstMatch(_normalizeChannelLabel(label));
+    if (sideMatch == null) {
+      return x;
+    }
+    final int? number = int.tryParse(sideMatch.group(1)!);
+    if (number == null) {
+      return x;
+    }
+    if (number.isOdd && x > 0) {
+      return -x;
+    }
+    if (number.isEven && x < 0) {
+      return -x;
+    }
+    return x;
+  }
 }

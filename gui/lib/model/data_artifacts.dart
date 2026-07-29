@@ -420,6 +420,73 @@ class TimeMarker {
   }
 }
 
+/// Impedance readings arranged as channels (rows) by measurement times
+/// (columns). A null cell represents a missing reading.
+class ImpedanceData {
+  ImpedanceData({
+    required this.channelLabels,
+    required this.measurementTimesMicros,
+    required this.ohmsByChannel,
+  }) : assert(ohmsByChannel.length == channelLabels.length),
+       assert(
+         ohmsByChannel.every(
+           (List<double?> row) => row.length == measurementTimesMicros.length,
+         ),
+       );
+
+  final List<String> channelLabels;
+  final List<int> measurementTimesMicros;
+  final List<List<double?>> ohmsByChannel;
+
+  int get channelCount => channelLabels.length;
+  int get measurementCount => measurementTimesMicros.length;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'channelLabels': channelLabels,
+    'measurementTimesMicros': measurementTimesMicros,
+    'ohmsByChannel': ohmsByChannel,
+  };
+
+  static ImpedanceData? fromJsonOrNull(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final List<String> channelLabels =
+        (value['channelLabels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic label) => label.toString())
+            .toList(growable: false);
+    final List<int> measurementTimesMicros =
+        (value['measurementTimesMicros'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<num>()
+            .map((num time) => time.toInt())
+            .toList(growable: false);
+    final List<List<double?>> ohmsByChannel =
+        (value['ohmsByChannel'] as List<dynamic>? ?? const <dynamic>[])
+            .map(
+              (dynamic row) => (row as List<dynamic>)
+                  .map(
+                    (dynamic reading) =>
+                        reading is num ? reading.toDouble() : null,
+                  )
+                  .toList(growable: false),
+            )
+            .toList(growable: false);
+    if (channelLabels.length != ohmsByChannel.length ||
+        ohmsByChannel.any(
+          (List<double?> row) => row.length != measurementTimesMicros.length,
+        )) {
+      throw const FormatException(
+        'Impedance data has an invalid matrix shape.',
+      );
+    }
+    return ImpedanceData(
+      channelLabels: channelLabels,
+      measurementTimesMicros: measurementTimesMicros,
+      ohmsByChannel: ohmsByChannel,
+    );
+  }
+}
+
 class MarkerLabelTrack {
   const MarkerLabelTrack({
     required this.label,
@@ -597,6 +664,7 @@ class TimeSeriesData {
     required this.sampleRate,
     this.channelLabels = const <String>[],
     this.channelCoordinates = const <String, ChannelCoordinate>{},
+    this.impedanceData,
     this.markers = const <TimeMarker>[],
     this.factors = const <Factor>[],
     this.source = '',
@@ -610,6 +678,7 @@ class TimeSeriesData {
   final double sampleRate;
   final List<String> channelLabels;
   final Map<String, ChannelCoordinate> channelCoordinates;
+  final ImpedanceData? impedanceData;
   final List<TimeMarker> markers;
   final List<Factor> factors;
   final String source;
@@ -675,6 +744,7 @@ class TimeSeriesData {
     double? sampleRate,
     List<String>? channelLabels,
     Map<String, ChannelCoordinate>? channelCoordinates,
+    ImpedanceData? impedanceData,
     List<TimeMarker>? markers,
     List<Factor>? factors,
     String? source,
@@ -686,6 +756,7 @@ class TimeSeriesData {
       sampleRate: sampleRate ?? this.sampleRate,
       channelLabels: channelLabels ?? this.channelLabels,
       channelCoordinates: channelCoordinates ?? this.channelCoordinates,
+      impedanceData: impedanceData ?? this.impedanceData,
       markers: markers ?? this.markers,
       factors: factors ?? this.factors,
       source: source ?? this.source,
@@ -702,6 +773,7 @@ class TimeSeriesData {
         (String key, ChannelCoordinate value) =>
             MapEntry<String, dynamic>(key, value.toJson()),
       ),
+      if (impedanceData != null) 'impedanceData': impedanceData!.toJson(),
       'markers': markers
           .map((TimeMarker marker) => marker.toJson())
           .toList(growable: false),
@@ -743,6 +815,7 @@ class TimeSeriesData {
                       ),
                     ),
               ),
+      impedanceData: ImpedanceData.fromJsonOrNull(json['impedanceData']),
       markers: (json['markers'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
           .map(TimeMarker.fromJson)

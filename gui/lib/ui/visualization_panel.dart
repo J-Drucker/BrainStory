@@ -451,6 +451,13 @@ class _VisualizationChart extends StatelessWidget {
         onChanged: onChanged,
       );
     }
+    if (view == 'impedances') {
+      return _ImpedanceChart(
+        datasets: datasets,
+        params: params,
+        onChanged: onChanged,
+      );
+    }
     if (view == 'bridge') {
       final Dataset activeDataset = datasets.firstWhere(
         (Dataset dataset) => dataset.id == activeDatasetId,
@@ -2012,6 +2019,191 @@ class _HypnogramChart extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _ImpedanceChart extends StatelessWidget {
+  const _ImpedanceChart({
+    required this.datasets,
+    required this.params,
+    required this.onChanged,
+  });
+
+  final List<Dataset> datasets;
+  final Map<String, dynamic> params;
+  final VoidCallback onChanged;
+
+  static const List<Color> _datasetColors = <Color>[
+    Color(0xFF71D4CE),
+    Color(0xFFE3A25A),
+    Color(0xFFC589C8),
+    Color(0xFF8DBB66),
+    Color(0xFF78A8D8),
+    Color(0xFFD97979),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final List<ImpedanceData> available = datasets
+        .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
+        .whereType<ImpedanceData>()
+        .where((ImpedanceData data) => data.measurementCount > 0)
+        .toList(growable: false);
+    if (available.isEmpty) {
+      return const _ChartMessage(
+        title: 'No impedance measurements',
+        body: 'Import an ANT CNT recording containing impedance measurements.',
+      );
+    }
+
+    String channel = params['impedance_channel']?.toString() ?? '';
+    if (channel.isEmpty ||
+        !available.any(
+          (ImpedanceData data) => data.channelLabels.contains(channel),
+        )) {
+      channel = available.first.channelLabels.first;
+      params['impedance_channel'] = channel;
+    }
+    final bool admittance = params['impedance_quantity'] == 'admittance';
+    final bool logY = params['impedance_y_scale'] == 'log';
+    final String lineMode = params['impedance_line_mode']?.toString() ?? 'line';
+    final List<_SeriesData> series = <_SeriesData>[];
+
+    for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
+      final Dataset dataset = datasets[datasetIndex];
+      final ImpedanceData? data = dataset.timeSeries?.impedanceData;
+      if (data == null) {
+        continue;
+      }
+      final int channelIndex = data.channelLabels.indexOf(channel);
+      if (channelIndex < 0) {
+        continue;
+      }
+      final List<FlSpot> points = <FlSpot>[];
+      for (int timeIndex = 0; timeIndex < data.measurementCount; timeIndex++) {
+        final double? ohms = data.ohmsByChannel[channelIndex][timeIndex];
+        if (ohms == null || !ohms.isFinite || ohms <= 0) {
+          continue;
+        }
+        final double unscaled = admittance ? 1.0 / ohms : ohms;
+        if (!unscaled.isFinite || unscaled <= 0) {
+          continue;
+        }
+        points.add(
+          FlSpot(
+            data.measurementTimesMicros[timeIndex] / 1000000.0,
+            logY ? math.log(unscaled) / math.ln10 : unscaled,
+          ),
+        );
+      }
+      if (points.isNotEmpty) {
+        series.add(
+          _SeriesData(
+            label: dataset.label,
+            color: _datasetColors[datasetIndex % _datasetColors.length],
+            points: points,
+            subtitle:
+                '$channel, ${points.length} measurement${points.length == 1 ? '' : 's'}',
+          ),
+        );
+      }
+    }
+    if (series.isEmpty) {
+      return _ChartMessage(
+        title: 'No readings for $channel',
+        body:
+            'Choose a channel that has impedance measurements in the selected datasets.',
+      );
+    }
+
+    final List<FlSpot> allPoints = series
+        .expand((_SeriesData item) => item.points)
+        .toList(growable: false);
+    final double rawMinX = allPoints
+        .map((FlSpot point) => point.x)
+        .reduce(math.min);
+    final double rawMaxX = allPoints
+        .map((FlSpot point) => point.x)
+        .reduce(math.max);
+    final double rawMinY = allPoints
+        .map((FlSpot point) => point.y)
+        .reduce(math.min);
+    final double rawMaxY = allPoints
+        .map((FlSpot point) => point.y)
+        .reduce(math.max);
+    final double xPadding = math.max(1.0, (rawMaxX - rawMinX).abs() * 0.06);
+    final double yPadding = math.max(
+      logY ? 0.08 : 0.001,
+      (rawMaxY - rawMinY).abs() * 0.1,
+    );
+    final double minX = rawMinX == rawMaxX ? rawMinX - 1 : rawMinX - xPadding;
+    final double maxX = rawMinX == rawMaxX ? rawMaxX + 1 : rawMaxX + xPadding;
+    final double minY = rawMinY == rawMaxY
+        ? rawMinY - yPadding
+        : rawMinY - yPadding;
+    final double maxY = rawMinY == rawMaxY
+        ? rawMaxY + yPadding
+        : rawMaxY + yPadding;
+    final String unit = admittance ? 'S' : 'Ohm';
+    final String yAxisLabel = logY
+        ? 'log10($unit)'
+        : '${admittance ? 'Admittance' : 'Impedance'} ($unit)';
+
+    return _ChartCard(
+      title: '${admittance ? 'Admittance' : 'Impedance'}: $channel',
+      subtitle: 'Each point is an acquisition-time measurement.',
+      legend: series,
+      child: LineChart(
+        LineChartData(
+          minX: minX,
+          maxX: maxX,
+          minY: minY,
+          maxY: maxY,
+          gridData: FlGridData(
+            show: true,
+            horizontalInterval: _niceAxisStep(maxY - minY),
+            verticalInterval: _niceAxisStep(maxX - minX),
+          ),
+          borderData: FlBorderData(show: false),
+          lineTouchData: const LineTouchData(enabled: false),
+          titlesData: _chartTitles(
+            minX: minX,
+            maxX: maxX,
+            minY: minY,
+            maxY: maxY,
+            logY: logY,
+            xAxisLabel: 'Time (s)',
+            yAxisLabel: yAxisLabel,
+            yAxisReservedSize: 64,
+          ),
+          lineBarsData: series
+              .map((_SeriesData item) {
+                final bool drawLine =
+                    lineMode != 'none' && item.points.length > 1;
+                return LineChartBarData(
+                  spots: item.points,
+                  isCurved: lineMode == 'smooth' && item.points.length > 2,
+                  preventCurveOverShooting: true,
+                  curveSmoothness: 0.22,
+                  barWidth: drawLine ? 2.2 : 0,
+                  color: item.color,
+                  dotData: FlDotData(
+                    show: true,
+                    getDotPainter:
+                        (FlSpot _, double __, LineChartBarData ___, int ____) =>
+                            FlDotCirclePainter(
+                              radius: 4.2,
+                              color: item.color,
+                              strokeWidth: 1.4,
+                              strokeColor: Colors.white,
+                            ),
+                  ),
+                );
+              })
+              .toList(growable: false),
+        ),
       ),
     );
   }

@@ -21,9 +21,11 @@ class PSDNodeType extends NodeType {
     'fLow': 1.0,
     'fHigh': 40.0,
     'outputMode': 'averaged', // 'segments' or 'averaged'
+    'useParentSegments': false,
+    'parentSegmentsNodeId': '',
     'windowing': 'hamming',
     'windowLengthSec': 2.0,
-    'windowOverlapPercent': 50,
+    'windowOverlapPercent': 10,
   };
 
   @override
@@ -46,9 +48,21 @@ class PSDNodeType extends NodeType {
     params.putIfAbsent('fLow', () => 1.0);
     params.putIfAbsent('fHigh', () => 40.0);
     params.putIfAbsent('outputMode', () => 'averaged');
+    params.putIfAbsent('useParentSegments', () => false);
+    params.putIfAbsent('parentSegmentsNodeId', () => '');
     params.putIfAbsent('windowing', () => 'hamming');
     params.putIfAbsent('windowLengthSec', () => 2.0);
     params.putIfAbsent('windowOverlapPercent', () => 50);
+    final List<_ParentSegmentOption> parentSegmentOptions =
+        _parentSegmentOptionsFromParams(params);
+    final bool useParentSegments = params['useParentSegments'] == true;
+    final bool selectedParentIsAvailable = parentSegmentOptions.any(
+      (_ParentSegmentOption option) =>
+          option.id == params['parentSegmentsNodeId']?.toString(),
+    );
+    if (!selectedParentIsAvailable && parentSegmentOptions.length == 1) {
+      params['parentSegmentsNodeId'] = parentSegmentOptions.single.id;
+    }
 
     Widget compactRadio({required String label, required String value}) {
       return RadioListTile<String>(
@@ -200,6 +214,45 @@ class PSDNodeType extends NodeType {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          value: useParentSegments,
+          title: const Text('Use parent segments'),
+          subtitle: Text(
+            parentSegmentOptions.isEmpty
+                ? 'Off: PSD creates FFT windows before running.'
+                : 'Off: PSD creates FFT windows. On: use segments from an upstream node.',
+          ),
+          onChanged: (bool? value) {
+            setState(() {
+              params['useParentSegments'] = value == true;
+              if (value == true &&
+                  params['parentSegmentsNodeId'].toString().isEmpty &&
+                  parentSegmentOptions.isNotEmpty) {
+                params['parentSegmentsNodeId'] = parentSegmentOptions.first.id;
+              }
+            });
+          },
+        ),
+        if (useParentSegments && parentSegmentOptions.length > 1) ...<Widget>[
+          const SizedBox(height: 8),
+          NodeParamDropdownField<String>(
+            params: params,
+            paramKey: 'parentSegmentsNodeId',
+            labelText: 'Segment parent',
+            helperText: 'Choose which upstream segment set PSD should use.',
+            options: parentSegmentOptions
+                .map(
+                  (_ParentSegmentOption option) => NodeDropdownOption<String>(
+                    value: option.id,
+                    label: option.label,
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
       ],
     );
   }
@@ -240,6 +293,32 @@ class PSDNodeType extends NodeType {
       source: source,
     );
   }
+}
+
+class _ParentSegmentOption {
+  const _ParentSegmentOption({required this.id, required this.label});
+
+  final String id;
+  final String label;
+}
+
+List<_ParentSegmentOption> _parentSegmentOptionsFromParams(
+  Map<String, dynamic> params,
+) {
+  final List<dynamic> rawOptions =
+      params['_parentSegmentOptions'] as List<dynamic>? ?? const <dynamic>[];
+  return rawOptions
+      .whereType<Map<dynamic, dynamic>>()
+      .map((Map<dynamic, dynamic> asMap) {
+        final String id = asMap['id']?.toString() ?? '';
+        final String label = asMap['label']?.toString() ?? id;
+        if (id.isEmpty) {
+          return null;
+        }
+        return _ParentSegmentOption(id: id, label: label);
+      })
+      .whereType<_ParentSegmentOption>()
+      .toList(growable: false);
 }
 
 class SpectrumResult {

@@ -14,12 +14,7 @@ class Dataset {
   /// Keys like: 'signal.samples', 'signal.fs', 'psd.freqs', 'psd.power'
   final Map<String, dynamic> ram = {};
 
-  Dataset(
-      this.id, {
-        this.label = '',
-        this.path = '',
-        this.sourceBytes,
-      });
+  Dataset(this.id, {this.label = '', this.path = '', this.sourceBytes});
 
   Map<BrainStoryArtifactKind, ArtifactIdentity> get artifactIdentities {
     final Object? rawValue = ram['artifact.identities'];
@@ -27,31 +22,30 @@ class Dataset {
       return Map<BrainStoryArtifactKind, ArtifactIdentity>.from(rawValue);
     }
     if (rawValue is Map) {
-      return rawValue.map<BrainStoryArtifactKind, ArtifactIdentity>(
-        (dynamic key, dynamic value) {
-          final BrainStoryArtifactKind kind = key is BrainStoryArtifactKind
-              ? key
-              : artifactKindFromWireValue(key.toString());
-          final ArtifactIdentity identity = value is ArtifactIdentity
-              ? value
-              : ArtifactIdentity.fromJson(
-                  Map<String, dynamic>.from(
-                    value as Map? ?? const <String, dynamic>{},
-                  ),
-                );
-          return MapEntry<BrainStoryArtifactKind, ArtifactIdentity>(
-            kind,
-            identity,
-          );
-        },
-      );
+      return rawValue.map<BrainStoryArtifactKind, ArtifactIdentity>((
+        dynamic key,
+        dynamic value,
+      ) {
+        final BrainStoryArtifactKind kind = key is BrainStoryArtifactKind
+            ? key
+            : artifactKindFromWireValue(key.toString());
+        final ArtifactIdentity identity = value is ArtifactIdentity
+            ? value
+            : ArtifactIdentity.fromJson(
+                Map<String, dynamic>.from(
+                  value as Map? ?? const <String, dynamic>{},
+                ),
+              );
+        return MapEntry<BrainStoryArtifactKind, ArtifactIdentity>(
+          kind,
+          identity,
+        );
+      });
     }
     return const <BrainStoryArtifactKind, ArtifactIdentity>{};
   }
 
-  set artifactIdentities(
-    Map<BrainStoryArtifactKind, ArtifactIdentity> value,
-  ) {
+  set artifactIdentities(Map<BrainStoryArtifactKind, ArtifactIdentity> value) {
     if (value.isEmpty) {
       ram.remove('artifact.identities');
       return;
@@ -88,6 +82,7 @@ class Dataset {
       ram.remove('signal.fs');
       ram.remove('signal.channelLabels');
       ram.remove('signal.channelCoordinates');
+      ram.remove('signal.impedance');
       ram.remove('signal.markers');
       ram.remove('signal.factors');
       ram.remove('signal.source');
@@ -103,9 +98,13 @@ class Dataset {
       (String key, ChannelCoordinate coordinate) =>
           MapEntry<String, dynamic>(key, coordinate.toJson()),
     );
-    ram['signal.markers'] = value.markers.map((TimeMarker marker) => marker.toJson()).toList();
-    ram['signal.factors'] =
-        value.factors.map((Factor factor) => factor.toJson()).toList();
+    ram['signal.impedance'] = value.impedanceData?.toJson();
+    ram['signal.markers'] = value.markers
+        .map((TimeMarker marker) => marker.toJson())
+        .toList();
+    ram['signal.factors'] = value.factors
+        .map((Factor factor) => factor.toJson())
+        .toList();
     ram['signal.source'] = value.source;
   }
 
@@ -140,8 +139,9 @@ class Dataset {
     ram['artifact.fooofResult'] = value;
     ram['fooof.intercept'] = value.intercept;
     ram['fooof.exponent'] = value.exponent;
-    ram['fooof.peaks'] =
-        value.peaks.map((FooofPeakData peak) => peak.toJson()).toList(growable: false);
+    ram['fooof.peaks'] = value.peaks
+        .map((FooofPeakData peak) => peak.toJson())
+        .toList(growable: false);
   }
 
   FeatureTableData? get featureTable =>

@@ -24,3 +24,28 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+
+if(CARGO_EXECUTABLE)
+  add_custom_command(
+    OUTPUT "${BRAINSTORY_ENGINE_LIBRARY}"
+    COMMAND ${CARGO_EXECUTABLE} ${BRAINSTORY_ENGINE_BUILD_ARGS}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../../.."
+    DEPENDS
+      "${BRAINSTORY_ENGINE_MANIFEST}"
+      "${BRAINSTORY_ENGINE_LOCKFILE}"
+      ${BRAINSTORY_ENGINE_SOURCES}
+    COMMENT "Building brainstory_engine Rust library"
+    VERBATIM
+  )
+  add_custom_target(brainstory_engine_build
+    DEPENDS "${BRAINSTORY_ENGINE_LIBRARY}"
+  )
+  add_dependencies(${BINARY_NAME} brainstory_engine_build)
+
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${BRAINSTORY_ENGINE_LIBRARY}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/libbrainstory_engine.so"
+    VERBATIM
+  )
+endif()

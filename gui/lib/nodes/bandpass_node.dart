@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/brainstory_engine.dart';
 import 'node_type.dart';
 
 class BandpassNodeType extends NodeType {
@@ -50,7 +51,9 @@ class BandpassNodeType extends NodeType {
 
     dataset.ram.putIfAbsent(
       'signal.originalSamples',
-      () => channels.map((List<double> channel) => List<double>.from(channel)).toList(),
+      () => channels
+          .map((List<double> channel) => List<double>.from(channel))
+          .toList(),
     );
     dataset.timeSeries = TimeSeriesData(
       channelSamples: channels
@@ -67,6 +70,7 @@ class BandpassNodeType extends NodeType {
           .toList(growable: false),
       sampleRate: sampleRate,
       channelLabels: timeSeries.channelLabels,
+      impedanceData: timeSeries.impedanceData,
       markers: timeSeries.markers,
       source: timeSeries.source,
     );
@@ -80,10 +84,10 @@ class BandpassNodeType extends NodeType {
 
   @override
   Widget buildBody(
-      Map<String, dynamic> params, {
-        required Map<String, Dataset> datasets,
-        required void Function(void Function()) setState,
-      }) {
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
     params.putIfAbsent('low', () => 1.0);
     params.putIfAbsent('high', () => 40.0);
     params.putIfAbsent('steepness', () => 0.8);
@@ -194,6 +198,18 @@ List<double> applyBandpassFilter(
     return <double>[];
   }
 
+  final List<double>? nativeOutput = applyBandpassFilterNative(
+    input,
+    sampleRate: sampleRate,
+    lowCutHz: lowCutHz,
+    highCutHz: highCutHz,
+    steepness: steepness,
+    notchHz: notchHz,
+  );
+  if (nativeOutput != null) {
+    return nativeOutput;
+  }
+
   final double nyquist = sampleRate / 2.0;
   final double normalizedSteepness = steepness.clamp(0.0, 1.0);
   final double q = 0.6 + (normalizedSteepness * 3.4);
@@ -202,22 +218,14 @@ List<double> applyBandpassFilter(
   if (lowCutHz > 0 && lowCutHz < nyquist) {
     output = _runBiquad(
       output,
-      _Biquad.highPass(
-        sampleRate: sampleRate,
-        cutoffHz: lowCutHz,
-        q: q,
-      ),
+      _Biquad.highPass(sampleRate: sampleRate, cutoffHz: lowCutHz, q: q),
     );
   }
 
   if (highCutHz > 0 && highCutHz < nyquist) {
     output = _runBiquad(
       output,
-      _Biquad.lowPass(
-        sampleRate: sampleRate,
-        cutoffHz: highCutHz,
-        q: q,
-      ),
+      _Biquad.lowPass(sampleRate: sampleRate, cutoffHz: highCutHz, q: q),
     );
   }
 
@@ -243,7 +251,8 @@ List<double> _runBiquad(List<double> input, _Biquad biquad) {
   double y2 = 0.0;
 
   for (final double x0 in input) {
-    final double y0 = (biquad.b0 * x0) +
+    final double y0 =
+        (biquad.b0 * x0) +
         (biquad.b1 * x1) +
         (biquad.b2 * x2) -
         (biquad.a1 * y1) -
@@ -359,8 +368,4 @@ class _Biquad {
   }
 }
 
-enum _BiquadMode {
-  lowPass,
-  highPass,
-  notch,
-}
+enum _BiquadMode { lowPass, highPass, notch }

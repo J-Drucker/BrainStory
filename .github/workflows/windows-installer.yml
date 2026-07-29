@@ -1,0 +1,76 @@
+name: Windows installer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/windows-installer.yml
+      - engine/**
+      - gui/**
+      - packaging/windows/**
+      - scripts/build_windows_installer.ps1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Installer version
+        required: true
+        default: 0.1.0
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.41.9
+  RUST_VERSION: 1.97.1
+  BRAINSTORY_INSTALLER_VERSION: ${{ inputs.version || '0.1.0' }}
+
+jobs:
+  build:
+    name: Build dependency-complete installer
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out BrainStory
+        uses: actions/checkout@v4
+
+      - name: Install pinned Flutter
+        shell: pwsh
+        run: |
+          $flutterRoot = Join-Path $env:RUNNER_TEMP 'flutter'
+          git clone --depth 1 --branch $env:FLUTTER_VERSION https://github.com/flutter/flutter.git $flutterRoot
+          (Join-Path $flutterRoot 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure Flutter
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter doctor -v
+
+      - name: Install pinned Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install $env:RUST_VERSION --profile minimal
+          rustup default $env:RUST_VERSION
+          cargo --version
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          .\scripts\build_windows_installer.ps1 -Version $env:BRAINSTORY_INSTALLER_VERSION
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrainStory-Windows-${{ env.BRAINSTORY_INSTALLER_VERSION }}
+          path: |
+            dist/*.exe
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
