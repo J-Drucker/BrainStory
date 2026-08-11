@@ -26,23 +26,23 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'interactiveArtifactDetection': true,
-        'artifactThreshold': 0.78,
-        'artifactExemplars': <Map<String, dynamic>>[],
-        'artifactCandidates': <Map<String, dynamic>>[],
-        'artifactTemplates': <Map<String, dynamic>>[],
-      };
+    'interactiveArtifactDetection': true,
+    'artifactThreshold': 0.78,
+    'artifactExemplars': <Map<String, dynamic>>[],
+    'artifactCandidates': <Map<String, dynamic>>[],
+    'artifactTemplates': <Map<String, dynamic>>[],
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-        PortSpec(name: 'markers', type: PortType.markers),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'markers', type: PortType.markers),
+  ];
 
   @override
   Widget buildBody(
@@ -51,9 +51,11 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     required void Function(void Function()) setState,
   }) {
     final int exemplarCount =
-        (params['artifactExemplars'] as List<dynamic>? ?? const <dynamic>[]).length;
+        (params['artifactExemplars'] as List<dynamic>? ?? const <dynamic>[])
+            .length;
     final int candidateCount =
-        (params['artifactCandidates'] as List<dynamic>? ?? const <dynamic>[]).length;
+        (params['artifactCandidates'] as List<dynamic>? ?? const <dynamic>[])
+            .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -101,7 +103,9 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     return (params['artifactExemplars'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<Map<String, dynamic>>()
         .map(ArtifactExemplarData.fromJson)
-        .where((ArtifactExemplarData exemplar) => exemplar.datasetId == datasetId)
+        .where(
+          (ArtifactExemplarData exemplar) => exemplar.datasetId == datasetId,
+        )
         .toList(growable: false)
       ..sort(
         (ArtifactExemplarData a, ArtifactExemplarData b) =>
@@ -117,7 +121,9 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     return (params['artifactCandidates'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<Map<String, dynamic>>()
         .map(ArtifactCandidateData.fromJson)
-        .where((ArtifactCandidateData candidate) => candidate.datasetId == datasetId)
+        .where(
+          (ArtifactCandidateData candidate) => candidate.datasetId == datasetId,
+        )
         .where(
           (ArtifactCandidateData candidate) =>
               statuses == null || statuses.contains(candidate.status),
@@ -136,7 +142,9 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     return (params['artifactTemplates'] as List<dynamic>? ?? const <dynamic>[])
         .whereType<Map<String, dynamic>>()
         .map(ArtifactTemplateSummary.fromJson)
-        .where((ArtifactTemplateSummary summary) => summary.datasetId == datasetId)
+        .where(
+          (ArtifactTemplateSummary summary) => summary.datasetId == datasetId,
+        )
         .toList(growable: false)
       ..sort(
         (ArtifactTemplateSummary a, ArtifactTemplateSummary b) =>
@@ -152,19 +160,22 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     final List<TimeMarker> preservedMarkers = baseMarkers
         .where(
           (TimeMarker marker) =>
-              marker.attributes['brainstory.interactiveArtifactDetection'] != true,
+              marker.attributes['brainstory.interactiveArtifactDetection'] !=
+              true,
         )
         .toList(growable: true);
-    final List<TimeMarker> exemplarMarkers = exemplarsForDataset(datasetId, params)
-        .map((ArtifactExemplarData exemplar) => exemplar.toMarker())
-        .toList(growable: false);
-    final List<TimeMarker> acceptedCandidates = candidatesForDataset(
-      datasetId,
-      params,
-      statuses: const <String>{acceptedStatus},
-    ).map((ArtifactCandidateData candidate) => candidate.toMarker()).toList(
-          growable: false,
-        );
+    final List<TimeMarker> exemplarMarkers =
+        exemplarsForDataset(datasetId, params)
+            .map((ArtifactExemplarData exemplar) => exemplar.toMarker())
+            .toList(growable: false);
+    final List<TimeMarker> acceptedCandidates =
+        candidatesForDataset(
+              datasetId,
+              params,
+              statuses: const <String>{acceptedStatus},
+            )
+            .map((ArtifactCandidateData candidate) => candidate.toMarker())
+            .toList(growable: false);
     preservedMarkers.addAll(exemplarMarkers);
     preservedMarkers.addAll(acceptedCandidates);
     preservedMarkers.sort(
@@ -205,7 +216,8 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     bool enableTemplateMatching = true,
   }) {
     final List<ArtifactTemplateSummary> templates = <ArtifactTemplateSummary>[];
-    final List<ArtifactCandidateData> nextCandidates = <ArtifactCandidateData>[];
+    final List<ArtifactCandidateData> nextCandidates =
+        <ArtifactCandidateData>[];
     if (timeSeries.channels.isEmpty || exemplars.isEmpty) {
       return ArtifactDetectionComputation(
         templates: templates,
@@ -216,16 +228,22 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
     final Map<String, List<ArtifactExemplarData>> byLabel =
         <String, List<ArtifactExemplarData>>{};
     for (final ArtifactExemplarData exemplar in exemplars) {
-      byLabel.putIfAbsent(exemplar.label, () => <ArtifactExemplarData>[]).add(exemplar);
+      byLabel
+          .putIfAbsent(exemplar.label, () => <ArtifactExemplarData>[])
+          .add(exemplar);
     }
 
-    final List<double> workingSignal = _artifactDetectionSignal(timeSeries.channels);
+    final List<double> workingSignal = _artifactDetectionSignal(
+      timeSeries.channels,
+    );
     final Map<String, ArtifactCandidateData> existingById =
         <String, ArtifactCandidateData>{
-      for (final ArtifactCandidateData candidate in existingCandidates) candidate.id: candidate,
-    };
+          for (final ArtifactCandidateData candidate in existingCandidates)
+            candidate.id: candidate,
+        };
 
-    for (final MapEntry<String, List<ArtifactExemplarData>> entry in byLabel.entries) {
+    for (final MapEntry<String, List<ArtifactExemplarData>> entry
+        in byLabel.entries) {
       final _ComputedTemplate? template = _buildTemplateForLabel(
         channels: timeSeries.channels,
         signal: workingSignal,
@@ -246,7 +264,9 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
           previewSamples: _decimateTemplatePreview(
             _summarizeTemplateChannels(template.channelSamples),
           ),
-          previewChannels: _decimateTemplateChannelsPreview(template.channelSamples),
+          previewChannels: _decimateTemplateChannelsPreview(
+            template.channelSamples,
+          ),
           peakTopomapValues: _peakGfpChannelSnapshot(
             _baselineCenterTemplateChannels(template.channelSamples),
           ),
@@ -256,7 +276,7 @@ class InteractiveArtifactDetectionNodeType extends NodeType {
         nextCandidates.addAll(
           _detectCandidatesForTemplate(
             datasetId: datasetId,
-            signal: workingSignal,
+            channels: timeSeries.channels,
             sampleRate: timeSeries.sampleRate,
             template: template,
             threshold: threshold,
@@ -391,7 +411,8 @@ class ArtifactExemplarData {
       attributes: <String, dynamic>{
         'brainstory.interactiveArtifactDetection': true,
         'brainstory.artifactSource': 'exemplar',
-        'brainstory.artifactStatus': InteractiveArtifactDetectionNodeType.acceptedStatus,
+        'brainstory.artifactStatus':
+            InteractiveArtifactDetectionNodeType.acceptedStatus,
         'brainstory.artifactId': id,
       },
     );
@@ -419,10 +440,7 @@ class ArtifactCandidateData {
   final String status;
   final List<int> channelMask;
 
-  ArtifactCandidateData copyWith({
-    String? status,
-    double? score,
-  }) {
+  ArtifactCandidateData copyWith({String? status, double? score}) {
     return ArtifactCandidateData(
       id: id,
       datasetId: datasetId,
@@ -456,7 +474,8 @@ class ArtifactCandidateData {
       onsetMicros: (json['onsetMicros'] as num?)?.round() ?? 0,
       durationMicros: (json['durationMicros'] as num?)?.round() ?? 0,
       score: (json['score'] as num?)?.toDouble() ?? 0.0,
-      status: json['status']?.toString() ??
+      status:
+          json['status']?.toString() ??
           InteractiveArtifactDetectionNodeType.pendingStatus,
       channelMask: (json['channelMask'] as List<dynamic>? ?? const <dynamic>[])
           .map((dynamic value) => (value as num).toInt())
@@ -523,16 +542,18 @@ class ArtifactTemplateSummary {
       exemplarCount: (json['exemplarCount'] as num?)?.toInt() ?? 0,
       sampleCount: (json['sampleCount'] as num?)?.toInt() ?? 0,
       durationMicros: (json['durationMicros'] as num?)?.round() ?? 0,
-      previewSamples: (json['previewSamples'] as List<dynamic>? ?? const <dynamic>[])
-          .map((dynamic value) => (value as num).toDouble())
-          .toList(growable: false),
-      previewChannels: (json['previewChannels'] as List<dynamic>? ?? const <dynamic>[])
-          .map(
-            (dynamic channel) => (channel as List<dynamic>)
-                .map((dynamic value) => (value as num).toDouble())
-                .toList(growable: false),
-          )
-          .toList(growable: false),
+      previewSamples:
+          (json['previewSamples'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      previewChannels:
+          (json['previewChannels'] as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic channel) => (channel as List<dynamic>)
+                    .map((dynamic value) => (value as num).toDouble())
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
       peakTopomapValues:
           (json['peakTopomapValues'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => (value as num).toDouble())
@@ -586,7 +607,9 @@ _ComputedTemplate? _buildTemplateForLabel({
   }
 
   final List<int> exemplarLengths = exemplars
-      .map((ArtifactExemplarData exemplar) => exemplar.durationSamples(sampleRate))
+      .map(
+        (ArtifactExemplarData exemplar) => exemplar.durationSamples(sampleRate),
+      )
       .where((int length) => length > 1)
       .toList(growable: false);
   if (exemplarLengths.isEmpty) {
@@ -594,15 +617,16 @@ _ComputedTemplate? _buildTemplateForLabel({
   }
   exemplarLengths.sort();
   final int targetLength = exemplarLengths[exemplarLengths.length ~/ 2];
-  final int targetDurationMicros =
-      ((targetLength / sampleRate) * 1000000.0).round();
+  final int targetDurationMicros = ((targetLength / sampleRate) * 1000000.0)
+      .round();
   final List<List<double>> alignedSegments = <List<double>>[];
-  final List<List<List<double>>> alignedChannelSegments = <List<List<double>>>[];
+  final List<List<List<double>>> alignedChannelSegments =
+      <List<List<double>>>[];
   List<double>? template;
 
   for (final ArtifactExemplarData exemplar in exemplars) {
-    final int nominalStart =
-        ((exemplar.onsetMicros / 1000000.0) * sampleRate).round();
+    final int nominalStart = ((exemplar.onsetMicros / 1000000.0) * sampleRate)
+        .round();
     final int exemplarLength = exemplar.durationSamples(sampleRate);
     int bestStart = nominalStart;
     List<double> bestSegment = _extractResampledWindow(
@@ -661,8 +685,8 @@ _ComputedTemplate? _buildTemplateForLabel({
   final int channelCount = alignedChannelSegments.isEmpty
       ? 0
       : alignedChannelSegments
-          .map((List<List<double>> segment) => segment.length)
-          .reduce(math.min);
+            .map((List<List<double>> segment) => segment.length)
+            .reduce(math.min);
   final List<List<double>> meanChannelTemplates = List<List<double>>.generate(
     channelCount,
     (int channelIndex) => _meanWaveform(
@@ -687,28 +711,30 @@ List<List<double>> _decimateTemplateChannelsPreview(
 }) {
   return channels
       .map(
-        (List<double> channel) => _decimateTemplatePreview(
-          channel,
-          targetPoints: targetPoints,
-        ),
+        (List<double> channel) =>
+            _decimateTemplatePreview(channel, targetPoints: targetPoints),
       )
       .toList(growable: false);
 }
 
-List<List<double>> _baselineCenterTemplateChannels(List<List<double>> channels) {
-  return channels.map((List<double> channel) {
-    if (channel.isEmpty) {
-      return const <double>[];
-    }
-    double mean = 0.0;
-    for (final double value in channel) {
-      mean += value;
-    }
-    mean /= channel.length;
-    return channel
-        .map((double value) => value - mean)
-        .toList(growable: false);
-  }).toList(growable: false);
+List<List<double>> _baselineCenterTemplateChannels(
+  List<List<double>> channels,
+) {
+  return channels
+      .map((List<double> channel) {
+        if (channel.isEmpty) {
+          return const <double>[];
+        }
+        double mean = 0.0;
+        for (final double value in channel) {
+          mean += value;
+        }
+        mean /= channel.length;
+        return channel
+            .map((double value) => value - mean)
+            .toList(growable: false);
+      })
+      .toList(growable: false);
 }
 
 List<double> _peakGfpChannelSnapshot(List<List<double>> channels) {
@@ -750,22 +776,59 @@ List<double> _peakGfpChannelSnapshot(List<List<double>> channels) {
 
 List<ArtifactCandidateData> _detectCandidatesForTemplate({
   required String datasetId,
-  required List<double> signal,
+  required List<List<double>> channels,
   required double sampleRate,
   required _ComputedTemplate template,
   required double threshold,
   required List<ArtifactExemplarData> exemplars,
   required Map<String, ArtifactCandidateData> existingById,
 }) {
-  if (signal.length < template.sampleCount || template.sampleCount < 4) {
+  if (channels.isEmpty ||
+      channels.first.length < template.sampleCount ||
+      template.sampleCount < 4) {
+    return const <ArtifactCandidateData>[];
+  }
+
+  final List<int> strongestChannels =
+      List<int>.generate(
+        math.min(channels.length, template.channelSamples.length),
+        (int index) => index,
+      )..sort((int a, int b) {
+        return _centeredEnergy(
+          template.channelSamples[b],
+        ).compareTo(_centeredEnergy(template.channelSamples[a]));
+      });
+  final List<int> matchingChannels = strongestChannels
+      .take(math.min(8, strongestChannels.length))
+      .toList(growable: false);
+  if (matchingChannels.isEmpty) {
     return const <ArtifactCandidateData>[];
   }
 
   final int stride = math.max(1, template.sampleCount ~/ 8);
   final List<_ScoredCandidateWindow> rawMatches = <_ScoredCandidateWindow>[];
-  for (int start = 0; start + template.sampleCount <= signal.length; start += stride) {
-    final List<double> window = signal.sublist(start, start + template.sampleCount);
-    final double score = _normalizedCorrelation(template.samples, window);
+  for (
+    int start = 0;
+    start + template.sampleCount <= channels.first.length;
+    start += stride
+  ) {
+    double weightedScore = 0.0;
+    double totalWeight = 0.0;
+    for (final int channelIndex in matchingChannels) {
+      final List<double> templateSamples =
+          template.channelSamples[channelIndex];
+      final double weight = _centeredEnergy(templateSamples);
+      if (weight <= 0) {
+        continue;
+      }
+      final double correlation = _normalizedCorrelation(
+        templateSamples,
+        channels[channelIndex].sublist(start, start + template.sampleCount),
+      );
+      weightedScore += correlation * weight;
+      totalWeight += weight;
+    }
+    final double score = totalWeight <= 0 ? -1.0 : weightedScore / totalWeight;
     if (score < threshold) {
       continue;
     }
@@ -784,7 +847,8 @@ List<ArtifactCandidateData> _detectCandidatesForTemplate({
   }
 
   rawMatches.sort(
-    (_ScoredCandidateWindow a, _ScoredCandidateWindow b) => b.score.compareTo(a.score),
+    (_ScoredCandidateWindow a, _ScoredCandidateWindow b) =>
+        b.score.compareTo(a.score),
   );
 
   final List<_ScoredCandidateWindow> selected = <_ScoredCandidateWindow>[];
@@ -796,7 +860,8 @@ List<ArtifactCandidateData> _detectCandidatesForTemplate({
             candidate.durationMicros,
             existing.onsetMicros,
             existing.durationMicros,
-          ) > 0.5,
+          ) >
+          0.5,
     );
     if (!overlapsExisting) {
       selected.add(candidate);
@@ -806,24 +871,42 @@ List<ArtifactCandidateData> _detectCandidatesForTemplate({
     }
   }
 
-  return selected.map((_ScoredCandidateWindow candidate) {
-    final String id = _candidateId(
-      label: template.label,
-      onsetMicros: candidate.onsetMicros,
-      durationMicros: candidate.durationMicros,
-    );
-    final ArtifactCandidateData? previous = existingById[id];
-    return ArtifactCandidateData(
-      id: id,
-      datasetId: datasetId,
-      label: template.label,
-      onsetMicros: candidate.onsetMicros,
-      durationMicros: candidate.durationMicros,
-      score: candidate.score,
-      status: previous?.status ?? InteractiveArtifactDetectionNodeType.pendingStatus,
-      channelMask: previous?.channelMask ?? const <int>[],
-    );
-  }).toList(growable: false);
+  return selected
+      .map((_ScoredCandidateWindow candidate) {
+        final String id = _candidateId(
+          label: template.label,
+          onsetMicros: candidate.onsetMicros,
+          durationMicros: candidate.durationMicros,
+        );
+        final ArtifactCandidateData? previous = existingById[id];
+        return ArtifactCandidateData(
+          id: id,
+          datasetId: datasetId,
+          label: template.label,
+          onsetMicros: candidate.onsetMicros,
+          durationMicros: candidate.durationMicros,
+          score: candidate.score,
+          status:
+              previous?.status ??
+              InteractiveArtifactDetectionNodeType.pendingStatus,
+          channelMask: previous?.channelMask ?? const <int>[],
+        );
+      })
+      .toList(growable: false);
+}
+
+double _centeredEnergy(List<double> samples) {
+  if (samples.isEmpty) {
+    return 0.0;
+  }
+  final double mean =
+      samples.reduce((double a, double b) => a + b) / samples.length;
+  double energy = 0.0;
+  for (final double sample in samples) {
+    final double centered = sample - mean;
+    energy += centered * centered;
+  }
+  return energy;
 }
 
 class _ScoredCandidateWindow {
@@ -849,7 +932,8 @@ bool _overlapsExemplar(
           durationMicros,
           exemplar.onsetMicros,
           exemplar.durationMicros,
-        ) > 0.5) {
+        ) >
+        0.5) {
       return true;
     }
   }

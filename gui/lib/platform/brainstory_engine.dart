@@ -33,6 +33,20 @@ List<double>? applyBandpassFilterNative(
   );
 }
 
+NativeSpectrumResult? computeSingleSidedSpectrumNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+}) {
+  return impl.computeSingleSidedSpectrumNative(
+    samples,
+    sampleRate: sampleRate,
+    lowHz: lowHz,
+    highHz: highHz,
+  );
+}
+
 AggregateSeriesStats? computeAggregateSeriesStatsWithFallback(
   List<List<double>> traces,
 ) {

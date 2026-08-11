@@ -4,6 +4,20 @@ import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import 'node_type.dart';
 
+class MarkerBoundaryCombinationResult {
+  const MarkerBoundaryCombinationResult({
+    required this.markers,
+    required this.combinedCount,
+    required this.unmatchedStartCount,
+    required this.unmatchedStopCount,
+  });
+
+  final List<TimeMarker> markers;
+  final int combinedCount;
+  final int unmatchedStartCount;
+  final int unmatchedStopCount;
+}
+
 class AddRemoveMarkersNodeType extends NodeType {
   @override
   String get title => 'Edit Markers';
@@ -42,8 +56,6 @@ class AddRemoveMarkersNodeType extends NodeType {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          const Text('This node generates equal-width FFT window markers.'),
-          const SizedBox(height: 12),
           Text(
             'Label: ${params['generatedMarkerLabel'] ?? 'FFT Window'}',
             style: const TextStyle(fontWeight: FontWeight.w600),
@@ -107,6 +119,96 @@ class AddRemoveMarkersNodeType extends NodeType {
       return;
     }
     dataset.timeSeries = timeSeries.copyWith(markers: editedMarkers);
+  }
+
+  static MarkerBoundaryCombinationResult combineBoundaryMarkers(
+    List<TimeMarker> markers, {
+    required String startLabel,
+    required String stopLabel,
+    required String blockLabel,
+    bool replaceBoundaries = true,
+  }) {
+    final String normalizedStart = startLabel.trim();
+    final String normalizedStop = stopLabel.trim();
+    final String normalizedBlock = blockLabel.trim();
+    if (normalizedStart.isEmpty ||
+        normalizedStop.isEmpty ||
+        normalizedBlock.isEmpty ||
+        normalizedStart == normalizedStop) {
+      return MarkerBoundaryCombinationResult(
+        markers: List<TimeMarker>.from(markers, growable: false),
+        combinedCount: 0,
+        unmatchedStartCount: markers
+            .where((TimeMarker marker) => marker.label == normalizedStart)
+            .length,
+        unmatchedStopCount: markers
+            .where((TimeMarker marker) => marker.label == normalizedStop)
+            .length,
+      );
+    }
+
+    final List<TimeMarker> ordered = List<TimeMarker>.from(markers)
+      ..sort(
+        (TimeMarker a, TimeMarker b) => a.onsetMicros.compareTo(b.onsetMicros),
+      );
+    final List<TimeMarker> openStarts = <TimeMarker>[];
+    final Set<TimeMarker> consumed = Set<TimeMarker>.identity();
+    final List<TimeMarker> blocks = <TimeMarker>[];
+    int unmatchedStops = 0;
+
+    for (final TimeMarker marker in ordered) {
+      if (marker.label == normalizedStart) {
+        openStarts.add(marker);
+        continue;
+      }
+      if (marker.label != normalizedStop) {
+        continue;
+      }
+      if (openStarts.isEmpty) {
+        unmatchedStops += 1;
+        continue;
+      }
+      final TimeMarker start = openStarts.removeAt(0);
+      final int durationMicros = marker.onsetMicros - start.onsetMicros;
+      if (durationMicros <= 0) {
+        unmatchedStops += 1;
+        openStarts.insert(0, start);
+        continue;
+      }
+      consumed
+        ..add(start)
+        ..add(marker);
+      blocks.add(
+        TimeMarker(
+          onsetMicros: start.onsetMicros,
+          durationMicros: durationMicros,
+          label: normalizedBlock,
+          markerType: MarkerType.window,
+          channelMask: start.channelMask,
+          attributes: <String, dynamic>{
+            ...start.attributes,
+            'brainstory.boundaryStartLabel': normalizedStart,
+            'brainstory.boundaryStopLabel': normalizedStop,
+          },
+        ),
+      );
+    }
+
+    final List<TimeMarker> combined =
+        <TimeMarker>[
+          for (final TimeMarker marker in markers)
+            if (!replaceBoundaries || !consumed.contains(marker)) marker,
+          ...blocks,
+        ]..sort(
+          (TimeMarker a, TimeMarker b) =>
+              a.onsetMicros.compareTo(b.onsetMicros),
+        );
+    return MarkerBoundaryCombinationResult(
+      markers: List<TimeMarker>.from(combined, growable: false),
+      combinedCount: blocks.length,
+      unmatchedStartCount: openStarts.length,
+      unmatchedStopCount: unmatchedStops,
+    );
   }
 
   static List<TimeMarker> markersForDataset(
@@ -224,8 +326,6 @@ class _MarkerEditConfigEditorState extends State<MarkerEditConfigEditor> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        const Text('Viewer-authored marker edits are persisted in this node.'),
-        const SizedBox(height: 12),
         Text(
           '${widget.markerCount} marker change${widget.markerCount == 1 ? '' : 's'} recorded',
           style: const TextStyle(fontWeight: FontWeight.w600),

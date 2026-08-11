@@ -154,14 +154,20 @@ class ImportNodeType extends NodeType {
     Map<String, dynamic> params,
     Iterable<Dataset> datasets,
   ) {
-    final Map<String, dynamic> aliases = Map<String, dynamic>.from(
-      params['datasetAliases'] as Map? ?? <String, dynamic>{},
-    );
     for (final Dataset dataset in datasets) {
-      final String sourceName = datasetSourceName(dataset);
-      final String alias = aliases[dataset.id]?.toString().trim() ?? '';
-      dataset.label = alias.isEmpty ? sourceName : alias;
+      dataset.label = resolvedDatasetLabel(params, dataset);
     }
+  }
+
+  static String resolvedDatasetLabel(
+    Map<String, dynamic> params,
+    Dataset dataset,
+  ) {
+    final Map<String, dynamic> aliases = Map<String, dynamic>.from(
+      params['datasetAliases'] as Map? ?? const <String, dynamic>{},
+    );
+    final String alias = aliases[dataset.id]?.toString().trim() ?? '';
+    return alias.isEmpty ? datasetSourceName(dataset) : alias;
   }
 }
 

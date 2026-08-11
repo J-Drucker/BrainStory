@@ -478,6 +478,7 @@ class _NodeParamDropdownFieldState<T> extends State<NodeParamDropdownField<T>> {
   Widget build(BuildContext context) {
     return DropdownButtonFormField<T>(
       initialValue: _selectedValue,
+      isExpanded: true,
       decoration: InputDecoration(
         labelText: widget.labelText,
         helperText: widget.helperText,
@@ -487,7 +488,7 @@ class _NodeParamDropdownFieldState<T> extends State<NodeParamDropdownField<T>> {
             return DropdownMenuItem<T>(
               value: option.value,
               enabled: option.enabled,
-              child: Text(option.label),
+              child: Text(option.label, overflow: TextOverflow.ellipsis),
             );
           })
           .toList(growable: false),

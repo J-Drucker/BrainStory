@@ -544,21 +544,50 @@ List<SignalSegmentData> _buildBlockSegments({
         );
 
   final List<_SampleInterval> blockIntervals = <_SampleInterval>[];
-  for (int index = 0; index + 1 < selectedMarkers.length; index += 2) {
-    final int startIndex =
-        (selectedMarkers[index].timeSeconds * timeSeries.sampleRate).round();
+  final List<TimeMarker> pointBoundaries = <TimeMarker>[];
+  for (final TimeMarker marker in selectedMarkers) {
+    if (marker.durationMicros <= 0) {
+      pointBoundaries.add(marker);
+      continue;
+    }
+    final int startIndex = (marker.timeSeconds * timeSeries.sampleRate).round();
     final int stopIndex =
-        (selectedMarkers[index + 1].timeSeconds * timeSeries.sampleRate)
+        (((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+                timeSeries.sampleRate)
             .round();
     final _SampleInterval? interval = _boundedInterval(
       startIndex: startIndex,
       stopIndex: stopIndex,
       sampleCount: sampleCount,
+      label: marker.label,
     );
     if (interval != null) {
       blockIntervals.add(interval);
     }
   }
+  for (int index = 0; index + 1 < pointBoundaries.length; index += 2) {
+    final TimeMarker startMarker = pointBoundaries[index];
+    final TimeMarker stopMarker = pointBoundaries[index + 1];
+    final int startIndex = (startMarker.timeSeconds * timeSeries.sampleRate)
+        .round();
+    final int stopIndex = (stopMarker.timeSeconds * timeSeries.sampleRate)
+        .round();
+    final _SampleInterval? interval = _boundedInterval(
+      startIndex: startIndex,
+      stopIndex: stopIndex,
+      sampleCount: sampleCount,
+      label: startMarker.label == stopMarker.label
+          ? startMarker.label
+          : '${startMarker.label} - ${stopMarker.label}',
+    );
+    if (interval != null) {
+      blockIntervals.add(interval);
+    }
+  }
+  blockIntervals.sort(
+    (_SampleInterval a, _SampleInterval b) =>
+        a.startIndex.compareTo(b.startIndex),
+  );
 
   final List<_SampleInterval> intervals = invert
       ? _invertIntervals(blockIntervals, sampleCount)
@@ -576,11 +605,18 @@ List<SignalSegmentData> _buildBlockSegments({
   final List<SignalSegmentData> segments = <SignalSegmentData>[];
   for (int index = 0; index < intervals.length; index++) {
     final _SampleInterval interval = intervals[index];
+    final String? sourceLabel = interval.label?.trim();
     final SignalSegmentData? segment = _extractSegment(
       timeSeries: timeSeries,
       startIndex: interval.startIndex,
       stopIndex: interval.stopIndex,
-      label: invert ? 'Inverted Block ${index + 1}' : 'Block ${index + 1}',
+      label: invert
+          ? 'Inverted Block ${index + 1}'
+          : sourceLabel == null || sourceLabel.isEmpty
+          ? 'Block ${index + 1}'
+          : intervals.length == 1
+          ? sourceLabel
+          : '$sourceLabel ${index + 1}',
       kind: invert ? 'inverted_block' : 'block',
     );
     if (segment != null) {
@@ -659,13 +695,18 @@ _SampleInterval? _boundedInterval({
   required int startIndex,
   required int stopIndex,
   required int sampleCount,
+  String? label,
 }) {
   final int boundedStart = startIndex.clamp(0, sampleCount);
   final int boundedStop = stopIndex.clamp(0, sampleCount);
   if (boundedStop <= boundedStart) {
     return null;
   }
-  return _SampleInterval(startIndex: boundedStart, stopIndex: boundedStop);
+  return _SampleInterval(
+    startIndex: boundedStart,
+    stopIndex: boundedStop,
+    label: label,
+  );
 }
 
 List<_SampleInterval> _invertIntervals(
@@ -700,10 +741,15 @@ List<_SampleInterval> _invertIntervals(
 }
 
 class _SampleInterval {
-  const _SampleInterval({required this.startIndex, required this.stopIndex});
+  const _SampleInterval({
+    required this.startIndex,
+    required this.stopIndex,
+    this.label,
+  });
 
   final int startIndex;
   final int stopIndex;
+  final String? label;
 }
 
 class _SegmentationModeSection extends StatelessWidget {

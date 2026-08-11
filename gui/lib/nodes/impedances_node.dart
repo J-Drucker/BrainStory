@@ -31,7 +31,9 @@ class ImpedancesNodeType extends VisualizationNodeType {
         datasets.values
             .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
             .whereType<ImpedanceData>()
+            .where((ImpedanceData data) => data.measurementCount > 0)
             .expand((ImpedanceData data) => data.channelLabels)
+            .where((String label) => label.trim().isNotEmpty)
             .toSet()
             .toList()
           ..sort();

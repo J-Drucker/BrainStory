@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../nodes/add_remove_markers_node.dart';
 import '../nodes/bandpass_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
@@ -219,11 +220,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _buildControlBar(
-              sampleRate: timeSeries.sampleRate,
-              channelCount: channelCount,
-            ),
-            const SizedBox(height: 8),
             Expanded(
               child: LayoutBuilder(
                 builder: (BuildContext context, BoxConstraints constraints) {
@@ -275,7 +271,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       axisHeight + timelineHeight + 12;
                   final double traceAreaHeight = math.max(
                     140,
-                    constraints.maxHeight - bottomChromeHeight,
+                    constraints.maxHeight - bottomChromeHeight - 48,
                   );
                   final double totalHeight = hideSignals
                       ? traceAreaHeight
@@ -291,6 +287,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                       Expanded(
                         child: Column(
                           children: <Widget>[
+                            _buildControlBar(
+                              sampleRate: timeSeries.sampleRate,
+                              channelCount: channelCount,
+                            ),
+                            const SizedBox(height: 8),
                             Expanded(
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
@@ -718,6 +719,16 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           runSpacing: 8,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
+            TextButton.icon(
+              onPressed: () => _showChannelEditPanel(0, allowInView: true),
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              label: const Text('Edit channels'),
+              style: TextButton.styleFrom(
+                minimumSize: Size.zero,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
             Text(
               '$channelCount ch  •  ${sampleRate.toStringAsFixed(1)} Hz',
               style: const TextStyle(
@@ -1311,8 +1322,11 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     });
   }
 
-  Future<void> _showChannelEditPanel(int channelIndex) async {
-    if (!_markerEditingEnabled()) {
+  Future<void> _showChannelEditPanel(
+    int channelIndex, {
+    bool allowInView = false,
+  }) async {
+    if (!allowInView && !_markerEditingEnabled()) {
       return;
     }
     final TimeSeriesData? baseTimeSeries = widget.dataset.timeSeries;
@@ -1874,14 +1888,80 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final Map<String, String> draftValues = <String, String>{
       for (final String label in labels) label: '',
     };
+    final List<String> boundaryLabels = labels
+        .where((String label) => label.trim().isNotEmpty)
+        .toList(growable: false);
     final Set<String> deletedLabels = <String>{};
+    int nextBoundaryDraftId = 1;
+    final List<_BoundaryCombinationDraft> boundaryDrafts =
+        <_BoundaryCombinationDraft>[
+          _BoundaryCombinationDraft(id: nextBoundaryDraftId++),
+        ];
+
+    Map<String, String> effectiveRenames() => <String, String>{
+      for (final MapEntry<String, String> entry in draftValues.entries)
+        if (!deletedLabels.contains(entry.key) && entry.value.trim().isNotEmpty)
+          entry.key: entry.value.trim(),
+    };
+
+    String? boundaryValidationMessage(_BoundaryCombinationDraft draft) {
+      final String? start = draft.startLabel;
+      final String? stop = draft.stopLabel;
+      if (start == null && stop == null) {
+        return null;
+      }
+      if (start == null || stop == null) {
+        return 'Choose both a start marker and a stop marker.';
+      }
+      if (deletedLabels.contains(start) || deletedLabels.contains(stop)) {
+        return 'A boundary label cannot be deleted and combined at the same time.';
+      }
+      if (draft.blockLabel.trim().isEmpty) {
+        return 'Enter a label for the new blocks.';
+      }
+      final Map<String, String> renamed = effectiveRenames();
+      if ((renamed[start] ?? start) == (renamed[stop] ?? stop)) {
+        return 'Start and stop markers must use different labels.';
+      }
+      return null;
+    }
+
+    MarkerBoundaryCombinationResult? boundaryPreview(
+      _BoundaryCombinationDraft draft,
+    ) {
+      final String? start = draft.startLabel;
+      final String? stop = draft.stopLabel;
+      if (start == null ||
+          stop == null ||
+          boundaryValidationMessage(draft) != null) {
+        return null;
+      }
+      final Map<String, String> renamed = effectiveRenames();
+      final List<TimeMarker> previewMarkers = markers
+          .where((TimeMarker marker) => !deletedLabels.contains(marker.label))
+          .map((TimeMarker marker) {
+            final String? replacement = renamed[marker.label];
+            return replacement == null
+                ? marker
+                : marker.copyWith(label: replacement);
+          })
+          .toList(growable: false);
+      return AddRemoveMarkersNodeType.combineBoundaryMarkers(
+        previewMarkers,
+        startLabel: renamed[start] ?? start,
+        stopLabel: renamed[stop] ?? stop,
+        blockLabel: draft.blockLabel,
+        replaceBoundaries: false,
+      );
+    }
+
     final Map<String, dynamic>? edits = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Edit markers'),
           content: SizedBox(
-            width: 560,
+            width: 680,
             child: StatefulBuilder(
               builder:
                   (
@@ -1927,6 +2007,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                         decoration: const InputDecoration(
                                           isDense: true,
                                           hintText: 'New label',
+                                          hintStyle: TextStyle(
+                                            color: Colors.white38,
+                                          ),
                                           border: OutlineInputBorder(),
                                         ),
                                         onChanged: (String value) {
@@ -1961,6 +2044,53 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                               ],
                             ),
                           ],
+                          const SizedBox(height: 20),
+                          const Divider(),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Combine boundaries into blocks',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Each stop closes the earliest unmatched start.',
+                          ),
+                          const SizedBox(height: 12),
+                          for (
+                            int index = 0;
+                            index < boundaryDrafts.length;
+                            index++
+                          )
+                            _buildBoundaryCombinationEditor(
+                              context: context,
+                              draft: boundaryDrafts[index],
+                              boundaryLabels: boundaryLabels,
+                              validationMessage: boundaryValidationMessage(
+                                boundaryDrafts[index],
+                              ),
+                              preview: boundaryPreview(boundaryDrafts[index]),
+                              canRemove: boundaryDrafts.length > 1,
+                              onChanged: () => setDialogState(() {}),
+                              onRemove: () {
+                                setDialogState(() {
+                                  boundaryDrafts.removeAt(index);
+                                });
+                              },
+                            ),
+                          TextButton.icon(
+                            onPressed: () {
+                              setDialogState(() {
+                                boundaryDrafts.add(
+                                  _BoundaryCombinationDraft(
+                                    id: nextBoundaryDraftId++,
+                                  ),
+                                );
+                              });
+                            },
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('Add pair-to-block transform'),
+                          ),
                         ],
                       ),
                     );
@@ -1974,16 +2104,34 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             ),
             ElevatedButton(
               onPressed: () {
-                final Map<String, String> renamedLabels = <String, String>{
-                  for (final MapEntry<String, String> entry
-                      in draftValues.entries)
-                    if (!deletedLabels.contains(entry.key) &&
-                        entry.value.trim().isNotEmpty)
-                      entry.key: entry.value.trim(),
-                };
+                final String? validationMessage = boundaryDrafts
+                    .map(boundaryValidationMessage)
+                    .whereType<String>()
+                    .firstOrNull;
+                if (validationMessage != null) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(validationMessage)));
+                  return;
+                }
+                final Map<String, String> renamedLabels = effectiveRenames();
                 Navigator.of(context).pop(<String, dynamic>{
                   'renamedLabels': renamedLabels,
                   'deletedLabels': deletedLabels.toList(growable: false),
+                  'boundaryCombinations': boundaryDrafts
+                      .where(
+                        (_BoundaryCombinationDraft draft) =>
+                            draft.startLabel != null && draft.stopLabel != null,
+                      )
+                      .map(
+                        (_BoundaryCombinationDraft draft) => <String, dynamic>{
+                          'startLabel': draft.startLabel,
+                          'stopLabel': draft.stopLabel,
+                          'blockLabel': draft.blockLabel.trim(),
+                          'replaceBoundaries': draft.replaceBoundaries,
+                        },
+                      )
+                      .toList(growable: false),
                 });
               },
               child: const Text('Apply'),
@@ -2001,10 +2149,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final Set<String> removedLabels = Set<String>.from(
       edits['deletedLabels'] as List<dynamic>? ?? const <dynamic>[],
     );
-    if (renamedLabels.isEmpty && removedLabels.isEmpty) {
+    final List<Map<String, dynamic>> boundaryCombinations =
+        (edits['boundaryCombinations'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((Map value) => Map<String, dynamic>.from(value))
+            .toList(growable: false);
+    if (renamedLabels.isEmpty &&
+        removedLabels.isEmpty &&
+        boundaryCombinations.isEmpty) {
       return;
     }
-    final List<TimeMarker> recoded = markers
+    List<TimeMarker> recoded = markers
         .where((TimeMarker marker) => !removedLabels.contains(marker.label))
         .map((TimeMarker marker) {
           final String? replacement = renamedLabels[marker.label];
@@ -2014,7 +2169,180 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           return marker.copyWith(label: replacement);
         })
         .toList(growable: false);
+    int combinedCount = 0;
+    int unmatchedCount = 0;
+    for (final Map<String, dynamic> boundaryCombination
+        in boundaryCombinations) {
+      final String originalStart = boundaryCombination['startLabel'].toString();
+      final String originalStop = boundaryCombination['stopLabel'].toString();
+      final MarkerBoundaryCombinationResult combinationResult =
+          AddRemoveMarkersNodeType.combineBoundaryMarkers(
+            recoded,
+            startLabel: renamedLabels[originalStart] ?? originalStart,
+            stopLabel: renamedLabels[originalStop] ?? originalStop,
+            blockLabel: boundaryCombination['blockLabel'].toString(),
+            replaceBoundaries:
+                boundaryCombination['replaceBoundaries'] as bool? ?? true,
+          );
+      recoded = combinationResult.markers;
+      combinedCount += combinationResult.combinedCount;
+      unmatchedCount +=
+          combinationResult.unmatchedStartCount +
+          combinationResult.unmatchedStopCount;
+    }
     _setDraftMarkersForDataset(recoded);
+    if (boundaryCombinations.isNotEmpty && mounted) {
+      final String message = combinedCount == 0
+          ? 'No complete start/stop pairs were found.'
+          : 'Created $combinedCount block${combinedCount == 1 ? '' : 's'}${unmatchedCount == 0 ? '.' : '; left $unmatchedCount unmatched boundary marker${unmatchedCount == 1 ? '' : 's'}.'}';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  Widget _buildBoundaryCombinationEditor({
+    required BuildContext context,
+    required _BoundaryCombinationDraft draft,
+    required List<String> boundaryLabels,
+    required String? validationMessage,
+    required MarkerBoundaryCombinationResult? preview,
+    required bool canRemove,
+    required VoidCallback onChanged,
+    required VoidCallback onRemove,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (canRemove)
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                onPressed: onRemove,
+                tooltip: 'Remove transform',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.close, size: 18),
+              ),
+            ),
+          LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final double fieldWidth = constraints.maxWidth >= 620
+                  ? (constraints.maxWidth - 20) / 3
+                  : constraints.maxWidth;
+              DropdownButtonFormField<String> boundaryDropdown({
+                required String role,
+                required String? value,
+                required ValueChanged<String?> onSelected,
+              }) {
+                return DropdownButtonFormField<String>(
+                  key: ValueKey<String>('${draft.id}-$role-${value ?? 'none'}'),
+                  initialValue: value ?? '',
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: '$role marker',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: <String>['', ...boundaryLabels]
+                      .map(
+                        (String label) => DropdownMenuItem<String>(
+                          value: label,
+                          child: Text(
+                            label.isEmpty ? 'None' : label,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: onSelected,
+                );
+              }
+
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: <Widget>[
+                  SizedBox(
+                    width: fieldWidth,
+                    child: boundaryDropdown(
+                      role: 'Start',
+                      value: draft.startLabel,
+                      onSelected: (String? value) {
+                        draft.startLabel = value == null || value.isEmpty
+                            ? null
+                            : value;
+                        onChanged();
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    width: fieldWidth,
+                    child: boundaryDropdown(
+                      role: 'Stop',
+                      value: draft.stopLabel,
+                      onSelected: (String? value) {
+                        draft.stopLabel = value == null || value.isEmpty
+                            ? null
+                            : value;
+                        onChanged();
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    width: fieldWidth,
+                    child: TextFormField(
+                      key: ValueKey<String>('${draft.id}-block'),
+                      initialValue: draft.blockLabel,
+                      decoration: const InputDecoration(
+                        labelText: 'Block label',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (String value) {
+                        draft.blockLabel = value;
+                        onChanged();
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          if (validationMessage != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              validationMessage,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ] else if (preview != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(
+              '${preview.combinedCount} complete pair${preview.combinedCount == 1 ? '' : 's'}; '
+              '${preview.unmatchedStartCount} unmatched start${preview.unmatchedStartCount == 1 ? '' : 's'}; '
+              '${preview.unmatchedStopCount} unmatched stop${preview.unmatchedStopCount == 1 ? '' : 's'}.',
+              style: const TextStyle(color: Colors.white60),
+            ),
+          ],
+          Row(
+            children: <Widget>[
+              Checkbox(
+                value: draft.replaceBoundaries,
+                onChanged: (bool? value) {
+                  draft.replaceBoundaries = value ?? true;
+                  onChanged();
+                },
+              ),
+              const Expanded(
+                child: Text('Replace paired start and stop markers'),
+              ),
+            ],
+          ),
+          Divider(color: Colors.white.withValues(alpha: 0.10)),
+        ],
+      ),
+    );
   }
 
   ViewerDraftSaveRequest? _currentDraftSaveRequest({
@@ -2251,14 +2579,13 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
     final List<List<double>> baseChannels = _effectiveChannels(timeSeries);
     final Map<String, dynamic> config = _effectiveChannelEditConfig();
-    final Map<String, dynamic> edits = Map<String, dynamic>.from(
-      config['edits'] as Map? ?? const <String, dynamic>{},
-    );
+    final Map<int, Map<String, dynamic>> resolvedEdits =
+        EditChannelsNodeType.resolvedEditsForSeries(timeSeries, config);
     return List<_ChannelDisplayRow>.generate(timeSeries.channelCount, (
       int index,
     ) {
       final Map<String, dynamic> edit = Map<String, dynamic>.from(
-        edits['$index'] as Map? ?? const <String, dynamic>{},
+        resolvedEdits[index] ?? const <String, dynamic>{},
       );
       final String renamed = (edit['rename'] ?? '').toString().trim();
       final bool removed = edit['remove'] == true;
@@ -3417,7 +3744,7 @@ class _MarkerList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (markers.isEmpty) {
       return const Text(
-        'No markers placed yet. Use edit mode to place markers, or interactive mode to label artifact exemplars.',
+        'No markers placed yet.',
         style: TextStyle(color: Colors.white70),
       );
     }
@@ -3507,17 +3834,27 @@ class _MarkerSection extends StatelessWidget {
                     size: 18,
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    'Markers (${markers.length})',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Text(
+                      'Markers (${markers.length})',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   if (onRecode != null)
                     TextButton(
                       onPressed: onRecode,
+                      style: TextButton.styleFrom(
+                        minimumSize: Size.zero,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 4,
+                        ),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
                       child: const Text('Edit markers'),
                     ),
                 ],
@@ -4059,6 +4396,16 @@ class _SavedChangesSummary {
 
   final String title;
   final List<_DraftManifestItem> items;
+}
+
+class _BoundaryCombinationDraft {
+  _BoundaryCombinationDraft({required this.id});
+
+  final int id;
+  String? startLabel;
+  String? stopLabel;
+  String blockLabel = 'Block';
+  bool replaceBoundaries = true;
 }
 
 class _TimeAxisBar extends StatelessWidget {

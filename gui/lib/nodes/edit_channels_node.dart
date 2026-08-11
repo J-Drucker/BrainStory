@@ -67,7 +67,7 @@ class EditChannelsNodeType extends NodeType {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          'Editing channel workflow for ${visibleDataset.label}',
+          visibleDataset.label,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 10),
@@ -92,7 +92,11 @@ class EditChannelsNodeType extends NodeType {
       return;
     }
 
-    final Map<String, dynamic> config = configForDataset(params, dataset.id);
+    final Map<String, dynamic> config = bindConfigToChannelLabels(
+      configForDataset(params, dataset.id),
+      _channelLabelsForSeries(timeSeries),
+    );
+    setConfigForDataset(params, dataset.id, config);
     if (!hasMeaningfulChanges(config)) {
       return;
     }
@@ -145,6 +149,33 @@ class EditChannelsNodeType extends NodeType {
     );
     allConfigs[datasetId] = _normalizeDatasetConfig(config);
     params['channelEditsByDataset'] = allConfigs;
+  }
+
+  static Map<String, dynamic> bindConfigToChannelLabels(
+    Map<String, dynamic> config,
+    List<String> channelLabels,
+  ) {
+    final Map<String, dynamic> normalized = _normalizeDatasetConfig(config);
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      normalized['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    for (final MapEntry<String, dynamic> entry in edits.entries.toList(
+      growable: false,
+    )) {
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      final int? index = int.tryParse(entry.key);
+      if ((edit['sourceLabel'] ?? '').toString().trim().isEmpty &&
+          index != null &&
+          index >= 0 &&
+          index < channelLabels.length) {
+        edit['sourceLabel'] = channelLabels[index];
+      }
+      edits[entry.key] = edit;
+    }
+    normalized['edits'] = edits;
+    return normalized;
   }
 
   static bool hasMeaningfulChanges(Map<String, dynamic> config) {
@@ -215,14 +246,14 @@ class EditChannelsNodeType extends NodeType {
             .trim()
             .toLowerCase();
 
-    for (final MapEntry<String, dynamic> entry in edits.entries) {
-      final int? index = int.tryParse(entry.key);
-      if (index == null || index < 0 || index >= sourceLabels.length) {
-        continue;
-      }
-      final Map<String, dynamic> edit = Map<String, dynamic>.from(
-        entry.value as Map? ?? const <String, dynamic>{},
-      );
+    final Map<int, Map<String, dynamic>> resolvedEdits = _resolvedEditsByIndex(
+      sourceLabels,
+      edits,
+    );
+    for (final MapEntry<int, Map<String, dynamic>> entry
+        in resolvedEdits.entries) {
+      final int index = entry.key;
+      final Map<String, dynamic> edit = entry.value;
       final String rename = (edit['rename'] ?? '').toString().trim();
       final bool remove = edit['remove'] == true;
       final String removeMode = (edit['removeMode'] ?? 'delete')
@@ -325,11 +356,15 @@ class EditChannelsNodeType extends NodeType {
     final List<Map<String, dynamic>> newChannels = _normalizeNewChannels(
       config['newChannels'] as List<dynamic>? ?? const <dynamic>[],
     );
+    final Map<int, Map<String, dynamic>> resolvedEdits = _resolvedEditsByIndex(
+      sourceLabels,
+      edits,
+    );
 
     final Map<String, List<int>> legacyPoolAssignments = <String, List<int>>{};
     for (int index = 0; index < sourceLabels.length; index++) {
       final Map<String, dynamic> edit = Map<String, dynamic>.from(
-        edits['$index'] as Map? ?? const <String, dynamic>{},
+        resolvedEdits[index] ?? const <String, dynamic>{},
       );
       final String poolName = (edit['poolName'] ?? '').toString().trim();
       if (poolName.isNotEmpty) {
@@ -345,7 +380,7 @@ class EditChannelsNodeType extends NodeType {
 
     for (int index = 0; index < sourceChannels.length; index++) {
       final Map<String, dynamic> edit = Map<String, dynamic>.from(
-        edits['$index'] as Map? ?? const <String, dynamic>{},
+        resolvedEdits[index] ?? const <String, dynamic>{},
       );
       final bool remove = edit['remove'] == true;
       final String removeMode = (edit['removeMode'] ?? 'delete')
@@ -478,6 +513,7 @@ class EditChannelsNodeType extends NodeType {
             'remove': valueMap['remove'] == true,
             'removeMode': (valueMap['removeMode'] ?? 'delete').toString(),
             'poolName': valueMap['poolName']?.toString() ?? '',
+            'sourceLabel': valueMap['sourceLabel']?.toString() ?? '',
           };
         }()),
       ),
@@ -520,6 +556,38 @@ class EditChannelsNodeType extends NodeType {
           : 'Ch ${index + 1}',
       growable: false,
     );
+  }
+
+  static Map<int, Map<String, dynamic>> resolvedEditsForSeries(
+    TimeSeriesData timeSeries,
+    Map<String, dynamic> config,
+  ) {
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      config['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    return _resolvedEditsByIndex(_channelLabelsForSeries(timeSeries), edits);
+  }
+
+  static Map<int, Map<String, dynamic>> _resolvedEditsByIndex(
+    List<String> sourceLabels,
+    Map<String, dynamic> edits,
+  ) {
+    final Map<int, Map<String, dynamic>> resolved =
+        <int, Map<String, dynamic>>{};
+    for (final MapEntry<String, dynamic> entry in edits.entries) {
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      final String sourceLabel = (edit['sourceLabel'] ?? '').toString().trim();
+      final int index = sourceLabel.isEmpty
+          ? (int.tryParse(entry.key) ?? -1)
+          : sourceLabels.indexOf(sourceLabel);
+      if (index < 0 || index >= sourceLabels.length) {
+        continue;
+      }
+      resolved[index] = edit;
+    }
+    return resolved;
   }
 
   static List<int> _intList(dynamic raw) {
@@ -795,6 +863,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     final Map<String, dynamic> existing = Map<String, dynamic>.from(
       edits[key] as Map? ?? const <String, dynamic>{},
     );
+    existing['sourceLabel'] = widget.channelLabels[index];
     if (rename != null) {
       existing['rename'] = rename;
     }

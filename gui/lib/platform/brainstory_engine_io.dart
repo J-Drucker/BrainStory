@@ -44,6 +44,31 @@ typedef _BandpassFilterDart =
       ffi.Pointer<ffi.Double> output,
     );
 
+typedef _SingleSidedSpectrumNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Double> samples,
+      ffi.IntPtr sampleCount,
+      ffi.Double sampleRate,
+      ffi.Double lowHz,
+      ffi.Double highHz,
+      ffi.Pointer<ffi.Double> frequenciesOut,
+      ffi.Pointer<ffi.Double> powerOut,
+      ffi.IntPtr outputCapacity,
+      ffi.Pointer<ffi.IntPtr> binCountOut,
+    );
+typedef _SingleSidedSpectrumDart =
+    int Function(
+      ffi.Pointer<ffi.Double> samples,
+      int sampleCount,
+      double sampleRate,
+      double lowHz,
+      double highHz,
+      ffi.Pointer<ffi.Double> frequenciesOut,
+      ffi.Pointer<ffi.Double> powerOut,
+      int outputCapacity,
+      ffi.Pointer<ffi.IntPtr> binCountOut,
+    );
+
 typedef _CallocNative =
     ffi.Pointer<ffi.Void> Function(ffi.IntPtr itemCount, ffi.IntPtr itemSize);
 typedef _CallocDart =
@@ -62,6 +87,72 @@ typedef _FreeStringDart = void Function(ffi.Pointer<ffi.Uint8> pointer);
 
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
+
+NativeSpectrumResult? computeSingleSidedSpectrumNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+}) {
+  if (samples.isEmpty) {
+    return const NativeSpectrumResult(
+      frequencies: <double>[],
+      power: <double>[],
+    );
+  }
+  final _SingleSidedSpectrumDart? spectrumFunction =
+      _engineLibrary.singleSidedSpectrum;
+  if (spectrumFunction == null || _nativeMemory.unavailable) {
+    return null;
+  }
+
+  final int capacity = (samples.length ~/ 2) + 1;
+  final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
+    samples.length,
+  );
+  final ffi.Pointer<ffi.Double> frequenciesPtr = _nativeMemory.callocDouble(
+    capacity,
+  );
+  final ffi.Pointer<ffi.Double> powerPtr = _nativeMemory.callocDouble(capacity);
+  final ffi.Pointer<ffi.IntPtr> binCountPtr = _nativeMemory.callocIntPtr();
+  try {
+    for (int index = 0; index < samples.length; index++) {
+      samplesPtr[index] = samples[index];
+    }
+    final int status = spectrumFunction(
+      samplesPtr,
+      samples.length,
+      sampleRate,
+      lowHz,
+      highHz,
+      frequenciesPtr,
+      powerPtr,
+      capacity,
+      binCountPtr,
+    );
+    final int binCount = binCountPtr.value;
+    if (status != 0 || binCount < 0 || binCount > capacity) {
+      return null;
+    }
+    return NativeSpectrumResult(
+      frequencies: List<double>.generate(
+        binCount,
+        (int index) => frequenciesPtr[index],
+        growable: false,
+      ),
+      power: List<double>.generate(
+        binCount,
+        (int index) => powerPtr[index],
+        growable: false,
+      ),
+    );
+  } finally {
+    _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+    _nativeMemory.free(frequenciesPtr.cast<ffi.Void>());
+    _nativeMemory.free(powerPtr.cast<ffi.Void>());
+    _nativeMemory.free(binCountPtr.cast<ffi.Void>());
+  }
+}
 
 List<double>? applyBandpassFilterNative(
   List<double> input, {
@@ -210,6 +301,21 @@ class _BrainstoryEngineLibrary {
 
   final ffi.DynamicLibrary? _library;
 
+  _SingleSidedSpectrumDart? get singleSidedSpectrum {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) {
+      return null;
+    }
+    try {
+      return library
+          .lookupFunction<_SingleSidedSpectrumNative, _SingleSidedSpectrumDart>(
+            'brainstory_single_sided_spectrum',
+          );
+    } catch (_) {
+      return null;
+    }
+  }
+
   _BandpassFilterDart? get bandpassFilter {
     final ffi.DynamicLibrary? library = _library;
     if (library == null) {
@@ -324,6 +430,10 @@ class _NativeMemory {
 
   ffi.Pointer<ffi.Uint8> callocBytes(int count) {
     return _calloc(count, ffi.sizeOf<ffi.Uint8>()).cast<ffi.Uint8>();
+  }
+
+  ffi.Pointer<ffi.IntPtr> callocIntPtr() {
+    return _calloc(1, ffi.sizeOf<ffi.IntPtr>()).cast<ffi.IntPtr>();
   }
 
   void free(ffi.Pointer<ffi.Void> pointer) {

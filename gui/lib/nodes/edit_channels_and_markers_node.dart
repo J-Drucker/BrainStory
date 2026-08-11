@@ -75,10 +75,12 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     }
 
     TimeSeriesData nextSeries = timeSeries;
-    final Map<String, dynamic> config = EditChannelsNodeType.configForDataset(
-      params,
-      dataset.id,
-    );
+    final Map<String, dynamic> config =
+        EditChannelsNodeType.bindConfigToChannelLabels(
+          EditChannelsNodeType.configForDataset(params, dataset.id),
+          timeSeries.channelLabels,
+        );
+    EditChannelsNodeType.setConfigForDataset(params, dataset.id, config);
     final bool hasChannelChanges =
         EditChannelsNodeType.hasMeaningfulChanges(config);
     ArtifactChangeSet? channelChangeSet;

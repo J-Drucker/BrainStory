@@ -864,8 +864,39 @@ dynamic _deepCloneJsonValue(dynamic value) {
   return value;
 }
 
+bool _jsonValuesEqual(dynamic left, dynamic right) {
+  if (identical(left, right) || left == right) {
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final dynamic key in left.keys) {
+      if (!right.containsKey(key) || !_jsonValuesEqual(left[key], right[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (int index = 0; index < left.length; index++) {
+      if (!_jsonValuesEqual(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
 class CanvasLogic {
   static const String _lastRunParamsByDatasetKey = '_lastRunParamsByDataset';
+  static const String _importMetadataOnlyDatasetIdsKey =
+      '_importMetadataOnlyDatasetIds';
 
   CanvasLogic({this.runUiYieldsEnabled = true});
 
@@ -1939,6 +1970,27 @@ class CanvasLogic {
     );
   }
 
+  bool _importComputationParamsEqual(
+    Map<String, dynamic> previous,
+    Map<String, dynamic> next,
+  ) {
+    Map<String, dynamic> computationParams(Map<String, dynamic> params) {
+      final Map<String, dynamic> result = _deepCloneJsonMap(
+        _exportableNodeParams(params),
+      );
+      result
+        ..remove('datasetAliases')
+        ..remove('selectedDatasetIds')
+        ..remove('storagePolicy');
+      return result;
+    }
+
+    return _jsonValuesEqual(
+      computationParams(previous),
+      computationParams(next),
+    );
+  }
+
   void importProjectJson(Map<String, dynamic> jsonMap) {
     clearAll(recordUndo: false);
     datasets.clear();
@@ -2342,6 +2394,17 @@ class CanvasLogic {
   }) async {
     final bool mutationLocked = isNodeMutationLocked(node.id);
     final bool queueRun = hasActiveRun;
+    final _NodeCombinationPlan? previousCombination =
+        _combinationPlanWithPrevious(node);
+    final _NodeCombinationPlan? nextCombination = previousCombination == null
+        ? _combinationPlanWithNext(node)
+        : null;
+    final _NodeCombinationPlan? combination =
+        previousCombination ?? nextCombination;
+    final bool combinationLocked =
+        combination != null &&
+        (isNodeMutationLocked(combination.upstream.id) ||
+            isNodeMutationLocked(combination.downstream.id));
     final Set<String> nodeDatasetIds = _datasetsForNode(node);
     final bool canLoadFromDisk = await _nodeHasLoadableDiskCache(
       node: node,
@@ -2383,6 +2446,16 @@ class CanvasLogic {
             mutationLocked ? 'Edit Parameters (locked)' : 'Edit Parameters',
           ),
         ),
+        if (combination != null)
+          PopupMenuItem<String>(
+            value: 'combine',
+            enabled: !combinationLocked,
+            child: Text(
+              previousCombination != null
+                  ? 'Combine with Previous Node'
+                  : 'Combine with Next Node',
+            ),
+          ),
         const PopupMenuDivider(),
         PopupMenuItem<String>(
           value: 'delete',
@@ -2486,6 +2559,19 @@ class CanvasLogic {
       case 'edit':
         _openNodeEditor(context: context, node: node, update: update);
         return;
+      case 'combine':
+        if (combination == null) {
+          return;
+        }
+        final String? combinedTitle = combineConsecutiveEditNodes(
+          combination.upstream.id,
+          combination.downstream.id,
+        );
+        update();
+        if (context.mounted && combinedTitle != null) {
+          _showStatusSnackBar(context, 'Combined into $combinedTitle.');
+        }
+        return;
       case 'delete':
         selectedNodeId = node.id;
         selectedNodeIds
@@ -2579,6 +2665,189 @@ class CanvasLogic {
     _clearPendingConnection();
   }
 
+  _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {
+    final List<NodeModel> parents = _immediateParents(node.id);
+    return parents.length == 1
+        ? _buildNodeCombinationPlan(parents.single, node)
+        : null;
+  }
+
+  _NodeCombinationPlan? _combinationPlanWithNext(NodeModel node) {
+    final List<NodeModel> children = _immediateChildren(node.id);
+    return children.length == 1
+        ? _buildNodeCombinationPlan(node, children.single)
+        : null;
+  }
+
+  _NodeCombinationPlan? _buildNodeCombinationPlan(
+    NodeModel upstream,
+    NodeModel downstream,
+  ) {
+    final Set<String> upstreamDatasets = _selectedDatasetIdsForCombination(
+      upstream,
+    );
+    final Set<String> downstreamDatasets = _selectedDatasetIdsForCombination(
+      downstream,
+    );
+    if (_immediateChildren(upstream.id).length != 1 ||
+        _immediateParents(downstream.id).length != 1 ||
+        upstream.params.containsKey('_runtimeGeneratedByNodeId') ||
+        downstream.params.containsKey('_runtimeGeneratedByNodeId') ||
+        !setEquals(upstreamDatasets, downstreamDatasets)) {
+      return null;
+    }
+
+    final bool upstreamChannels = upstream.type is EditChannelsNodeType;
+    final bool upstreamCombined =
+        upstream.type is EditChannelsAndMarkersNodeType;
+    final bool upstreamMarkers = upstream.type is AddRemoveMarkersNodeType;
+    final bool downstreamMarkers = downstream.type is AddRemoveMarkersNodeType;
+    if (downstreamMarkers &&
+        (upstream.params['markerGenerator'] != null ||
+            downstream.params['markerGenerator'] != null)) {
+      return null;
+    }
+
+    if ((upstreamChannels || upstreamCombined) && downstreamMarkers) {
+      final NodeType type = EditChannelsAndMarkersNodeType();
+      final Map<String, dynamic> params = _deepCloneJsonMap(type.defaultParams);
+      params['channelEditsByDataset'] = _deepCloneJsonMap(
+        Map<String, dynamic>.from(
+          upstream.params['channelEditsByDataset'] as Map? ??
+              const <String, dynamic>{},
+        ),
+      );
+      params['markers'] = _deepCloneJsonList(
+        downstream.params['markers'] as List<dynamic>? ?? const <dynamic>[],
+      );
+      params['applyEmptyMarkerSet'] =
+          downstream.params['applyEmptyMarkerSet'] == true;
+      params['selectedDatasetIds'] = upstreamDatasets.toList(growable: false);
+      return _NodeCombinationPlan(
+        upstream: upstream,
+        downstream: downstream,
+        type: type,
+        params: params,
+      );
+    }
+
+    if (upstreamMarkers && downstreamMarkers) {
+      final bool downstreamAppliesMarkers =
+          downstream.params['applyEmptyMarkerSet'] == true ||
+          (downstream.params['markers'] as List<dynamic>? ?? const <dynamic>[])
+              .isNotEmpty;
+      final NodeModel effectiveNode = downstreamAppliesMarkers
+          ? downstream
+          : upstream;
+      final NodeType type = AddRemoveMarkersNodeType();
+      final Map<String, dynamic> params = _deepCloneJsonMap(
+        effectiveNode.params,
+      );
+      params['selectedDatasetIds'] = upstreamDatasets.toList(growable: false);
+      return _NodeCombinationPlan(
+        upstream: upstream,
+        downstream: downstream,
+        type: type,
+        params: params,
+      );
+    }
+    return null;
+  }
+
+  Set<String> _selectedDatasetIdsForCombination(NodeModel node) {
+    final List<dynamic>? selected =
+        node.params['selectedDatasetIds'] as List<dynamic>?;
+    return selected == null
+        ? datasets.values.map((Dataset dataset) => dataset.id).toSet()
+        : selected.map((dynamic value) => value.toString()).toSet();
+  }
+
+  List<dynamic> _deepCloneJsonList(List<dynamic> values) {
+    return jsonDecode(jsonEncode(values)) as List<dynamic>;
+  }
+
+  String? combineConsecutiveEditNodes(
+    String upstreamNodeId,
+    String downstreamNodeId,
+  ) {
+    final NodeModel? upstream = _findNode(upstreamNodeId);
+    final NodeModel? downstream = _findNode(downstreamNodeId);
+    if (upstream == null || downstream == null) {
+      return null;
+    }
+    final _NodeCombinationPlan? plan = _buildNodeCombinationPlan(
+      upstream,
+      downstream,
+    );
+    if (plan == null ||
+        isNodeMutationLocked(upstream.id) ||
+        isNodeMutationLocked(downstream.id)) {
+      return null;
+    }
+
+    _recordUndo('combine edit nodes');
+    final Set<String> replacedIds = <String>{upstream.id, downstream.id};
+    final List<Map<String, dynamic>> incomingConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['toNode'] == upstream.id &&
+              !replacedIds.contains(connection['fromNode']),
+        )
+        .map((Map<String, dynamic> value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    final List<Map<String, dynamic>> outgoingConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == downstream.id &&
+              !replacedIds.contains(connection['toNode']),
+        )
+        .map((Map<String, dynamic> value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    final NodeModel replacement = _buildNode(
+      type: plan.type,
+      position: downstream.position,
+      params: plan.params,
+    );
+
+    nodes.removeWhere((NodeModel node) => replacedIds.contains(node.id));
+    connections.removeWhere(
+      (Map<String, dynamic> connection) =>
+          replacedIds.contains(connection['fromNode']) ||
+          replacedIds.contains(connection['toNode']),
+    );
+    nodes.add(replacement);
+    for (final Map<String, dynamic> connection in incomingConnections) {
+      connection['toNode'] = replacement.id;
+      connection['toPort'] = 0;
+      connections.add(connection);
+    }
+    for (final Map<String, dynamic> connection in outgoingConnections) {
+      connection['fromNode'] = replacement.id;
+      if ((connection['fromPort'] as int? ?? 0) >=
+          replacement.outputPorts.length) {
+        connection['fromPort'] = 0;
+      }
+      connections.add(connection);
+    }
+
+    _nodeRamSnapshots.remove(upstream.id);
+    _nodeRamSnapshots.remove(downstream.id);
+    _nodeDiskSnapshotIds.remove(upstream.id);
+    _nodeDiskSnapshotIds.remove(downstream.id);
+    _seedNodeDatasetStates(replacement);
+    for (final Dataset dataset in datasets.values) {
+      _markImmediateChildrenStale(replacement.id, dataset.id);
+    }
+    selectedNodeId = replacement.id;
+    selectedNodeIds
+      ..clear()
+      ..add(replacement.id);
+    selectedConnectionIndex = null;
+    keyboardFocusedNodeId = replacement.id;
+    _clearPendingConnection();
+    return replacement.title;
+  }
+
   NodeModel? _findNode(String id) {
     for (final NodeModel node in nodes) {
       if (node.id == id) return node;
@@ -2647,11 +2916,34 @@ class CanvasLogic {
       return;
     }
     _recordUndo('edit ${node.title} parameters');
+    final Map<String, dynamic> previousParams = _deepCloneJsonMap(node.params);
+    final Set<String> previousAvailableDatasetIds = _availableDatasetIdsForNode(
+      node,
+    );
+    final Map<String, String> previousImportLabels = node.type is ImportNodeType
+        ? <String, String>{
+            for (final Dataset dataset in datasets.values)
+              dataset.id: ImportNodeType.resolvedDatasetLabel(
+                previousParams,
+                dataset,
+              ),
+          }
+        : const <String, String>{};
     final Map<String, dynamic> nextParams = Map<String, dynamic>.from(params);
     for (final MapEntry<String, dynamic> entry in node.params.entries) {
       if (entry.key.startsWith('_')) {
         nextParams[entry.key] = entry.value;
       }
+    }
+    final bool importComputationUnchanged =
+        node.type is ImportNodeType &&
+        _importComputationParamsEqual(previousParams, nextParams);
+    final Set<String> metadataOnlyImportDatasetIds = Set<String>.from(
+      previousParams[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
+          const <dynamic>[],
+    );
+    if (!importComputationUnchanged) {
+      metadataOnlyImportDatasetIds.clear();
     }
     node.params = nextParams;
     if (node.type is ImportNodeType) {
@@ -2661,10 +2953,54 @@ class CanvasLogic {
     for (final Dataset dataset in datasets.values) {
       if (!availableDatasetIds.contains(dataset.id)) {
         node.datasetStates[dataset.id] = DatasetState.notReady;
+        metadataOnlyImportDatasetIds.remove(dataset.id);
         continue;
       }
+
+      if (node.type is ImportNodeType && importComputationUnchanged) {
+        final DatasetState currentState =
+            node.datasetStates[dataset.id] ?? DatasetState.notReady;
+        if (!previousAvailableDatasetIds.contains(dataset.id) ||
+            currentState == DatasetState.notReady) {
+          node.datasetStates[dataset.id] = DatasetState.ready;
+          metadataOnlyImportDatasetIds.remove(dataset.id);
+          continue;
+        }
+
+        final String previousLabel =
+            previousImportLabels[dataset.id] ?? dataset.label;
+        final String nextLabel = ImportNodeType.resolvedDatasetLabel(
+          node.params,
+          dataset,
+        );
+        if (previousLabel != nextLabel) {
+          if (currentState == DatasetState.done ||
+              metadataOnlyImportDatasetIds.contains(dataset.id)) {
+            node.datasetStates[dataset.id] = DatasetState.stale;
+            metadataOnlyImportDatasetIds.add(dataset.id);
+            continue;
+          }
+          metadataOnlyImportDatasetIds.remove(dataset.id);
+          node.datasetStates[dataset.id] = DatasetState.stale;
+          _markImmediateChildrenStale(node.id, dataset.id);
+          continue;
+        }
+
+        // Selection order and storage policy do not change imported samples.
+        continue;
+      }
+
+      metadataOnlyImportDatasetIds.remove(dataset.id);
       node.datasetStates[dataset.id] = DatasetState.stale;
       _markImmediateChildrenStale(node.id, dataset.id);
+    }
+    if (node.type is ImportNodeType) {
+      if (metadataOnlyImportDatasetIds.isEmpty) {
+        node.params.remove(_importMetadataOnlyDatasetIdsKey);
+      } else {
+        node.params[_importMetadataOnlyDatasetIdsKey] =
+            metadataOnlyImportDatasetIds.toList(growable: false);
+      }
     }
     update();
   }
@@ -3856,38 +4192,48 @@ class CanvasLogic {
         try {
           dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
-          if (wasStale) {
+          final bool metadataOnlyImportRun =
+              wasStale &&
+              await _canApplyImportMetadataWithoutReload(node, dataset);
+          if (wasStale && !metadataOnlyImportRun) {
             await _restoreStaleNodeOutputForRun(node, dataset);
           }
-          final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
-            dataset,
-          );
+          final List<String> sourceArtifactIds = node.type is ImportNodeType
+              ? const <String>[]
+              : _sourceArtifactIdsForDataset(dataset);
           await setRunDetail(
-            'Running ${node.title} on ${dataset.label} (${processingResponsiveness.value.label}, ${node.type.executionChunkingStrategy})...',
+            metadataOnlyImportRun
+                ? 'Updating imported artifact name to ${dataset.label}...'
+                : 'Running ${node.title} on ${dataset.label} (${processingResponsiveness.value.label}, ${node.type.executionChunkingStrategy})...',
             phase: RunActivityPhase.running,
           );
-          await node.type.runChunked(
-            dataset,
-            node.params,
-            NodeExecutionContext(
-              setProgress: (String detail) =>
-                  setRunDetailQuiet(detail, phase: RunActivityPhase.running),
-              yieldIfNeeded: _executionChunkBoundary,
-            ),
-          );
+          if (!metadataOnlyImportRun) {
+            await node.type.runChunked(
+              dataset,
+              node.params,
+              NodeExecutionContext(
+                setProgress: (String detail) =>
+                    setRunDetailQuiet(detail, phase: RunActivityPhase.running),
+                yieldIfNeeded: _executionChunkBoundary,
+              ),
+            );
+          }
           node.datasetStates[dataset.id] = DatasetState.done;
           _rememberLastRunParams(node, dataset.id);
-          await _materializeNodeOutput(
-            node,
-            dataset,
-            sourceArtifactIds: sourceArtifactIds,
-            keepRamSnapshot: dataset.id == hotDatasetId,
-          );
-          _markImmediateChildrenStale(
-            node.id,
-            dataset.id,
-            changeSet: _takeLastChangeSet(dataset),
-          );
+          _clearPendingImportMetadataUpdate(node, dataset.id);
+          if (!metadataOnlyImportRun) {
+            await _materializeNodeOutput(
+              node,
+              dataset,
+              sourceArtifactIds: sourceArtifactIds,
+              keepRamSnapshot: dataset.id == hotDatasetId,
+            );
+            _markImmediateChildrenStale(
+              node.id,
+              dataset.id,
+              changeSet: _takeLastChangeSet(dataset),
+            );
+          }
         } catch (_) {
           node.datasetStates[dataset.id] =
               _availableDatasetIdsForNode(node).contains(dataset.id)
@@ -4490,13 +4836,19 @@ class CanvasLogic {
 
     _recordUndo('save channel edits', datasetArtifactIds: <String>{dataset.id});
     final NodeModel channelNode = _ensureChannelEditNode(sourceNode);
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    final Map<String, dynamic> boundConfig = timeSeries == null
+        ? datasetConfig
+        : EditChannelsNodeType.bindConfigToChannelLabels(
+            datasetConfig,
+            timeSeries.channelLabels,
+          );
     EditChannelsNodeType.setConfigForDataset(
       channelNode.params,
       dataset.id,
-      datasetConfig,
+      boundConfig,
     );
 
-    final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries != null) {
       final List<String> sourceArtifactIds = _sourceArtifactIdsForDataset(
         dataset,
@@ -4505,12 +4857,12 @@ class CanvasLogic {
           EditChannelsNodeType.changeSetForConfig(
             datasetId: dataset.id,
             timeSeries: timeSeries,
-            config: datasetConfig,
+            config: boundConfig,
             sourceNodeId: channelNode.id,
           );
       dataset.timeSeries = EditChannelsNodeType.applyChannelEdits(
         timeSeries,
-        datasetConfig,
+        boundConfig,
         warningSink: (String warning) {
           dataset.ram['editChannels.lastWarning'] = warning;
         },
@@ -5016,6 +5368,50 @@ class CanvasLogic {
         .where((String id) => id.trim().isNotEmpty)
         .toSet()
         .toList(growable: false);
+  }
+
+  Future<bool> _canApplyImportMetadataWithoutReload(
+    NodeModel node,
+    Dataset dataset,
+  ) async {
+    if (node.type is! ImportNodeType) {
+      return false;
+    }
+    final Set<String> pendingDatasetIds = Set<String>.from(
+      node.params[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
+          const <dynamic>[],
+    );
+    if (!pendingDatasetIds.contains(dataset.id)) {
+      return false;
+    }
+    if (dataset.timeSeries != null ||
+        _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true ||
+        _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true) {
+      return true;
+    }
+    if (!supportsNodeSnapshotDiskStore ||
+        !await hasNodeSnapshotOnDisk(nodeId: node.id, datasetId: dataset.id)) {
+      return false;
+    }
+    _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
+    return true;
+  }
+
+  void _clearPendingImportMetadataUpdate(NodeModel node, String datasetId) {
+    if (node.type is! ImportNodeType) {
+      return;
+    }
+    final Set<String> pendingDatasetIds = Set<String>.from(
+      node.params[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
+          const <dynamic>[],
+    )..remove(datasetId);
+    if (pendingDatasetIds.isEmpty) {
+      node.params.remove(_importMetadataOnlyDatasetIdsKey);
+    } else {
+      node.params[_importMetadataOnlyDatasetIdsKey] = pendingDatasetIds.toList(
+        growable: false,
+      );
+    }
   }
 
   void _rememberLastRunParams(NodeModel node, String datasetId) {
@@ -5731,6 +6127,10 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) async {
+    if (node.type is EditChannelsNodeType ||
+        node.type is EditChannelsAndMarkersNodeType) {
+      return;
+    }
     final DatasetArtifactSnapshot? snapshot = await _loadSnapshotForNodeDataset(
       node.id,
       dataset.id,
@@ -7234,6 +7634,20 @@ class _OutputHandleDescriptor {
   final bool hasOutput;
   final String badgeText;
   final String tooltip;
+}
+
+class _NodeCombinationPlan {
+  const _NodeCombinationPlan({
+    required this.upstream,
+    required this.downstream,
+    required this.type,
+    required this.params,
+  });
+
+  final NodeModel upstream;
+  final NodeModel downstream;
+  final NodeType type;
+  final Map<String, dynamic> params;
 }
 
 class _EffectiveOutputPort {

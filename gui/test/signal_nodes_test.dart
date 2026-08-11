@@ -15,6 +15,7 @@ import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_coordinates_node.dart';
 import 'package:brainstory_gui/nodes/amplitude_features_node.dart';
 import 'package:brainstory_gui/nodes/edit_channels_node.dart';
+import 'package:brainstory_gui/nodes/edit_channels_and_markers_node.dart';
 import 'package:brainstory_gui/nodes/export_edf_node.dart';
 import 'package:brainstory_gui/nodes/eye_blinks_node.dart';
 import 'package:brainstory_gui/nodes/fooof_node.dart';
@@ -51,6 +52,56 @@ void main() {
     expect(logic.canUndo, isTrue);
     expect(logic.undoLast(), 'add Import');
     expect(logic.nodes, isEmpty);
+  });
+
+  test('consecutive channel and marker edits combine into one node', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(EditChannelsNodeType());
+    final NodeModel channelNode = logic.nodes.last;
+    channelNode.params['channelEditsByDataset'] = <String, dynamic>{
+      'dataset-1': <String, dynamic>{
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{'rename': 'Fp1 edited'},
+        },
+      },
+    };
+    logic.addNode(AddRemoveMarkersNodeType());
+    final NodeModel markerNode = logic.nodes.last;
+    markerNode.params['markers'] = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'datasetId': 'dataset-1',
+        'label': 'blink',
+        'onsetMicros': 1000,
+        'durationMicros': 0,
+        'markerType': MarkerType.event,
+      },
+    ];
+    markerNode.params['applyEmptyMarkerSet'] = true;
+    logic.connections.add(<String, dynamic>{
+      'fromNode': channelNode.id,
+      'fromPort': 0,
+      'toNode': markerNode.id,
+      'toPort': 0,
+    });
+
+    expect(
+      logic.combineConsecutiveEditNodes(channelNode.id, markerNode.id),
+      'Edit Channels and Markers',
+    );
+
+    expect(logic.nodes, hasLength(1));
+    expect(logic.nodes.single.type, isA<EditChannelsAndMarkersNodeType>());
+    expect(
+      logic.nodes.single.params['channelEditsByDataset'],
+      contains('dataset-1'),
+    );
+    expect(logic.nodes.single.params['markers'], hasLength(1));
+    expect(logic.nodes.single.params['applyEmptyMarkerSet'], isTrue);
+    expect(logic.connections, isEmpty);
+
+    expect(logic.undoLast(), 'combine edit nodes');
+    expect(logic.nodes, hasLength(2));
+    expect(logic.connections, hasLength(1));
   });
 
   test(
@@ -484,6 +535,117 @@ void main() {
     expect(logic.visualizationSourceRefsForNode(node.id), hasLength(1));
   });
 
+  testWidgets('impedance visualization exposes scientific display controls', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImpedancesNodeType());
+    final NodeModel node = logic.nodes.single;
+    final Dataset dataset = Dataset('dataset-1', label: 'PVT');
+    dataset.timeSeries = TimeSeriesData(
+      samples: const <double>[0.0],
+      sampleRate: 256.0,
+      channelLabels: const <String>['Cz'],
+      impedanceData: ImpedanceData(
+        channelLabels: const <String>['Cz'],
+        measurementTimesMicros: const <int>[0, 2000000],
+        ohmsByChannel: const <List<double?>>[
+          <double?>[10000.0, 12000.0],
+        ],
+      ),
+    );
+    logic.datasets[dataset.id] = dataset;
+    node.datasetStates[dataset.id] = DatasetState.done;
+    final VisualizationSourceRef sourceRef = logic
+        .visualizationSourceRefsForNode(node.id)
+        .single;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VisualizationSurface(
+            logic: logic,
+            nodeId: node.id,
+            onChanged: null,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilterChip, sourceRef.displayLabel));
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Channel: Cz'), findsOneWidget);
+    expect(find.text('Quantity: Impedance'), findsOneWidget);
+    expect(find.text('Y Axis: Linear'), findsOneWidget);
+    expect(find.text('Line: Straight'), findsOneWidget);
+
+    await tester.tap(find.text('Quantity: Impedance'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Admittance'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(node.params['impedance_quantity'], 'admittance');
+    expect(find.text('Quantity: Admittance'), findsOneWidget);
+  });
+
+  testWidgets('node dialog exposes its save and run callback', (
+    WidgetTester tester,
+  ) async {
+    final ImpedancesNodeType nodeType = ImpedancesNodeType();
+    Map<String, dynamic>? runParams;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (BuildContext context) => TextButton(
+              onPressed: () {
+                showDialog<void>(
+                  context: context,
+                  builder: (_) => nodeType.buildConfigWidget(
+                    Map<String, dynamic>.from(nodeType.defaultParams),
+                    (_) {},
+                    onSaveAndRun: (Map<String, dynamic> params) {
+                      runParams = params;
+                    },
+                    datasets: const <String, Dataset>{},
+                    availableDatasetIds: const <String>{},
+                    datasetSourceLabels: const <String, List<String>>{},
+                    processedDatasetStates: const <String, DatasetState>{},
+                    portStatusSummary: const NodePortStatusSummary(
+                      inputs: <NodePortDatasetSummary>[],
+                      outputs: <NodePortDatasetSummary>[],
+                    ),
+                    processingSteps: const <String>[],
+                  ),
+                );
+              },
+              child: const Text('Open editor'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open editor'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save & Run'), findsOneWidget);
+
+    await tester.tap(find.text('Save & Run'));
+    await tester.pumpAndSettle();
+
+    expect(runParams, isNotNull);
+    expect(runParams!['impedance_quantity'], 'impedance');
+    expect(runParams!['impedance_line_mode'], 'line');
+  });
+
   test('artifact identity and change sets serialize cleanly', () {
     const ArtifactIdentity identity = ArtifactIdentity(
       artifactId: 'artifact-node-2-dataset-1-signal',
@@ -589,6 +751,37 @@ void main() {
     expect(changeSet.affectedChannelIndices, <int>[1]);
   });
 
+  test('channel deletion stays bound to its original label', () {
+    final TimeSeriesData source = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[1, 2, 3],
+        <double>[4, 5, 6],
+        <double>[7, 8, 9],
+      ],
+      sampleRate: 1000,
+      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+    );
+    final Map<String, dynamic> config =
+        EditChannelsNodeType.bindConfigToChannelLabels(<String, dynamic>{
+          'edits': <String, dynamic>{
+            '1': <String, dynamic>{'remove': true, 'removeMode': 'delete'},
+          },
+        }, source.channelLabels);
+
+    final TimeSeriesData first = EditChannelsNodeType.applyChannelEdits(
+      source,
+      config,
+    );
+    final TimeSeriesData second = EditChannelsNodeType.applyChannelEdits(
+      first,
+      config,
+    );
+
+    expect(first.channelLabels, <String>['Fz', 'Pz']);
+    expect(second.channelLabels, <String>['Fz', 'Pz']);
+    expect(second.channels, first.channels);
+  });
+
   test('channel removal marks downstream signal nodes stale', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -596,9 +789,10 @@ void main() {
       channelSamples: const <List<double>>[
         <double>[1, 2, 3],
         <double>[4, 5, 6],
+        <double>[7, 8, 9],
       ],
       sampleRate: 1000,
-      channelLabels: const <String>['Fz', 'Cz'],
+      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
     );
     logic.datasets[dataset.id] = dataset;
     logic.addNode(ImportNodeType());
@@ -638,7 +832,14 @@ void main() {
 
     expect(editNode.datasetStates[dataset.id], DatasetState.done);
     expect(psdNode.datasetStates[dataset.id], DatasetState.stale);
-    expect(dataset.timeSeries!.channelLabels, <String>['Fz']);
+    expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Pz']);
+
+    editNode.datasetStates[dataset.id] = DatasetState.stale;
+    await logic.runThisStep(editNode.id, datasetIds: <String>{dataset.id});
+
+    expect(editNode.datasetStates[dataset.id], DatasetState.done);
+    expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Pz']);
+    expect(dataset.timeSeries!.channels.last, <double>[7, 8, 9]);
   });
 
   test('node runs stamp output artifact identity and lineage', () async {
@@ -750,6 +951,83 @@ void main() {
       );
       expect(reloadedSecond.timeSeries, isNotNull);
       expect(reloadedSecond.timeSeries!.primaryChannel, <double>[2, 3, 2]);
+    },
+  );
+
+  test(
+    'renaming a completed import does not reload data or stale consumers',
+    () async {
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset dataset = Dataset(
+        'rename-only-import-dataset',
+        label: 'Original.csv',
+        path: 'Original.csv',
+        sourceBytes: Uint8List.fromList(
+          utf8.encode('time,Cz\n0,1\n0.001,2\n0.002,3\n'),
+        ),
+      );
+      dataset.ram['source.filename'] = 'Original.csv';
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(PSDNodeType());
+
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel consumerNode = logic.nodes[1];
+      importNode.params['selectedDatasetIds'] = <String>[dataset.id];
+      logic.connections.add(<String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': consumerNode.id,
+        'toPort': 0,
+      });
+
+      await logic.runThisStep(importNode.id, datasetIds: <String>{dataset.id});
+      final ArtifactIdentity originalIdentity = dataset.artifactIdentityFor(
+        BrainStoryArtifactKind.timeSeries,
+      )!;
+      consumerNode.datasetStates[dataset.id] = DatasetState.done;
+
+      final Map<String, dynamic> renamedParams = Map<String, dynamic>.from(
+        importNode.params,
+      );
+      renamedParams['datasetAliases'] = <String, dynamic>{
+        dataset.id: 'Renamed recording',
+      };
+      logic.applyNodeParamsForTest(importNode, renamedParams);
+
+      expect(dataset.label, 'Renamed recording');
+      expect(importNode.datasetStates[dataset.id], DatasetState.stale);
+      expect(consumerNode.datasetStates[dataset.id], DatasetState.done);
+
+      dataset
+        ..path = '/definitely/missing/brainstory-source.csv'
+        ..sourceBytes = null
+        ..timeSeries = null;
+
+      await logic.runThisStep(importNode.id, datasetIds: <String>{dataset.id});
+
+      expect(importNode.datasetStates[dataset.id], DatasetState.done);
+      expect(consumerNode.datasetStates[dataset.id], DatasetState.done);
+      expect(dataset.timeSeries, isNull);
+      final Dataset cachedView = await logic.materializedDatasetViewForNode(
+        importNode.id,
+        dataset,
+      );
+      expect(cachedView.label, 'Renamed recording');
+      expect(cachedView.timeSeries!.primaryChannel, <double>[1, 2, 3]);
+      expect(
+        cachedView
+            .artifactIdentityFor(BrainStoryArtifactKind.timeSeries)!
+            .revision,
+        originalIdentity.revision,
+      );
+
+      final Map<String, dynamic> changedImportParams =
+          Map<String, dynamic>.from(importNode.params);
+      changedImportParams['sampleRateHz'] = 512.0;
+      logic.applyNodeParamsForTest(importNode, changedImportParams);
+      expect(importNode.datasetStates[dataset.id], DatasetState.stale);
+      expect(consumerNode.datasetStates[dataset.id], DatasetState.stale);
     },
   );
 
@@ -2525,6 +2803,42 @@ Mk2=Artifact,Bad Segment,11,5,0
     },
   );
 
+  test('block segmentation consumes one duration-bearing marker', () async {
+    final Dataset dataset = Dataset('block-window', label: 'Block window');
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.generate(100, (int index) => index.toDouble()),
+      sampleRate: 10.0,
+      channelLabels: const <String>['Cz'],
+      markers: const <TimeMarker>[
+        TimeMarker(
+          onsetMicros: 2000000,
+          durationMicros: 3000000,
+          label: 'Task block',
+          markerType: MarkerType.window,
+        ),
+      ],
+    );
+
+    await SegmentationNodeType().run(dataset, <String, dynamic>{
+      'mode': 'blocks',
+      'includedMarkers': <String, dynamic>{'window|Task block': true},
+      'blockConcatenate': false,
+      'blockInvert': false,
+    });
+
+    final SignalSegmentData segment =
+        dataset.segmentedTimeSeries!.segments.single;
+    expect(segment.label, 'Task block');
+    expect(segment.startSeconds, 2.0);
+    expect(segment.stopSeconds, 5.0);
+    expect(segment.sourceStartSample, 20);
+    expect(segment.sourceStopSampleExclusive, 50);
+    expect(
+      dataset.segmentedTimeSeries!.channelSamplesForSegment(segment).single,
+      List<double>.generate(30, (int index) => (20 + index).toDouble()),
+    );
+  });
+
   test('realign node shifts segmented artifacts back into alignment', () async {
     final List<double> reference = List<double>.filled(64, 0.0);
     reference[20] = 5.0;
@@ -2656,6 +2970,55 @@ Mk2=Artifact,Bad Segment,11,5,0
       );
     },
   );
+
+  test('marker boundaries combine into blocks without dropping orphans', () {
+    final List<TimeMarker> markers = <TimeMarker>[
+      const TimeMarker(onsetMicros: 500, label: 'Stop'),
+      const TimeMarker(onsetMicros: 1000, label: 'Start'),
+      const TimeMarker(onsetMicros: 2500, label: 'Stop'),
+      const TimeMarker(onsetMicros: 3000, label: 'Note'),
+      const TimeMarker(onsetMicros: 4000, label: 'Start'),
+      const TimeMarker(onsetMicros: 7000, label: 'Stop'),
+      const TimeMarker(onsetMicros: 9000, label: 'Start'),
+    ];
+
+    final MarkerBoundaryCombinationResult result =
+        AddRemoveMarkersNodeType.combineBoundaryMarkers(
+          markers,
+          startLabel: 'Start',
+          stopLabel: 'Stop',
+          blockLabel: 'Task block',
+        );
+
+    expect(result.combinedCount, 2);
+    expect(result.unmatchedStartCount, 1);
+    expect(result.unmatchedStopCount, 1);
+    final List<TimeMarker> blocks = result.markers
+        .where((TimeMarker marker) => marker.label == 'Task block')
+        .toList(growable: false);
+    expect(blocks, hasLength(2));
+    expect(blocks.first.onsetMicros, 1000);
+    expect(blocks.first.durationMicros, 1500);
+    expect(blocks.first.markerType, MarkerType.window);
+    expect(blocks.last.onsetMicros, 4000);
+    expect(blocks.last.durationMicros, 3000);
+    expect(
+      result.markers
+          .where((TimeMarker marker) => marker.label == 'Start')
+          .map((TimeMarker marker) => marker.onsetMicros),
+      <int>[9000],
+    );
+    expect(
+      result.markers
+          .where((TimeMarker marker) => marker.label == 'Stop')
+          .map((TimeMarker marker) => marker.onsetMicros),
+      <int>[500],
+    );
+    expect(
+      result.markers.any((TimeMarker marker) => marker.label == 'Note'),
+      isTrue,
+    );
+  });
 
   test(
     'FOOOF node estimates aperiodic fit and detects oscillatory peaks',
@@ -2819,6 +3182,50 @@ Mk2=Artifact,Bad Segment,11,5,0
       expect(computation.candidates, isEmpty);
     },
   );
+
+  test('interactive artifact matching survives cross-channel cancellation', () {
+    const List<double> blinkShape = <double>[0.0, 1.0, 4.0, 7.0, 4.0, 1.0, 0.0];
+    final List<List<double>> channels = List<List<double>>.generate(6, (
+      int channelIndex,
+    ) {
+      final List<double> samples = List<double>.filled(512, 0.0);
+      final double polarity = channelIndex < 3 ? 1.0 : -1.0;
+      for (final int onset in <int>[100, 300]) {
+        for (int index = 0; index < blinkShape.length; index++) {
+          samples[onset + index] = blinkShape[index] * polarity;
+        }
+      }
+      return samples;
+    });
+
+    final ArtifactDetectionComputation computation =
+        InteractiveArtifactDetectionNodeType.recomputeDetectionsForDataset(
+          datasetId: 'multichannel-cancellation',
+          timeSeries: TimeSeriesData(
+            channelSamples: channels,
+            sampleRate: 100.0,
+          ),
+          exemplars: const <ArtifactExemplarData>[
+            ArtifactExemplarData(
+              id: 'e1',
+              datasetId: 'multichannel-cancellation',
+              label: 'blink',
+              onsetMicros: 1000000,
+              durationMicros: 70000,
+            ),
+          ],
+          existingCandidates: const <ArtifactCandidateData>[],
+          threshold: 0.75,
+        );
+
+    expect(
+      computation.candidates.any(
+        (ArtifactCandidateData candidate) =>
+            (candidate.onsetMicros - 3000000).abs() <= 30000,
+      ),
+      isTrue,
+    );
+  });
 
   test(
     'interactive artifact template preview summarizes multichannel templates',

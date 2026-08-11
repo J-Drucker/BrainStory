@@ -132,6 +132,11 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         children: <Widget>[
           Expanded(child: Text(widget.title)),
           IconButton(
+            tooltip: 'Help',
+            onPressed: () => _showHelp(context),
+            icon: const Icon(Icons.help_outline),
+          ),
+          IconButton(
             tooltip: 'Full Screen',
             onPressed: () {
               setState(() {
@@ -166,8 +171,6 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          _PortStatusHeader(summary: widget.portStatusSummary),
-          const SizedBox(height: 16),
           widget.buildBody(
             localParams,
             datasets: widget.datasets,
@@ -221,12 +224,40 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
     }
   }
 
+  void _showHelp(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _NodeHelpDialog(
+        title: widget.title,
+        portStatusSummary: widget.portStatusSummary,
+        datasets: widget.datasets,
+        selectedDatasetIds: Set<String>.from(
+          localParams['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[],
+        ),
+        processingSteps: widget.processingSteps,
+        showSourceFiles: widget.showSourceFiles,
+      ),
+    );
+  }
+
   List<Widget> _buildActions(BuildContext context) {
     return <Widget>[
       TextButton(
         onPressed: () => Navigator.pop(context),
         child: const Text('Cancel'),
       ),
+      if (widget.onSaveAndRun != null)
+        ElevatedButton.icon(
+          onPressed: () async {
+            final Map<String, dynamic> params = Map<String, dynamic>.from(
+              localParams,
+            );
+            Navigator.pop(context);
+            await widget.onSaveAndRun!(params);
+          },
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Save & Run'),
+        ),
       ElevatedButton(
         onPressed: () {
           widget.onSave(Map<String, dynamic>.from(localParams));
@@ -235,6 +266,55 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         child: const Text('Save'),
       ),
     ];
+  }
+}
+
+class _NodeHelpDialog extends StatelessWidget {
+  const _NodeHelpDialog({
+    required this.title,
+    required this.portStatusSummary,
+    required this.datasets,
+    required this.selectedDatasetIds,
+    required this.processingSteps,
+    required this.showSourceFiles,
+  });
+
+  final String title;
+  final NodePortStatusSummary portStatusSummary;
+  final Map<String, Dataset> datasets;
+  final Set<String> selectedDatasetIds;
+  final List<String> processingSteps;
+  final bool showSourceFiles;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('$title help'),
+      content: SizedBox(
+        width: 700,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              _PortStatusHeader(summary: portStatusSummary),
+              const SizedBox(height: 16),
+              _MetadataDialogBody(
+                datasets: datasets,
+                selectedDatasetIds: selectedDatasetIds,
+                processingSteps: processingSteps,
+                showSourceFiles: showSourceFiles,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    );
   }
 }
 
@@ -403,45 +483,16 @@ class _MetadataDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<Dataset> selectedDatasets =
-        datasets.values
-            .where((Dataset dataset) => selectedDatasetIds.contains(dataset.id))
-            .toList()
-          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
-
     return AlertDialog(
       title: const Text('Metadata'),
       content: SizedBox(
         width: 700,
         child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              const Text(
-                'Checked Datasets',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              if (selectedDatasets.isEmpty)
-                const Text('No datasets are currently checked for this node.')
-              else
-                ...selectedDatasets.map(_datasetMetadataCard),
-              const SizedBox(height: 20),
-              const Text(
-                'Processing Steps',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              if (processingSteps.isEmpty)
-                const Text('No upstream processing steps are available yet.')
-              else
-                ...processingSteps.asMap().entries.map(
-                  (MapEntry<int, String> entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text('${entry.key + 1}. ${entry.value}'),
-                  ),
-                ),
-            ],
+          child: _MetadataDialogBody(
+            datasets: datasets,
+            selectedDatasetIds: selectedDatasetIds,
+            processingSteps: processingSteps,
+            showSourceFiles: showSourceFiles,
           ),
         ),
       ),
@@ -450,6 +501,59 @@ class _MetadataDialog extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
         ),
+      ],
+    );
+  }
+}
+
+class _MetadataDialogBody extends StatelessWidget {
+  const _MetadataDialogBody({
+    required this.datasets,
+    required this.selectedDatasetIds,
+    required this.processingSteps,
+    required this.showSourceFiles,
+  });
+
+  final Map<String, Dataset> datasets;
+  final Set<String> selectedDatasetIds;
+  final List<String> processingSteps;
+  final bool showSourceFiles;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Dataset> selectedDatasets =
+        datasets.values
+            .where((Dataset dataset) => selectedDatasetIds.contains(dataset.id))
+            .toList()
+          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text(
+          'Checked Datasets',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        if (selectedDatasets.isEmpty)
+          const Text('No datasets are currently checked for this node.')
+        else
+          ...selectedDatasets.map(_datasetMetadataCard),
+        const SizedBox(height: 20),
+        const Text(
+          'Processing Steps',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        if (processingSteps.isEmpty)
+          const Text('No upstream processing steps are available yet.')
+        else
+          ...processingSteps.asMap().entries.map(
+            (MapEntry<int, String> entry) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text('${entry.key + 1}. ${entry.value}'),
+            ),
+          ),
       ],
     );
   }
@@ -776,7 +880,7 @@ class _StatusIndicator extends StatelessWidget {
   }
 }
 
-class _DatasetControlSection extends StatelessWidget {
+class _DatasetControlSection extends StatefulWidget {
   const _DatasetControlSection({
     required this.datasets,
     required this.selectedDatasetIds,
@@ -794,16 +898,29 @@ class _DatasetControlSection extends StatelessWidget {
   final ValueChanged<Set<String>> onChanged;
 
   @override
+  State<_DatasetControlSection> createState() => _DatasetControlSectionState();
+}
+
+class _DatasetControlSectionState extends State<_DatasetControlSection> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    if (datasets.isEmpty) {
+    if (widget.datasets.isEmpty) {
       return const Text('No datasets opened yet.');
     }
 
     final bool allChecked =
-        datasets.isNotEmpty &&
-        datasets.every((MapEntry<String, Dataset> entry) {
-          return selectedDatasetIds.contains(entry.value.id);
+        widget.datasets.isNotEmpty &&
+        widget.datasets.every((MapEntry<String, Dataset> entry) {
+          return widget.selectedDatasetIds.contains(entry.value.id);
         });
+    final int selectedCount = widget.datasets
+        .where(
+          (MapEntry<String, Dataset> entry) =>
+              widget.selectedDatasetIds.contains(entry.value.id),
+        )
+        .length;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.04),
@@ -815,79 +932,116 @@ class _DatasetControlSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Text(
-              'Datasets',
-              style: TextStyle(fontWeight: FontWeight.w700),
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () {
+                setState(() {
+                  _expanded = !_expanded;
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      _expanded ? Icons.expand_more : Icons.chevron_right,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Datasets',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$selectedCount/${widget.datasets.length}',
+                      style: const TextStyle(
+                        color: Colors.black54,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Checked datasets are included when this node runs. Status columns show what has already been processed and where cached outputs live.',
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: <Widget>[
-                Checkbox(
-                  value: allChecked,
-                  onChanged: (bool? value) {
-                    if (value == true) {
-                      onChanged(
-                        datasets
-                            .map(
-                              (MapEntry<String, Dataset> entry) =>
-                                  entry.value.id,
-                            )
-                            .toSet(),
-                      );
+            if (_expanded) ...<Widget>[
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Checkbox(
+                    value: allChecked,
+                    onChanged: (bool? value) {
+                      if (value == true) {
+                        widget.onChanged(
+                          widget.datasets
+                              .map(
+                                (MapEntry<String, Dataset> entry) =>
+                                    entry.value.id,
+                              )
+                              .toSet(),
+                        );
+                      } else {
+                        widget.onChanged(<String>{});
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 4),
+                  const Expanded(
+                    child: Text(
+                      'Run for all datasets',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const _DatasetControlHeader(),
+              const SizedBox(height: 6),
+              for (
+                int index = 0;
+                index < widget.datasets.length;
+                index++
+              ) ...<Widget>[
+                if (index > 0) const Divider(height: 14),
+                _DatasetControlRow(
+                  dataset: widget.datasets[index].value,
+                  selected: widget.selectedDatasetIds.contains(
+                    widget.datasets[index].value.id,
+                  ),
+                  sourceLabels:
+                      widget.datasetSourceLabels[widget
+                          .datasets[index]
+                          .value
+                          .id] ??
+                      const <String>[],
+                  processingState:
+                      widget.statusSnapshot.processedDatasetStates[widget
+                          .datasets[index]
+                          .value
+                          .id] ??
+                      DatasetState.notReady,
+                  ramLoaded: widget.statusSnapshot.ramLoadedDatasetIds.contains(
+                    widget.datasets[index].value.id,
+                  ),
+                  diskSaved: widget.statusSnapshot.diskSavedDatasetIds.contains(
+                    widget.datasets[index].value.id,
+                  ),
+                  onDatasetNamePressed: () => widget.onDatasetNamePressed(
+                    widget.datasets[index].value.id,
+                  ),
+                  onCheckedChanged: (bool checked) {
+                    final Set<String> nextSelection = Set<String>.from(
+                      widget.selectedDatasetIds,
+                    );
+                    if (checked) {
+                      nextSelection.add(widget.datasets[index].value.id);
                     } else {
-                      onChanged(<String>{});
+                      nextSelection.remove(widget.datasets[index].value.id);
                     }
+                    widget.onChanged(nextSelection);
                   },
                 ),
-                const SizedBox(width: 4),
-                const Expanded(
-                  child: Text(
-                    'Run this node for checked datasets',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
               ],
-            ),
-            const SizedBox(height: 10),
-            const _DatasetControlHeader(),
-            const SizedBox(height: 6),
-            for (int index = 0; index < datasets.length; index++) ...<Widget>[
-              if (index > 0) const Divider(height: 14),
-              _DatasetControlRow(
-                dataset: datasets[index].value,
-                selected: selectedDatasetIds.contains(datasets[index].value.id),
-                sourceLabels:
-                    datasetSourceLabels[datasets[index].value.id] ??
-                    const <String>[],
-                processingState:
-                    statusSnapshot.processedDatasetStates[datasets[index]
-                        .value
-                        .id] ??
-                    DatasetState.notReady,
-                ramLoaded: statusSnapshot.ramLoadedDatasetIds.contains(
-                  datasets[index].value.id,
-                ),
-                diskSaved: statusSnapshot.diskSavedDatasetIds.contains(
-                  datasets[index].value.id,
-                ),
-                onDatasetNamePressed: () =>
-                    onDatasetNamePressed(datasets[index].value.id),
-                onCheckedChanged: (bool checked) {
-                  final Set<String> nextSelection = Set<String>.from(
-                    selectedDatasetIds,
-                  );
-                  if (checked) {
-                    nextSelection.add(datasets[index].value.id);
-                  } else {
-                    nextSelection.remove(datasets[index].value.id);
-                  }
-                  onChanged(nextSelection);
-                },
-              ),
             ],
           ],
         ),

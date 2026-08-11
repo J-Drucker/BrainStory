@@ -294,6 +294,10 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                             params: node.params,
                             comparisonNode: comparisonNode,
                             onChanged: () {
+                              setState(() {});
+                              widget.onChanged?.call();
+                            },
+                            onDataChanged: () {
                               setState(() {
                                 _materializedDatasetsFuture = null;
                                 _materializedDatasetsKey = '';
@@ -416,6 +420,7 @@ class _VisualizationChart extends StatelessWidget {
     required this.params,
     required this.comparisonNode,
     required this.onChanged,
+    required this.onDataChanged,
   });
 
   final CanvasLogic logic;
@@ -426,6 +431,7 @@ class _VisualizationChart extends StatelessWidget {
   final Map<String, dynamic> params;
   final bool comparisonNode;
   final VoidCallback onChanged;
+  final VoidCallback onDataChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -515,7 +521,7 @@ class _VisualizationChart extends StatelessWidget {
             context,
           ).showSnackBar(SnackBar(content: Text(message)));
         }
-        onChanged();
+        onDataChanged();
       },
       onQuit: () {
         if (Navigator.of(context).canPop()) {
@@ -2046,31 +2052,58 @@ class _ImpedanceChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    params.putIfAbsent('impedance_channel', () => '');
+    params.putIfAbsent('impedance_quantity', () => 'impedance');
+    params.putIfAbsent('impedance_y_scale', () => 'linear');
+    params.putIfAbsent('impedance_line_mode', () => 'line');
+
     final List<ImpedanceData> available = datasets
         .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
         .whereType<ImpedanceData>()
-        .where((ImpedanceData data) => data.measurementCount > 0)
+        .where(
+          (ImpedanceData data) =>
+              data.measurementCount > 0 && data.channelCount > 0,
+        )
         .toList(growable: false);
     if (available.isEmpty) {
       return const _ChartMessage(
         title: 'No impedance measurements',
-        body: 'Import an ANT CNT recording containing impedance measurements.',
+        body: 'Import a recording that contains impedance measurements.',
+      );
+    }
+
+    final List<String> channelLabels =
+        available
+            .expand((ImpedanceData data) => data.channelLabels)
+            .where((String label) => label.trim().isNotEmpty)
+            .toSet()
+            .toList(growable: true)
+          ..sort();
+    if (channelLabels.isEmpty) {
+      return const _ChartMessage(
+        title: 'No impedance channels',
+        body: 'The selected datasets do not contain named impedance channels.',
       );
     }
 
     String channel = params['impedance_channel']?.toString() ?? '';
-    if (channel.isEmpty ||
-        !available.any(
-          (ImpedanceData data) => data.channelLabels.contains(channel),
-        )) {
-      channel = available.first.channelLabels.first;
+    if (!channelLabels.contains(channel)) {
+      channel = channelLabels.first;
       params['impedance_channel'] = channel;
     }
     final bool admittance = params['impedance_quantity'] == 'admittance';
     final bool logY = params['impedance_y_scale'] == 'log';
-    final String lineMode = params['impedance_line_mode']?.toString() ?? 'line';
-    final List<_SeriesData> series = <_SeriesData>[];
+    final String lineMode =
+        <String>{
+          'none',
+          'line',
+          'smooth',
+        }.contains(params['impedance_line_mode'])
+        ? params['impedance_line_mode'].toString()
+        : 'line';
+    params['impedance_line_mode'] = lineMode;
 
+    final List<_SeriesData> series = <_SeriesData>[];
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
       final ImpedanceData? data = dataset.timeSeries?.impedanceData;
@@ -2087,14 +2120,16 @@ class _ImpedanceChart extends StatelessWidget {
         if (ohms == null || !ohms.isFinite || ohms <= 0) {
           continue;
         }
-        final double unscaled = admittance ? 1.0 / ohms : ohms;
-        if (!unscaled.isFinite || unscaled <= 0) {
+        final double displayValue = admittance
+            ? 1000000.0 / ohms
+            : ohms / 1000.0;
+        if (!displayValue.isFinite || displayValue <= 0) {
           continue;
         }
         points.add(
           FlSpot(
             data.measurementTimesMicros[timeIndex] / 1000000.0,
-            logY ? math.log(unscaled) / math.ln10 : unscaled,
+            logY ? math.log(displayValue) / math.ln10 : displayValue,
           ),
         );
       }
@@ -2134,27 +2169,81 @@ class _ImpedanceChart extends StatelessWidget {
         .map((FlSpot point) => point.y)
         .reduce(math.max);
     final double xPadding = math.max(1.0, (rawMaxX - rawMinX).abs() * 0.06);
-    final double yPadding = math.max(
-      logY ? 0.08 : 0.001,
-      (rawMaxY - rawMinY).abs() * 0.1,
-    );
+    final double yRange = (rawMaxY - rawMinY).abs();
+    final double yPadding = yRange == 0
+        ? math.max(logY ? 0.08 : 0.001, rawMinY.abs() * 0.08)
+        : math.max(logY ? 0.04 : 0.001, yRange * 0.1);
     final double minX = rawMinX == rawMaxX ? rawMinX - 1 : rawMinX - xPadding;
     final double maxX = rawMinX == rawMaxX ? rawMaxX + 1 : rawMaxX + xPadding;
-    final double minY = rawMinY == rawMaxY
+    final double minY = logY
         ? rawMinY - yPadding
-        : rawMinY - yPadding;
-    final double maxY = rawMinY == rawMaxY
-        ? rawMaxY + yPadding
-        : rawMaxY + yPadding;
-    final String unit = admittance ? 'S' : 'Ohm';
+        : math.max(0.0, rawMinY - yPadding);
+    final double maxY = rawMaxY + yPadding;
+    final String unit = admittance ? 'uS' : 'kOhm';
     final String yAxisLabel = logY
         ? 'log10($unit)'
         : '${admittance ? 'Admittance' : 'Impedance'} ($unit)';
 
     return _ChartCard(
       title: '${admittance ? 'Admittance' : 'Impedance'}: $channel',
-      subtitle: 'Each point is an acquisition-time measurement.',
+      subtitle:
+          '${series.length} dataset overlay${series.length == 1 ? '' : 's'}; markers are measured values.',
       legend: series,
+      toolbar: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: <Widget>[
+          _PsdMenuChip<String>(
+            label: 'Channel',
+            valueLabel: channel,
+            options: channelLabels,
+            itemLabel: (String value) => value,
+            onSelected: (String value) {
+              params['impedance_channel'] = value;
+              onChanged();
+            },
+          ),
+          _PsdMenuChip<String>(
+            label: 'Quantity',
+            valueLabel: admittance ? 'Admittance' : 'Impedance',
+            options: const <String>['impedance', 'admittance'],
+            itemLabel: (String value) =>
+                value == 'admittance' ? 'Admittance' : 'Impedance',
+            onSelected: (String value) {
+              params['impedance_quantity'] = value;
+              onChanged();
+            },
+          ),
+          _PsdMenuChip<String>(
+            label: 'Y Axis',
+            valueLabel: logY ? 'Log10' : 'Linear',
+            options: const <String>['linear', 'log'],
+            itemLabel: (String value) => value == 'log' ? 'Log10' : 'Linear',
+            onSelected: (String value) {
+              params['impedance_y_scale'] = value;
+              onChanged();
+            },
+          ),
+          _PsdMenuChip<String>(
+            label: 'Line',
+            valueLabel: switch (lineMode) {
+              'none' => 'Points',
+              'smooth' => 'Smooth',
+              _ => 'Straight',
+            },
+            options: const <String>['none', 'line', 'smooth'],
+            itemLabel: (String value) => switch (value) {
+              'none' => 'Points only',
+              'smooth' => 'Smooth spline',
+              _ => 'Straight',
+            },
+            onSelected: (String value) {
+              params['impedance_line_mode'] = value;
+              onChanged();
+            },
+          ),
+        ],
+      ),
       child: LineChart(
         LineChartData(
           minX: minX,
@@ -2203,6 +2292,7 @@ class _ImpedanceChart extends StatelessWidget {
                 );
               })
               .toList(growable: false),
+          clipData: const FlClipData.all(),
         ),
       ),
     );

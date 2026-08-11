@@ -1,9 +1,48 @@
 use std::slice;
 
 use crate::filtering::bandpass_filter;
+use crate::spectrum::single_sided_spectrum;
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
+
+#[no_mangle]
+pub extern "C" fn brainstory_single_sided_spectrum(
+    samples_ptr: *const f64,
+    sample_count: usize,
+    sample_rate: f64,
+    low_hz: f64,
+    high_hz: f64,
+    frequencies_out_ptr: *mut f64,
+    power_out_ptr: *mut f64,
+    output_capacity: usize,
+    bin_count_out_ptr: *mut usize,
+) -> i32 {
+    if samples_ptr.is_null()
+        || frequencies_out_ptr.is_null()
+        || power_out_ptr.is_null()
+        || bin_count_out_ptr.is_null()
+        || sample_count == 0
+    {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let samples = unsafe { slice::from_raw_parts(samples_ptr, sample_count) };
+    let Some(spectrum) = single_sided_spectrum(samples, sample_rate, low_hz, high_hz) else {
+        return STATUS_INVALID_ARGUMENT;
+    };
+    if spectrum.frequencies.len() > output_capacity {
+        return STATUS_INVALID_ARGUMENT;
+    }
+
+    let frequencies_out =
+        unsafe { slice::from_raw_parts_mut(frequencies_out_ptr, spectrum.frequencies.len()) };
+    let power_out = unsafe { slice::from_raw_parts_mut(power_out_ptr, spectrum.power.len()) };
+    frequencies_out.copy_from_slice(&spectrum.frequencies);
+    power_out.copy_from_slice(&spectrum.power);
+    unsafe { *bin_count_out_ptr = spectrum.frequencies.len() };
+    STATUS_OK
+}
 
 #[no_mangle]
 pub extern "C" fn brainstory_bandpass_filter(
@@ -90,7 +129,10 @@ pub extern "C" fn brainstory_segment_mean_sd(
 
 #[cfg(test)]
 mod tests {
-    use super::{brainstory_bandpass_filter, brainstory_segment_mean_sd, STATUS_OK};
+    use super::{
+        brainstory_bandpass_filter, brainstory_segment_mean_sd, brainstory_single_sided_spectrum,
+        STATUS_OK,
+    };
 
     #[test]
     fn computes_mean_and_sd_for_flattened_traces() {
@@ -126,5 +168,30 @@ mod tests {
 
         assert_eq!(status, STATUS_OK);
         assert_ne!(output, input);
+    }
+
+    #[test]
+    fn computes_a_spectrum_through_the_c_api() {
+        let input: Vec<f64> = (0..128).map(|index| (index as f64 / 4.0).sin()).collect();
+        let capacity = input.len() / 2 + 1;
+        let mut frequencies = vec![0.0; capacity];
+        let mut power = vec![0.0; capacity];
+        let mut bin_count = 0;
+        let status = brainstory_single_sided_spectrum(
+            input.as_ptr(),
+            input.len(),
+            128.0,
+            1.0,
+            40.0,
+            frequencies.as_mut_ptr(),
+            power.as_mut_ptr(),
+            capacity,
+            &mut bin_count,
+        );
+
+        assert_eq!(status, STATUS_OK);
+        assert!(bin_count > 0);
+        assert_eq!(frequencies[0], 1.0);
+        assert!(power[..bin_count].iter().all(|value| value.is_finite()));
     }
 }

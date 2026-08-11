@@ -13,3 +13,10 @@ List<double>? applyBandpassFilterNative(
   required double steepness,
   double? notchHz,
 }) => null;
+
+NativeSpectrumResult? computeSingleSidedSpectrumNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+}) => null;

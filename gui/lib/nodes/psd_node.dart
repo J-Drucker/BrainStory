@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/brainstory_engine.dart';
 import 'node_type.dart';
 
 class PSDNodeType extends NodeType {
@@ -511,6 +512,21 @@ SpectrumResult _singleSidedSpectrum(
   required double fLow,
   required double fHigh,
 }) {
+  final NativeSpectrumResult? nativeSpectrum = computeSingleSidedSpectrumNative(
+    samples,
+    sampleRate: sampleRate,
+    lowHz: fLow,
+    highHz: fHigh,
+  );
+  if (nativeSpectrum != null) {
+    return SpectrumResult(
+      freqs: nativeSpectrum.frequencies,
+      power: nativeSpectrum.power,
+      segmentPowers: <List<double>>[nativeSpectrum.power],
+      segmentCount: 1,
+    );
+  }
+
   final int n = samples.length;
   final List<double> freqs = <double>[];
   final List<double> power = <double>[];
