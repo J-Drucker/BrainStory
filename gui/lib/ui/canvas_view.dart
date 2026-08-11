@@ -588,7 +588,7 @@ class _CanvasViewState extends State<CanvasView> {
         logic.nodes.first;
     final bool selectedSingleNode =
         logic.selectedNodeId == node.id && logic.selectedNodeIds.length <= 1;
-    if (selectedSingleNode && logic.canVisualizeNode(node)) {
+    if (selectedSingleNode && logic.hasVisualizationOutput(node)) {
       _openVisualizationWindow(node);
       return;
     }

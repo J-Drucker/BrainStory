@@ -2359,7 +2359,7 @@ class CanvasLogic {
           selectedNodeIds
             ..clear()
             ..add(node.id);
-          if (canVisualizeNode(node)) {
+          if (hasVisualizationOutput(node)) {
             openVisualizationWindow(node);
             return;
           }
@@ -3760,6 +3760,20 @@ class CanvasLogic {
 
   bool canVisualizeNode(NodeModel? node) {
     return node != null;
+  }
+
+  bool hasVisualizationOutput(NodeModel? node) {
+    if (!canVisualizeNode(node)) {
+      return false;
+    }
+    if (node!.type is VisualizationNodeType) {
+      return _immediateParents(
+        node.id,
+      ).any((NodeModel parent) => hasVisualizationOutput(parent));
+    }
+    return node.datasetStates.values.any(
+      (DatasetState state) => state == DatasetState.done,
+    );
   }
 
   String visualizationViewForNode(NodeModel node) {

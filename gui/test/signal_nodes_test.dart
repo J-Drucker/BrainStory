@@ -112,6 +112,9 @@ void main() {
       logic.addNode(ImportNodeType());
 
       expect(logic.canVisualizeNode(logic.nodes.single), isTrue);
+      expect(logic.hasVisualizationOutput(logic.nodes.single), isFalse);
+      logic.nodes.single.datasetStates['dataset-1'] = DatasetState.done;
+      expect(logic.hasVisualizationOutput(logic.nodes.single), isTrue);
       expect(
         logic.availableNodes.map((NodeType type) => type.title),
         isNot(contains('Interactive Artifact Detection')),
