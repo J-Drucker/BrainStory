@@ -366,7 +366,7 @@ SpectrumResult computeSpectrum(
     start += hopLength
   ) {
     final List<double> windowed = _hannWindow(
-      samples.sublist(start, start + segmentLength),
+      _removeMean(samples.sublist(start, start + segmentLength)),
     );
     final SpectrumResult segmentSpectrum = _singleSidedSpectrum(
       windowed,
@@ -383,8 +383,9 @@ SpectrumResult computeSpectrum(
 
   if (spectra.isEmpty) {
     final List<double> padded = List<double>.filled(segmentLength, 0.0);
-    for (int i = 0; i < samples.length && i < segmentLength; i++) {
-      padded[i] = samples[i];
+    final List<double> centered = _removeMean(samples);
+    for (int i = 0; i < centered.length && i < segmentLength; i++) {
+      padded[i] = centered[i];
     }
     final SpectrumResult single = _singleSidedSpectrum(
       _hannWindow(padded),
@@ -554,6 +555,19 @@ SpectrumResult _singleSidedSpectrum(
     power: power,
     segmentPowers: <List<double>>[power],
     segmentCount: 1,
+  );
+}
+
+List<double> _removeMean(List<double> samples) {
+  if (samples.isEmpty) {
+    return <double>[];
+  }
+  final double mean =
+      samples.reduce((double a, double b) => a + b) / samples.length;
+  return List<double>.generate(
+    samples.length,
+    (int index) => samples[index] - mean,
+    growable: false,
   );
 }
 

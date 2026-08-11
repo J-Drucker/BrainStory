@@ -2315,7 +2315,7 @@ class _PsdChart extends StatelessWidget {
     params.putIfAbsent('psd_view_max_hz', () => 40.0);
     params.putIfAbsent('psd_view_scale_mode', () => 'auto');
     params.putIfAbsent('psd_view_max_power', () => 10.0);
-    params.putIfAbsent('psd_view_log_y', () => false);
+    params.putIfAbsent('psd_view_log_y', () => true);
 
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
@@ -2472,6 +2472,7 @@ class _PsdChart extends StatelessWidget {
                   minY: minY,
                   maxY: maxY,
                   logY: logY,
+                  yAxisReservedSize: 84,
                 ),
                 clipData: const FlClipData.all(),
                 lineBarsData: series
