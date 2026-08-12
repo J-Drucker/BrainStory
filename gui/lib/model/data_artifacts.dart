@@ -1069,6 +1069,9 @@ class FrequencySpectrumData {
     required this.frequencies,
     required this.power,
     this.segmentPowers = const <List<double>>[],
+    this.channelPowers = const <List<double>>[],
+    this.channelSegmentPowers = const <List<List<double>>>[],
+    this.channelLabels = const <String>[],
     this.segmentCount = 1,
     this.source = '',
   });
@@ -1076,6 +1079,9 @@ class FrequencySpectrumData {
   final List<double> frequencies;
   final List<double> power;
   final List<List<double>> segmentPowers;
+  final List<List<double>> channelPowers;
+  final List<List<List<double>>> channelSegmentPowers;
+  final List<String> channelLabels;
   final int segmentCount;
   final String source;
 
@@ -1084,6 +1090,9 @@ class FrequencySpectrumData {
       'frequencies': frequencies,
       'power': power,
       'segmentPowers': segmentPowers,
+      'channelPowers': channelPowers,
+      'channelSegmentPowers': channelSegmentPowers,
+      'channelLabels': channelLabels,
       'segmentCount': segmentCount,
       'source': source,
     };
@@ -1107,6 +1116,33 @@ class FrequencySpectrumData {
           .map((dynamic value) => (value as num).toDouble())
           .toList(growable: false),
       segmentPowers: segmentPowers,
+      channelPowers:
+          (json['channelPowers'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<List<dynamic>>()
+              .map(
+                (List<dynamic> values) => values
+                    .map((dynamic value) => (value as num).toDouble())
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
+      channelSegmentPowers:
+          (json['channelSegmentPowers'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<List<dynamic>>()
+              .map(
+                (List<dynamic> channel) => channel
+                    .whereType<List<dynamic>>()
+                    .map(
+                      (List<dynamic> values) => values
+                          .map((dynamic value) => (value as num).toDouble())
+                          .toList(growable: false),
+                    )
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
+      channelLabels:
+          (json['channelLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
       segmentCount: (json['segmentCount'] as num?)?.toInt() ?? 1,
       source: json['source']?.toString() ?? '',
     );

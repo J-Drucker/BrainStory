@@ -286,10 +286,40 @@ class PSDNodeType extends NodeType {
     );
     source = segmented.source;
 
+    final int channelCount = segmented.segments
+        .map(segmented.channelCountForSegment)
+        .fold<int>(0, math.max);
+    final List<SpectrumResult> channelSpectra = List<SpectrumResult>.generate(
+      channelCount,
+      (int channelIndex) => computeSegmentedSpectrum(
+        segmented,
+        fLow: fLow,
+        fHigh: fHigh,
+        averageWithinSegment: true,
+        averageAcrossSegments: averageInThisNode,
+        channelIndex: channelIndex,
+      ),
+      growable: false,
+    );
+    final List<String> channelLabels = List<String>.generate(
+      channelCount,
+      (int index) => index < segmented.channelLabels.length
+          ? segmented.channelLabels[index]
+          : 'Channel ${index + 1}',
+      growable: false,
+    );
+
     dataset.spectrum = FrequencySpectrumData(
       frequencies: spectrum.freqs,
       power: spectrum.power,
       segmentPowers: spectrum.segmentPowers,
+      channelPowers: channelSpectra
+          .map((SpectrumResult result) => result.power)
+          .toList(growable: false),
+      channelSegmentPowers: channelSpectra
+          .map((SpectrumResult result) => result.segmentPowers)
+          .toList(growable: false),
+      channelLabels: channelLabels,
       segmentCount: spectrum.segmentCount,
       source: source,
     );
@@ -434,17 +464,18 @@ SpectrumResult computeSegmentedSpectrum(
   required double fHigh,
   required bool averageWithinSegment,
   bool averageAcrossSegments = true,
+  int channelIndex = 0,
 }) {
   final List<SpectrumResult> spectra = <SpectrumResult>[];
   for (final SignalSegmentData segment in segmented.segments) {
     final List<List<double>> channels = segmented.channelSamplesForSegment(
       segment,
     );
-    if (channels.isEmpty || channels.first.isEmpty) {
+    if (channelIndex >= channels.length || channels[channelIndex].isEmpty) {
       continue;
     }
     final SpectrumResult spectrum = computeSpectrum(
-      channels.first,
+      channels[channelIndex],
       sampleRate: segmented.sampleRate,
       fLow: fLow,
       fHigh: fHigh,

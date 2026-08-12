@@ -63,10 +63,37 @@ class PSDAverageNodeType extends NodeType {
       averagedPower[index] /= validSegmentPowers.length;
     }
 
+    final List<List<double>> averagedChannelPowers = spectrum
+        .channelSegmentPowers
+        .map((List<List<double>> segmentPowers) {
+          final List<List<double>> valid = segmentPowers
+              .where((List<double> power) => power.length == binCount)
+              .toList(growable: false);
+          if (valid.isEmpty) {
+            return <double>[];
+          }
+          final List<double> average = List<double>.filled(binCount, 0.0);
+          for (final List<double> power in valid) {
+            for (int index = 0; index < binCount; index++) {
+              average[index] += power[index];
+            }
+          }
+          for (int index = 0; index < binCount; index++) {
+            average[index] /= valid.length;
+          }
+          return average;
+        })
+        .toList(growable: false);
+
     dataset.spectrum = FrequencySpectrumData(
       frequencies: spectrum.frequencies,
       power: averagedPower,
       segmentPowers: spectrum.segmentPowers,
+      channelPowers: averagedChannelPowers.isEmpty
+          ? spectrum.channelPowers
+          : averagedChannelPowers,
+      channelSegmentPowers: spectrum.channelSegmentPowers,
+      channelLabels: spectrum.channelLabels,
       segmentCount: validSegmentPowers.length,
       source: spectrum.source,
     );

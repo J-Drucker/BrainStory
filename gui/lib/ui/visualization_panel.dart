@@ -2302,12 +2302,24 @@ class _ImpedanceChart extends StatelessWidget {
 Map<String, List<double>> _psdConditionPowers(
   Dataset dataset,
   FrequencySpectrumData spectrum,
+  int channelIndex,
 ) {
+  final List<double> channelPower = channelIndex < spectrum.channelPowers.length
+      ? spectrum.channelPowers[channelIndex]
+      : channelIndex == 0
+      ? spectrum.power
+      : const <double>[];
+  final List<List<double>> channelSegmentPowers =
+      channelIndex < spectrum.channelSegmentPowers.length
+      ? spectrum.channelSegmentPowers[channelIndex]
+      : channelIndex == 0
+      ? spectrum.segmentPowers
+      : const <List<double>>[];
   final List<SignalSegmentData> segments =
       dataset.segmentedTimeSeries?.segments ?? const <SignalSegmentData>[];
-  if (spectrum.segmentPowers.isEmpty ||
-      segments.length != spectrum.segmentPowers.length) {
-    return <String, List<double>>{'All segments': spectrum.power};
+  if (channelSegmentPowers.isEmpty ||
+      segments.length != channelSegmentPowers.length) {
+    return <String, List<double>>{'All segments': channelPower};
   }
 
   final Map<String, List<List<double>>> grouped =
@@ -2318,7 +2330,7 @@ Map<String, List<double>> _psdConditionPowers(
           _normalizedSegmentLabel(segments[index]),
           () => <List<double>>[],
         )
-        .add(spectrum.segmentPowers[index]);
+        .add(channelSegmentPowers[index]);
   }
   return grouped.map((String label, List<List<double>> powers) {
     final int binCount = powers
@@ -2355,6 +2367,42 @@ class _PsdChart extends StatelessWidget {
     params.putIfAbsent('psd_view_max_power', () => 10.0);
     params.putIfAbsent('psd_view_log_y', () => true);
     params.putIfAbsent('psd_condition_mode', () => 'separate');
+    params.putIfAbsent('psd_channel_index', () => 0);
+
+    final int channelCount = datasets
+        .map((Dataset dataset) {
+          final FrequencySpectrumData? spectrum = dataset.spectrum;
+          if (spectrum == null) {
+            return 0;
+          }
+          return math.max(
+            spectrum.channelPowers.length,
+            spectrum.power.isEmpty ? 0 : 1,
+          );
+        })
+        .fold<int>(0, math.max);
+    final int selectedChannelIndex = channelCount == 0
+        ? 0
+        : ((params['psd_channel_index'] as num?)?.toInt() ?? 0).clamp(
+            0,
+            channelCount - 1,
+          );
+    params['psd_channel_index'] = selectedChannelIndex;
+    FrequencySpectrumData? labelSpectrum;
+    for (final Dataset dataset in datasets) {
+      if (dataset.spectrum != null) {
+        labelSpectrum = dataset.spectrum;
+        break;
+      }
+    }
+    final List<String> channelLabels = List<String>.generate(
+      channelCount,
+      (int index) =>
+          labelSpectrum != null && index < labelSpectrum.channelLabels.length
+          ? labelSpectrum.channelLabels[index]
+          : 'Channel ${index + 1}',
+      growable: false,
+    );
 
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
@@ -2372,6 +2420,7 @@ class _PsdChart extends StatelessWidget {
       final Map<String, List<double>> conditionPowers = _psdConditionPowers(
         dataset,
         spectrum,
+        selectedChannelIndex,
       );
       for (final MapEntry<String, List<double>> entry
           in conditionPowers.entries) {
@@ -2482,6 +2531,17 @@ class _PsdChart extends StatelessWidget {
         spacing: 8,
         runSpacing: 8,
         children: <Widget>[
+          if (channelCount > 1)
+            _PsdMenuChip<int>(
+              label: 'Channel',
+              valueLabel: channelLabels[selectedChannelIndex],
+              options: List<int>.generate(channelCount, (int index) => index),
+              itemLabel: (int index) => channelLabels[index],
+              onSelected: (int value) {
+                params['psd_channel_index'] = value;
+                onChanged();
+              },
+            ),
           _PsdMenuChip<double>(
             label: 'Range',
             valueLabel: '${windowHz.toStringAsFixed(0)} Hz',

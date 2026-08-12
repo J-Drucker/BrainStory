@@ -1800,41 +1800,45 @@ time,Fz,Cz
     expect(spectrum.freqs[peakIndex], closeTo(targetFrequency, 1.5));
   });
 
-  test(
-    'PSD node uses the primary channel when time series is multichannel',
-    () async {
-      final Dataset dataset = Dataset('psd-multichannel', label: 'Multi');
-      dataset.segmentedTimeSeries = SegmentedTimeSeriesData(
-        sampleRate: 256.0,
-        channelLabels: const <String>['Fz', 'Cz'],
-        source: 'segmented',
-        segments: <SignalSegmentData>[
-          SignalSegmentData(
-            channelSamples: <List<double>>[
-              List<double>.generate(256, (int i) {
-                final double t = i / 256.0;
-                return math.sin(2 * math.pi * 10 * t);
-              }),
-              List<double>.filled(256, 0.0),
-            ],
-            startSeconds: 0,
-            stopSeconds: 1,
-            label: 'A',
-          ),
-        ],
-      );
+  test('PSD node retains spectra for every channel', () async {
+    final Dataset dataset = Dataset('psd-multichannel', label: 'Multi');
+    dataset.segmentedTimeSeries = SegmentedTimeSeriesData(
+      sampleRate: 256.0,
+      channelLabels: const <String>['Fz', 'Cz'],
+      source: 'segmented',
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            List<double>.generate(256, (int i) {
+              final double t = i / 256.0;
+              return math.sin(2 * math.pi * 10 * t);
+            }),
+            List<double>.filled(256, 0.0),
+          ],
+          startSeconds: 0,
+          stopSeconds: 1,
+          label: 'A',
+        ),
+      ],
+    );
 
-      await PSDNodeType().run(dataset, <String, dynamic>{
-        'fLow': 1.0,
-        'fHigh': 40.0,
-        'outputMode': 'averaged',
-      });
+    await PSDNodeType().run(dataset, <String, dynamic>{
+      'fLow': 1.0,
+      'fHigh': 40.0,
+      'outputMode': 'averaged',
+    });
 
-      expect(dataset.spectrum, isNotNull);
-      expect(dataset.spectrum!.frequencies, isNotEmpty);
-      expect(dataset.spectrum!.power, isNotEmpty);
-    },
-  );
+    expect(dataset.spectrum, isNotNull);
+    expect(dataset.spectrum!.frequencies, isNotEmpty);
+    expect(dataset.spectrum!.power, isNotEmpty);
+    expect(dataset.spectrum!.channelLabels, <String>['Fz', 'Cz']);
+    expect(dataset.spectrum!.channelPowers, hasLength(2));
+    expect(dataset.spectrum!.channelSegmentPowers, hasLength(2));
+    expect(
+      dataset.spectrum!.channelPowers.first.reduce(math.max),
+      greaterThan(dataset.spectrum!.channelPowers.last.reduce(math.max)),
+    );
+  });
 
   test('Resample node reports execution chunks by channel', () async {
     final Dataset dataset = Dataset('chunked-resample', label: 'Chunked');
