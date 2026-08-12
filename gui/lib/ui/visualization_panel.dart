@@ -2299,6 +2299,44 @@ class _ImpedanceChart extends StatelessWidget {
   }
 }
 
+Map<String, List<double>> _psdConditionPowers(
+  Dataset dataset,
+  FrequencySpectrumData spectrum,
+) {
+  final List<SignalSegmentData> segments =
+      dataset.segmentedTimeSeries?.segments ?? const <SignalSegmentData>[];
+  if (spectrum.segmentPowers.isEmpty ||
+      segments.length != spectrum.segmentPowers.length) {
+    return <String, List<double>>{'All segments': spectrum.power};
+  }
+
+  final Map<String, List<List<double>>> grouped =
+      <String, List<List<double>>>{};
+  for (int index = 0; index < segments.length; index++) {
+    grouped
+        .putIfAbsent(
+          _normalizedSegmentLabel(segments[index]),
+          () => <List<double>>[],
+        )
+        .add(spectrum.segmentPowers[index]);
+  }
+  return grouped.map((String label, List<List<double>> powers) {
+    final int binCount = powers
+        .map((List<double> values) => values.length)
+        .fold<int>(powers.first.length, math.min);
+    final List<double> mean = List<double>.filled(binCount, 0.0);
+    for (final List<double> values in powers) {
+      for (int index = 0; index < binCount; index++) {
+        mean[index] += values[index];
+      }
+    }
+    for (int index = 0; index < binCount; index++) {
+      mean[index] /= powers.length;
+    }
+    return MapEntry<String, List<double>>(label, mean);
+  });
+}
+
 class _PsdChart extends StatelessWidget {
   const _PsdChart({
     required this.datasets,
@@ -2316,42 +2354,56 @@ class _PsdChart extends StatelessWidget {
     params.putIfAbsent('psd_view_scale_mode', () => 'auto');
     params.putIfAbsent('psd_view_max_power', () => 10.0);
     params.putIfAbsent('psd_view_log_y', () => true);
+    params.putIfAbsent('psd_condition_mode', () => 'separate');
 
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
-    final List<_SeriesData> series = <_SeriesData>[];
+    final Map<String, List<_SeriesData>> seriesByCondition =
+        <String, List<_SeriesData>>{};
+    int seriesIndex = 0;
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
       final FrequencySpectrumData? spectrum = dataset.spectrum;
       final List<double>? freqs = spectrum?.frequencies;
-      final List<double>? power = spectrum?.power;
-      if (freqs == null || power == null || freqs.isEmpty || power.isEmpty) {
+      if (freqs == null || freqs.isEmpty || spectrum == null) {
         continue;
       }
-
-      final int count = math.min(freqs.length, power.length);
-      final List<FlSpot> points = <FlSpot>[];
-      for (int i = 0; i < count; i++) {
-        final double sourcePower = power[i];
-        final double plotPower = logY
-            ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) / math.ln10
-            : sourcePower;
-        points.add(FlSpot(freqs[i], plotPower));
-      }
-      if (points.isEmpty) {
-        continue;
-      }
-
-      series.add(
-        _SeriesData(
-          label: dataset.label,
-          color: _seriesColor(datasetIndex),
-          points: points,
-          subtitle: '$count bins',
-        ),
+      final Map<String, List<double>> conditionPowers = _psdConditionPowers(
+        dataset,
+        spectrum,
       );
+      for (final MapEntry<String, List<double>> entry
+          in conditionPowers.entries) {
+        final int count = math.min(freqs.length, entry.value.length);
+        final List<FlSpot> points = <FlSpot>[];
+        for (int i = 0; i < count; i++) {
+          final double sourcePower = entry.value[i];
+          final double plotPower = logY
+              ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) / math.ln10
+              : sourcePower;
+          points.add(FlSpot(freqs[i], plotPower));
+        }
+        if (points.isEmpty) {
+          continue;
+        }
+        final String condition = entry.key;
+        seriesByCondition
+            .putIfAbsent(condition, () => <_SeriesData>[])
+            .add(
+              _SeriesData(
+                label: datasets.length == 1 ? condition : dataset.label,
+                color: _seriesColor(seriesIndex++),
+                points: points,
+                subtitle: '$count bins',
+              ),
+            );
+      }
     }
+
+    final List<_SeriesData> series = seriesByCondition.values
+        .expand((List<_SeriesData> values) => values)
+        .toList(growable: false);
 
     if (series.isEmpty) {
       return const _ChartMessage(
@@ -2377,6 +2429,50 @@ class _PsdChart extends StatelessWidget {
         ? math.max(configuredMaxPower, minY + 0.001)
         : math.max(dataMaxY * 1.1, minY + 0.001);
     final double maxX = allX.reduce(math.max);
+    final String conditionMode = (params['psd_condition_mode'] ?? 'separate')
+        .toString();
+    final bool separateConditions =
+        seriesByCondition.length > 1 && conditionMode == 'separate';
+
+    LineChart buildLineChart(List<_SeriesData> visibleSeries) {
+      return LineChart(
+        LineChartData(
+          minX: 0,
+          maxX: maxX,
+          minY: minY,
+          maxY: maxY,
+          gridData: FlGridData(
+            show: true,
+            horizontalInterval: _niceAxisStep(maxY - minY),
+            verticalInterval: _niceAxisStep(maxX),
+          ),
+          rangeAnnotations: RangeAnnotations(
+            verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: _chartTitles(
+            minX: 0,
+            maxX: maxX,
+            minY: minY,
+            maxY: maxY,
+            logY: logY,
+            yAxisReservedSize: 84,
+          ),
+          clipData: const FlClipData.all(),
+          lineBarsData: visibleSeries
+              .map(
+                (_SeriesData seriesData) => LineChartBarData(
+                  spots: seriesData.points,
+                  isCurved: false,
+                  barWidth: 2,
+                  color: seriesData.color,
+                  dotData: const FlDotData(show: false),
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
 
     return _ChartCard(
       title: 'PSD',
@@ -2430,6 +2526,21 @@ class _PsdChart extends StatelessWidget {
               onChanged();
             },
           ),
+          if (seriesByCondition.length > 1)
+            SegmentedButton<String>(
+              segments: const <ButtonSegment<String>>[
+                ButtonSegment<String>(
+                  value: 'separate',
+                  label: Text('Separate'),
+                ),
+                ButtonSegment<String>(value: 'overlay', label: Text('Overlay')),
+              ],
+              selected: <String>{conditionMode},
+              onSelectionChanged: (Set<String> selection) {
+                params['psd_condition_mode'] = selection.first;
+                onChanged();
+              },
+            ),
         ],
       ),
       child: _SharedZoomableChartViewport(
@@ -2451,43 +2562,47 @@ class _PsdChart extends StatelessWidget {
         builder: (double chartWidth) {
           return SizedBox(
             width: chartWidth,
-            child: LineChart(
-              LineChartData(
-                minX: 0,
-                maxX: maxX,
-                minY: minY,
-                maxY: maxY,
-                gridData: FlGridData(
-                  show: true,
-                  horizontalInterval: _niceAxisStep(maxY - minY),
-                  verticalInterval: _niceAxisStep(maxX),
-                ),
-                rangeAnnotations: RangeAnnotations(
-                  verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
-                ),
-                borderData: FlBorderData(show: false),
-                titlesData: _chartTitles(
-                  minX: 0,
-                  maxX: maxX,
-                  minY: minY,
-                  maxY: maxY,
-                  logY: logY,
-                  yAxisReservedSize: 84,
-                ),
-                clipData: const FlClipData.all(),
-                lineBarsData: series
-                    .map(
-                      (_SeriesData seriesData) => LineChartBarData(
-                        spots: seriesData.points,
-                        isCurved: false,
-                        barWidth: 2,
-                        color: seriesData.color,
-                        dotData: const FlDotData(show: false),
-                      ),
-                    )
-                    .toList(),
-              ),
-            ),
+            child: separateConditions
+                ? LayoutBuilder(
+                    builder:
+                        (BuildContext context, BoxConstraints constraints) {
+                          final double panelHeight = math.max(
+                            220,
+                            (constraints.maxHeight -
+                                    (12 * (seriesByCondition.length - 1))) /
+                                seriesByCondition.length,
+                          );
+                          return ListView.separated(
+                            itemCount: seriesByCondition.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 12),
+                            itemBuilder: (BuildContext context, int index) {
+                              final MapEntry<String, List<_SeriesData>> group =
+                                  seriesByCondition.entries.elementAt(index);
+                              return SizedBox(
+                                height: panelHeight,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Text(
+                                      group.key,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Expanded(
+                                      child: buildLineChart(group.value),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
+                  )
+                : buildLineChart(series),
           );
         },
       ),
