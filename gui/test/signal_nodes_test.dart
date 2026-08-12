@@ -2842,6 +2842,73 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
   });
 
+  test('block concatenation keeps conditions separate', () async {
+    final Dataset dataset = Dataset(
+      'condition-blocks',
+      label: 'Condition blocks',
+    );
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.generate(10, (int index) => index.toDouble()),
+      sampleRate: 1.0,
+      channelLabels: const <String>['Cz'],
+      markers: const <TimeMarker>[
+        TimeMarker(
+          onsetMicros: 0,
+          durationMicros: 2000000,
+          label: 'Condition A',
+          markerType: MarkerType.window,
+        ),
+        TimeMarker(
+          onsetMicros: 2000000,
+          durationMicros: 2000000,
+          label: 'Condition B',
+          markerType: MarkerType.window,
+        ),
+        TimeMarker(
+          onsetMicros: 4000000,
+          durationMicros: 2000000,
+          label: 'Condition A',
+          markerType: MarkerType.window,
+        ),
+        TimeMarker(
+          onsetMicros: 6000000,
+          durationMicros: 2000000,
+          label: 'Condition B',
+          markerType: MarkerType.window,
+        ),
+      ],
+    );
+    final Map<String, dynamic> params = <String, dynamic>{
+      'mode': 'blocks',
+      'includedMarkers': <String, dynamic>{
+        'window|Condition A': true,
+        'window|Condition B': true,
+      },
+      'blockConcatenate': false,
+      'blockInvert': false,
+    };
+
+    await SegmentationNodeType().run(dataset, params);
+    expect(
+      dataset.segmentedTimeSeries!.segments
+          .map((SignalSegmentData segment) => segment.label)
+          .toList(growable: false),
+      <String>['Condition A', 'Condition B', 'Condition A', 'Condition B'],
+    );
+
+    params['blockConcatenate'] = true;
+    await SegmentationNodeType().run(dataset, params);
+
+    final List<SignalSegmentData> concatenated =
+        dataset.segmentedTimeSeries!.segments;
+    expect(
+      concatenated.map((SignalSegmentData segment) => segment.label),
+      <String>['Condition A', 'Condition B'],
+    );
+    expect(concatenated[0].primaryChannel, <double>[0, 1, 4, 5]);
+    expect(concatenated[1].primaryChannel, <double>[2, 3, 6, 7]);
+  });
+
   test('realign node shifts segmented artifacts back into alignment', () async {
     final List<double> reference = List<double>.filled(64, 0.0);
     reference[20] = 5.0;

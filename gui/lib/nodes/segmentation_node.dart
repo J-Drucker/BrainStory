@@ -597,9 +597,28 @@ List<SignalSegmentData> _buildBlockSegments({
   }
 
   if (concatenate) {
-    return <SignalSegmentData>[
-      _concatenateIntervals(timeSeries: timeSeries, intervals: intervals),
-    ];
+    final Map<String, List<_SampleInterval>> intervalsByCondition =
+        <String, List<_SampleInterval>>{};
+    for (final _SampleInterval interval in intervals) {
+      final String condition = interval.label?.trim().isNotEmpty == true
+          ? interval.label!.trim()
+          : 'Unlabeled';
+      intervalsByCondition
+          .putIfAbsent(condition, () => <_SampleInterval>[])
+          .add(interval);
+    }
+    return intervalsByCondition.entries
+        .map(
+          (MapEntry<String, List<_SampleInterval>> entry) =>
+              _concatenateIntervals(
+                timeSeries: timeSeries,
+                intervals: entry.value,
+                label: entry.key == 'Unlabeled'
+                    ? 'Concatenated Blocks'
+                    : entry.key,
+              ),
+        )
+        .toList(growable: false);
   }
 
   final List<SignalSegmentData> segments = <SignalSegmentData>[];
@@ -614,9 +633,7 @@ List<SignalSegmentData> _buildBlockSegments({
           ? 'Inverted Block ${index + 1}'
           : sourceLabel == null || sourceLabel.isEmpty
           ? 'Block ${index + 1}'
-          : intervals.length == 1
-          ? sourceLabel
-          : '$sourceLabel ${index + 1}',
+          : sourceLabel,
       kind: invert ? 'inverted_block' : 'block',
     );
     if (segment != null) {
@@ -629,6 +646,7 @@ List<SignalSegmentData> _buildBlockSegments({
 SignalSegmentData _concatenateIntervals({
   required TimeSeriesData timeSeries,
   required List<_SampleInterval> intervals,
+  required String label,
 }) {
   final List<List<double>> channelSamples = List<List<double>>.generate(
     timeSeries.channelCount,
@@ -654,7 +672,7 @@ SignalSegmentData _concatenateIntervals({
     channelSamples: channelSamples,
     startSeconds: intervals.first.startIndex / timeSeries.sampleRate,
     stopSeconds: intervals.last.stopIndex / timeSeries.sampleRate,
-    label: 'Concatenated Blocks',
+    label: label,
     kind: 'block',
   );
 }
@@ -908,7 +926,7 @@ List<Widget> _blockOptions({
       value: concatenate,
       title: const Text('Concatenate'),
       subtitle: const Text(
-        'Recombine multiple selected blocks into one continuous output.',
+        'Recombine selected blocks into one continuous output per condition.',
       ),
       onChanged: (bool? value) => setState(() {
         params['blockConcatenate'] = value ?? false;
