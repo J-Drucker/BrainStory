@@ -314,6 +314,29 @@ void main() {
     },
   );
 
+  test('purging active memory resets done node status', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example');
+    dataset.timeSeries = TimeSeriesData(
+      samples: const <double>[1, 2, 3],
+      sampleRate: 1000,
+      channelLabels: const <String>['Cz'],
+    );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    final NodeModel node = logic.nodes.single;
+    node.datasetStates[dataset.id] = DatasetState.done;
+
+    final String message = await logic.releaseNodeActiveMemoryForTest(
+      node,
+      <String>{dataset.id},
+    );
+
+    expect(message, contains('Released 1'));
+    expect(node.datasetStates[dataset.id], DatasetState.ready);
+    expect(node.visualState, DatasetState.ready);
+  });
+
   test(
     'node descriptors assign branch letters only within split-rejoin regions',
     () {

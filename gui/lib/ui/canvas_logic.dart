@@ -3010,6 +3010,18 @@ class CanvasLogic {
     _applyNodeParams(node: node, params: params, update: () {});
   }
 
+  @visibleForTesting
+  Future<String> releaseNodeActiveMemoryForTest(
+    NodeModel node,
+    Set<String> datasetIds,
+  ) {
+    return _releaseNodeSnapshotsFromRam(
+      node: node,
+      datasetIds: datasetIds,
+      update: () {},
+    );
+  }
+
   Set<String> _expandPsdRuntimePipeline(NodeModel psdNode) {
     final Set<String> forcedDependencyIds = _psdUsesParentSegments(psdNode)
         ? const <String>{}
@@ -5376,6 +5388,15 @@ class CanvasLogic {
     }
   }
 
+  DatasetState _unmaterializedStateForNodeDataset(
+    NodeModel node,
+    String datasetId,
+  ) {
+    return _availableDatasetIdsForNode(node).contains(datasetId)
+        ? DatasetState.ready
+        : DatasetState.notReady;
+  }
+
   List<String> _sourceArtifactIdsForDataset(Dataset dataset) {
     return dataset.artifactIdentities.values
         .map((ArtifactIdentity identity) => identity.artifactId)
@@ -5919,15 +5940,26 @@ class CanvasLogic {
     int releasedCount = 0;
     final Map<String, DatasetArtifactSnapshot>? snapshots =
         _nodeRamSnapshots[node.id];
-    if (snapshots != null) {
-      for (final Dataset dataset in selectedDatasets) {
-        if (snapshots.remove(dataset.id) != null) {
-          releasedCount++;
-        }
+    for (final Dataset dataset in selectedDatasets) {
+      bool changed = false;
+      if (snapshots?.remove(dataset.id) != null) {
+        changed = true;
       }
-      if (snapshots.isEmpty) {
-        _nodeRamSnapshots.remove(node.id);
+      _releaseActiveDatasetArtifactsProducedBy(node, dataset);
+      if (node.datasetStates[dataset.id] == DatasetState.done) {
+        node.datasetStates[dataset.id] = _unmaterializedStateForNodeDataset(
+          node,
+          dataset.id,
+        );
+        _markImmediateChildrenStale(node.id, dataset.id);
+        changed = true;
       }
+      if (changed) {
+        releasedCount++;
+      }
+    }
+    if (snapshots != null && snapshots.isEmpty) {
+      _nodeRamSnapshots.remove(node.id);
     }
 
     update();
