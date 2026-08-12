@@ -4532,14 +4532,6 @@ class CanvasLogic {
         if (includeAncestors) {
           expandedNodeIds.addAll(_collectAncestorsInclusive(node.id));
         }
-        if (includeAncestors) {
-          expandedNodeIds.addAll(
-            _collectDescendantsInclusive(node.id).where((String descendantId) {
-              final NodeModel? descendant = _findNode(descendantId);
-              return descendant?.type is PSDAverageNodeType;
-            }),
-          );
-        }
         graphChanged =
             expandedNodeIds.length != previousExpandedCount || graphChanged;
       }

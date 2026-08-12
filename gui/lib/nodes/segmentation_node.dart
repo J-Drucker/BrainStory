@@ -17,6 +17,7 @@ class SegmentationNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'mode': 'events',
     'includedMarkers': <String, dynamic>{},
+    'considerBadMarkers': <String, dynamic>{},
     'eventWindowStartMs': -200.0,
     'eventWindowStopMs': 800.0,
     'eventApplyBaseline': false,
@@ -49,6 +50,7 @@ class SegmentationNodeType extends NodeType {
   }) {
     params.putIfAbsent('mode', () => 'events');
     params.putIfAbsent('includedMarkers', () => <String, dynamic>{});
+    params.putIfAbsent('considerBadMarkers', () => <String, dynamic>{});
     params.putIfAbsent('eventWindowStartMs', () => -200.0);
     params.putIfAbsent('eventWindowStopMs', () => 800.0);
     params.putIfAbsent('eventApplyBaseline', () => false);
@@ -140,9 +142,18 @@ class SegmentationNodeType extends NodeType {
                     includedMarkers: Map<String, dynamic>.from(
                       params['includedMarkers'] as Map? ?? <String, dynamic>{},
                     ),
-                    onChanged: (Map<String, dynamic> nextMap) => setState(() {
-                      params['includedMarkers'] = nextMap;
-                    }),
+                    considerBadMarkers: Map<String, dynamic>.from(
+                      params['considerBadMarkers'] as Map? ??
+                          <String, dynamic>{},
+                    ),
+                    onIncludedChanged: (Map<String, dynamic> nextMap) =>
+                        setState(() {
+                          params['includedMarkers'] = nextMap;
+                        }),
+                    onBadChanged: (Map<String, dynamic> nextMap) =>
+                        setState(() {
+                          params['considerBadMarkers'] = nextMap;
+                        }),
                   ),
                 ),
               ],
@@ -365,6 +376,7 @@ bool _canReuseEventSegmentsForBaselineOnlyChange({
     'eventBaselineConfigured',
     'eventBaselineStartMs',
     'eventBaselineStopMs',
+    'considerBadMarkers',
     'selectedDatasetIds',
     'storagePolicy',
   };
@@ -1178,13 +1190,17 @@ class _MarkerSelectionPanel extends StatelessWidget {
     required this.dataset,
     required this.markers,
     required this.includedMarkers,
-    required this.onChanged,
+    required this.considerBadMarkers,
+    required this.onIncludedChanged,
+    required this.onBadChanged,
   });
 
   final Dataset? dataset;
   final List<TimeMarker> markers;
   final Map<String, dynamic> includedMarkers;
-  final ValueChanged<Map<String, dynamic>> onChanged;
+  final Map<String, dynamic> considerBadMarkers;
+  final ValueChanged<Map<String, dynamic>> onIncludedChanged;
+  final ValueChanged<Map<String, dynamic>> onBadChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1204,6 +1220,12 @@ class _MarkerSelectionPanel extends StatelessWidget {
               (includedMarkers[group.key] as bool?) ?? false,
         )
         .length;
+    final int badCount = groups
+        .where(
+          (_MarkerLabelSummary group) =>
+              (considerBadMarkers[group.key] as bool?) ?? false,
+        )
+        .length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1213,10 +1235,15 @@ class _MarkerSelectionPanel extends StatelessWidget {
               '$selectedCount / ${groups.length} selected',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
+            const SizedBox(width: 12),
+            Text(
+              '$badCount bad',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
             const Spacer(),
             TextButton(
               onPressed: () {
-                onChanged(<String, dynamic>{
+                onIncludedChanged(<String, dynamic>{
                   for (final _MarkerLabelSummary group in groups)
                     group.key: true,
                 });
@@ -1225,12 +1252,24 @@ class _MarkerSelectionPanel extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             TextButton(
-              onPressed: () => onChanged(<String, dynamic>{}),
+              onPressed: () => onIncludedChanged(<String, dynamic>{}),
               child: const Text('Unselect all'),
             ),
           ],
         ),
         const SizedBox(height: 6),
+        const Padding(
+          padding: EdgeInsets.only(right: 8),
+          child: Row(
+            children: <Widget>[
+              SizedBox(width: 52, child: Text('Use')),
+              SizedBox(width: 48, child: Text('Bad')),
+              SizedBox(width: 18),
+              Expanded(child: Text('Marker')),
+            ],
+          ),
+        ),
+        const SizedBox(height: 2),
         Expanded(
           child: ListView.builder(
             itemCount: groups.length,
@@ -1238,32 +1277,73 @@ class _MarkerSelectionPanel extends StatelessWidget {
               final _MarkerLabelSummary group = groups[index];
               final String key = group.key;
               final bool included = (includedMarkers[key] as bool?) ?? false;
-              return CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                value: included,
-                secondary: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: _markerColor(index, group.sampleMarker),
-                    shape: BoxShape.circle,
-                  ),
+              final bool bad = (considerBadMarkers[key] as bool?) ?? false;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    SizedBox(
+                      width: 52,
+                      child: Checkbox(
+                        value: included,
+                        onChanged: (bool? value) {
+                          final Map<String, dynamic> nextMap =
+                              Map<String, dynamic>.from(includedMarkers);
+                          if (value == true) {
+                            nextMap[key] = true;
+                          } else {
+                            nextMap.remove(key);
+                          }
+                          onIncludedChanged(nextMap);
+                        },
+                      ),
+                    ),
+                    SizedBox(
+                      width: 48,
+                      child: Checkbox(
+                        value: bad,
+                        onChanged: (bool? value) {
+                          final Map<String, dynamic> nextMap =
+                              Map<String, dynamic>.from(considerBadMarkers);
+                          if (value == true) {
+                            nextMap[key] = true;
+                          } else {
+                            nextMap.remove(key);
+                          }
+                          onBadChanged(nextMap);
+                        },
+                      ),
+                    ),
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: _markerColor(index, group.sampleMarker),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            group.label,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          Text(
+                            "${group.kind} - ${group.count} marker${group.count == 1 ? '' : 's'}",
+                            style: TextStyle(
+                              color: Colors.black.withValues(alpha: 0.62),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                title: Text(group.label, style: const TextStyle(fontSize: 13)),
-                subtitle: Text(
-                  '${group.kind} • ${group.count} marker${group.count == 1 ? '' : 's'}',
-                ),
-                onChanged: (bool? value) {
-                  final Map<String, dynamic> nextMap =
-                      Map<String, dynamic>.from(includedMarkers);
-                  if (value == true) {
-                    nextMap[key] = true;
-                  } else {
-                    nextMap.remove(key);
-                  }
-                  onChanged(nextMap);
-                },
               );
             },
           ),

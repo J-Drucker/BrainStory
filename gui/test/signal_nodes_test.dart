@@ -2042,10 +2042,12 @@ time,Fz,Cz
         segmentationNode.id,
         averageNode.id,
       });
+      expect(averageNode.datasetStates[dataset.id], isNot(DatasetState.done));
 
       logic.ungroupNodes(logic.nodeGroups.single.id);
       expect(logic.nodeGroups, isEmpty);
       await logic.runFromStart(psdNode.id, datasetIds: <String>{dataset.id});
+      expect(averageNode.datasetStates[dataset.id], isNot(DatasetState.done));
       expect(logic.nodeGroups, isEmpty);
     },
   );

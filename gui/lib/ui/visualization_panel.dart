@@ -964,17 +964,23 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     params.putIfAbsent('segmented_condition_mode', () => 'natural');
     params.putIfAbsent('segmented_channel_mode', () => 'natural');
     params.putIfAbsent('segmented_segment_mode', () => 'natural');
-    params.putIfAbsent('segmented_include_bad', () => false);
+    params.putIfAbsent('segmented_exclude_bad', () => false);
     params.putIfAbsent('segmented_visible_marker_labels', () => <String>[]);
     params.putIfAbsent('segmented_marker_filter_initialized', () => false);
     params.putIfAbsent('window_sec', () => 1.0);
     params.putIfAbsent('y_scale_uv', () => 100.0);
     params.putIfAbsent('channel_spacing_factor', () => 1.0);
 
-    final bool includeBad = params['segmented_include_bad'] as bool? ?? false;
+    final bool excludeBad = params['segmented_exclude_bad'] as bool? ?? false;
     final Set<String> excludedLabels = _excludedSegmentationMarkerLabels(
       params['includedMarkers'],
     );
+    final Set<String> badMarkerKeys = _badSegmentationMarkerKeys(
+      params['considerBadMarkers'],
+    );
+    final String badTooltip = badMarkerKeys.isEmpty
+        ? 'No marker labels are marked bad in Segmentation parameters.'
+        : 'Bad markers: ${badMarkerKeys.map(_markerLabelForKey).join(', ')}';
     final List<SignalSegmentData> configuredSegments = segmented.segments
         .where(
           (SignalSegmentData segment) =>
@@ -983,14 +989,15 @@ class _SegmentedChartState extends State<_SegmentedChart> {
         .toList(growable: false);
     final List<SignalSegmentData> visibleSegments = configuredSegments
         .where(
-          (SignalSegmentData segment) => includeBad || !_segmentIsBad(segment),
+          (SignalSegmentData segment) =>
+              !excludeBad || !_segmentMatchesMarkerKeys(segment, badMarkerKeys),
         )
         .toList(growable: false);
     if (visibleSegments.isEmpty) {
       return const _ChartMessage(
         title: 'No visible segments',
         body:
-            'All segments are currently excluded as bad. Enable "Include bad segments" to inspect them.',
+            'All segments marked bad are currently excluded. Disable "Exclude bads" to inspect them.',
       );
     }
 
@@ -1127,14 +1134,17 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                     ),
                   ),
                   const _SegmentControlStripDivider(),
-                  _SegmentInlineToggleButton(
-                    label: 'Include bad',
-                    selected: includeBad,
-                    onPressed: () {
-                      setState(() {
-                        params['segmented_include_bad'] = !includeBad;
-                      });
-                    },
+                  Tooltip(
+                    message: badTooltip,
+                    child: _SegmentInlineToggleButton(
+                      label: 'Exclude bads',
+                      selected: excludeBad,
+                      onPressed: () {
+                        setState(() {
+                          params['segmented_exclude_bad'] = !excludeBad;
+                        });
+                      },
+                    ),
                   ),
                   const _SegmentControlStripDivider(),
                   _SegmentViewerScaleControls(
@@ -1166,7 +1176,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
               _SegmentModeTileRow(
                 groups: allGroups,
                 selectedLabels: selectedLabels,
-                includeBad: includeBad,
+                excludeBad: excludeBad,
                 conditionMode: conditionMode,
                 channelMode: channelMode,
                 segmentMode: segmentMode,
@@ -3272,17 +3282,6 @@ class _BridgeScaleLegend extends StatelessWidget {
   }
 }
 
-bool _segmentIsBad(SignalSegmentData segment) {
-  final String label = segment.label.trim().toLowerCase();
-  final String kind = segment.kind.trim().toLowerCase();
-  return label.contains('bad') ||
-      label.contains('artifact') ||
-      label.contains('reject') ||
-      kind.contains('bad') ||
-      kind.contains('artifact') ||
-      kind.contains('reject');
-}
-
 class _SegmentLabelGroup {
   const _SegmentLabelGroup({
     required this.label,
@@ -3451,6 +3450,40 @@ Set<String> _excludedSegmentationMarkerLabels(dynamic rawIncludedMarkers) {
         return label.isEmpty ? 'Unlabeled' : label;
       })
       .toSet();
+}
+
+Set<String> _badSegmentationMarkerKeys(dynamic rawConsiderBadMarkers) {
+  final Map<String, dynamic> considerBadMarkers = Map<String, dynamic>.from(
+    rawConsiderBadMarkers as Map? ?? const <String, dynamic>{},
+  );
+  if (considerBadMarkers.isEmpty) {
+    return const <String>{};
+  }
+  return considerBadMarkers.entries
+      .where((MapEntry<String, dynamic> entry) => _truthyBool(entry.value))
+      .map((MapEntry<String, dynamic> entry) => entry.key.trim())
+      .where((String key) => key.isNotEmpty)
+      .toSet();
+}
+
+String _markerLabelForKey(String key) {
+  final int separatorIndex = key.indexOf('|');
+  final String label = separatorIndex < 0
+      ? key.trim()
+      : key.substring(separatorIndex + 1).trim();
+  return label.isEmpty ? 'Unlabeled' : label;
+}
+
+bool _segmentMatchesMarkerKeys(
+  SignalSegmentData segment,
+  Set<String> markerKeys,
+) {
+  if (markerKeys.isEmpty) {
+    return false;
+  }
+  return markerKeys.contains(
+    markerKeyForKindAndLabel(kind: segment.kind, label: segment.label),
+  );
 }
 
 bool _truthyBool(dynamic value) {
@@ -6080,7 +6113,7 @@ class _SegmentModeTileRow extends StatelessWidget {
   const _SegmentModeTileRow({
     required this.groups,
     required this.selectedLabels,
-    required this.includeBad,
+    required this.excludeBad,
     required this.conditionMode,
     required this.channelMode,
     required this.segmentMode,
@@ -6096,7 +6129,7 @@ class _SegmentModeTileRow extends StatelessWidget {
 
   final List<_SegmentLabelGroup> groups;
   final Set<String> selectedLabels;
-  final bool includeBad;
+  final bool excludeBad;
   final String conditionMode;
   final String channelMode;
   final String segmentMode;
@@ -6132,7 +6165,7 @@ class _SegmentModeTileRow extends StatelessWidget {
           Expanded(
             flex: 5,
             child: _SegmentSegmentsModeTile(
-              includeBad: includeBad,
+              excludeBad: excludeBad,
               segmentMode: segmentMode,
               totalSegmentCount: totalSegmentCount,
               visibleSegmentCount: visibleSegmentCount,
@@ -6171,7 +6204,7 @@ class _SegmentModeTileRow extends StatelessWidget {
                 children: <Widget>[
                   Expanded(
                     child: _SegmentSegmentsModeTile(
-                      includeBad: includeBad,
+                      excludeBad: excludeBad,
                       segmentMode: segmentMode,
                       totalSegmentCount: totalSegmentCount,
                       visibleSegmentCount: visibleSegmentCount,
@@ -6365,14 +6398,14 @@ class _SegmentConditionsModeTile extends StatelessWidget {
 
 class _SegmentSegmentsModeTile extends StatelessWidget {
   const _SegmentSegmentsModeTile({
-    required this.includeBad,
+    required this.excludeBad,
     required this.segmentMode,
     required this.totalSegmentCount,
     required this.visibleSegmentCount,
     required this.onModeChanged,
   });
 
-  final bool includeBad;
+  final bool excludeBad;
   final String segmentMode;
   final int totalSegmentCount;
   final int visibleSegmentCount;
@@ -6400,8 +6433,8 @@ class _SegmentSegmentsModeTile extends StatelessWidget {
               ),
               _SegmentInfoPill(
                 label: 'Bad',
-                value: includeBad ? 'included' : 'hidden',
-                accentColor: includeBad
+                value: excludeBad ? 'excluded' : 'shown',
+                accentColor: excludeBad
                     ? const Color(0xFFFFD166)
                     : Colors.white70,
               ),
