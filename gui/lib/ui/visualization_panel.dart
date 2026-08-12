@@ -10,7 +10,9 @@ import '../model/dataset.dart';
 import '../model/node.dart';
 import '../platform/brainstory_engine.dart';
 import '../nodes/sleep_staging_node.dart';
+import '../nodes/edit_channels_node.dart';
 import 'canvas_logic.dart';
+import 'channel_positions_dialog.dart';
 import 'raw_signal_browser.dart';
 
 class VisualizationPanel extends StatelessWidget {
@@ -491,7 +493,25 @@ class _VisualizationChart extends StatelessWidget {
         (Dataset dataset) => dataset.id == activeDatasetId,
         orElse: () => datasets.first,
       );
-      return _SegmentedChart(dataset: activeDataset, params: params);
+      return _SegmentedChart(
+        dataset: activeDataset,
+        params: params,
+        onPersistChannelEdits:
+            (Map<String, dynamic> config, bool runAfterSave) async {
+              final String message = await logic.persistViewerEdits(
+                viewerNodeId: nodeId,
+                dataset: activeDataset,
+                channelEditConfig: config,
+                runAfterSave: runAfterSave,
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(message)));
+              }
+              onDataChanged();
+            },
+      );
     }
     if (comparisonNode && datasets.length > 1) {
       return const _ChartMessage(
@@ -537,13 +557,29 @@ class _VisualizationChart extends StatelessWidget {
 }
 
 class _SegmentedChart extends StatefulWidget {
-  const _SegmentedChart({required this.dataset, required this.params});
+  const _SegmentedChart({
+    required this.dataset,
+    required this.params,
+    required this.onPersistChannelEdits,
+  });
 
   final Dataset dataset;
   final Map<String, dynamic> params;
+  final Future<void> Function(Map<String, dynamic> config, bool runAfterSave)
+  onPersistChannelEdits;
 
   @override
   State<_SegmentedChart> createState() => _SegmentedChartState();
+}
+
+class _SegmentChannelEditSave {
+  const _SegmentChannelEditSave({
+    required this.config,
+    required this.runAfterSave,
+  });
+
+  final Map<String, dynamic> config;
+  final bool runAfterSave;
 }
 
 class _SegmentedChartState extends State<_SegmentedChart> {
@@ -586,6 +622,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
   bool _syncingPlotScroll = false;
   double _sharedPlotScrollOffset = 0;
   double? _currentTimeWindowLimitSeconds;
+  Map<String, dynamic>? _draftChannelEditConfig;
 
   @override
   void initState() {
@@ -801,6 +838,116 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     );
   }
 
+  Future<void> _showChannelEditor() async {
+    final TimeSeriesData? timeSeries = widget.dataset.timeSeries;
+    if (timeSeries == null || timeSeries.channels.isEmpty) {
+      return;
+    }
+    final List<String> channelLabels = List<String>.generate(
+      timeSeries.channelCount,
+      (int index) => index < timeSeries.channelLabels.length
+          ? timeSeries.channelLabels[index]
+          : 'Ch ${index + 1}',
+      growable: false,
+    );
+    Map<String, dynamic> draft = Map<String, dynamic>.from(
+      _draftChannelEditConfig ??
+          EditChannelsNodeType.configForDataset(
+            widget.params,
+            widget.dataset.id,
+          ),
+    );
+    final _SegmentChannelEditSave?
+    save = await showDialog<_SegmentChannelEditSave>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 980, maxHeight: 720),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: Text(
+                          'Edit Channels',
+                          style: Theme.of(dialogContext).textTheme.titleLarge,
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => showChannelPositionsDialog(
+                          dialogContext,
+                          dataset: widget.dataset,
+                        ),
+                        icon: const Icon(Icons.public, size: 18),
+                        label: const Text('Channel positions'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: ChannelEditConfigEditor(
+                      channelLabels: channelLabels,
+                      config: draft,
+                      currentCoordinateCount:
+                          timeSeries.channelCoordinates.length,
+                      onChanged: (Map<String, dynamic> config) {
+                        draft = config;
+                        _draftChannelEditConfig = config;
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: <Widget>[
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(
+                          _SegmentChannelEditSave(
+                            config: draft,
+                            runAfterSave: false,
+                          ),
+                        ),
+                        child: const Text('Save'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(
+                          _SegmentChannelEditSave(
+                            config: draft,
+                            runAfterSave: true,
+                          ),
+                        ),
+                        child: const Text('Save and run'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (save == null) {
+      return;
+    }
+    await widget.onPersistChannelEdits(save.config, save.runAfterSave);
+    if (mounted) {
+      setState(() {
+        _draftChannelEditConfig = null;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final SegmentedTimeSeriesData? segmented =
@@ -966,6 +1113,20 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
+                  TextButton.icon(
+                    onPressed: _showChannelEditor,
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: const Text('Edit channels'),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                  const _SegmentControlStripDivider(),
                   _SegmentInlineToggleButton(
                     label: 'Include bad',
                     selected: includeBad,
@@ -1175,21 +1336,35 @@ class _SegmentPanelView extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Expanded(
-              child: ListView.separated(
-                controller: verticalController,
-                itemCount: panel.rowSpecs.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (BuildContext context, int index) {
-                  final _SegmentRowSpec row = panel.rowSpecs[index];
-                  return _SegmentPlotTile(
-                    title: row.title,
-                    height: row.height,
-                    plotData: row.plotData,
-                    horizontalController: horizontalControllerForRow(row.key),
-                    windowSeconds: windowSeconds,
-                    rangeUv: rangeUv,
-                    onWindowSecondsChanged: onWindowSecondsChanged,
-                    onRangeUvChanged: onRangeUvChanged,
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final double availablePlotHeight = math.max(
+                    120,
+                    constraints.maxHeight -
+                        (8 * math.max(0, panel.rowSpecs.length - 1)),
+                  );
+                  final double fillHeight = panel.rowSpecs.isEmpty
+                      ? availablePlotHeight
+                      : availablePlotHeight / panel.rowSpecs.length;
+                  return ListView.separated(
+                    controller: verticalController,
+                    itemCount: panel.rowSpecs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (BuildContext context, int index) {
+                      final _SegmentRowSpec row = panel.rowSpecs[index];
+                      return _SegmentPlotTile(
+                        title: row.title,
+                        height: math.max(row.height, fillHeight - 30),
+                        plotData: row.plotData,
+                        horizontalController: horizontalControllerForRow(
+                          row.key,
+                        ),
+                        windowSeconds: windowSeconds,
+                        rangeUv: rangeUv,
+                        onWindowSecondsChanged: onWindowSecondsChanged,
+                        onRangeUvChanged: onRangeUvChanged,
+                      );
+                    },
                   );
                 },
               ),

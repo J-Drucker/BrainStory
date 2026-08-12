@@ -88,13 +88,26 @@ class EditChannelsNodeType extends NodeType {
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
     final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries == null || timeSeries.channels.isEmpty) {
+    final SegmentedTimeSeriesData? segmented = dataset.segmentedTimeSeries;
+    final TimeSeriesData? configSeries =
+        timeSeries ??
+        (segmented == null || segmented.segments.isEmpty
+            ? null
+            : TimeSeriesData(
+                channelSamples: segmented.channelSamplesForSegment(
+                  segmented.segments.first,
+                ),
+                sampleRate: segmented.sampleRate,
+                channelLabels: segmented.channelLabels,
+                source: segmented.source,
+              ));
+    if (configSeries == null || configSeries.channels.isEmpty) {
       return;
     }
 
     final Map<String, dynamic> config = bindConfigToChannelLabels(
       configForDataset(params, dataset.id),
-      _channelLabelsForSeries(timeSeries),
+      _channelLabelsForSeries(configSeries),
     );
     setConfigForDataset(params, dataset.id, config);
     if (!hasMeaningfulChanges(config)) {
@@ -103,26 +116,81 @@ class EditChannelsNodeType extends NodeType {
 
     final ArtifactChangeSet changeSet = changeSetForConfig(
       datasetId: dataset.id,
-      timeSeries: timeSeries,
+      timeSeries: configSeries,
       config: config,
     );
-    TimeSeriesData nextSeries = applyChannelEdits(
-      timeSeries,
-      config,
-      warningSink: (String warning) {
-        dataset.ram['editChannels.lastWarning'] = warning;
-      },
-    );
+    TimeSeriesData? nextSeries = timeSeries == null
+        ? null
+        : applyChannelEdits(
+            timeSeries,
+            config,
+            warningSink: (String warning) {
+              dataset.ram['editChannels.lastWarning'] = warning;
+            },
+          );
     final String coordinateImportMode =
         (config['coordinateImportMode'] ?? coordinateImportNone)
             .toString()
             .trim()
             .toLowerCase();
-    if (coordinateImportMode == coordinateImportStandard) {
+    if (coordinateImportMode == coordinateImportStandard &&
+        nextSeries != null) {
       nextSeries = await _applyConfiguredCoordinates(nextSeries);
     }
-    dataset.timeSeries = nextSeries;
+    if (nextSeries != null) {
+      dataset.timeSeries = nextSeries;
+    }
+    if (segmented != null) {
+      dataset.segmentedTimeSeries = applyChannelEditsToSegmented(
+        segmented,
+        config,
+        sourceTimeSeries: nextSeries,
+      );
+    }
     dataset.ram['artifact.lastChangeSet'] = changeSet;
+  }
+
+  static SegmentedTimeSeriesData applyChannelEditsToSegmented(
+    SegmentedTimeSeriesData segmented,
+    Map<String, dynamic> config, {
+    TimeSeriesData? sourceTimeSeries,
+  }) {
+    final List<SignalSegmentData> segments = segmented.segments
+        .map((SignalSegmentData segment) {
+          final TimeSeriesData edited = applyChannelEdits(
+            TimeSeriesData(
+              channelSamples: segmented.channelSamplesForSegment(segment),
+              sampleRate: segmented.sampleRate,
+              channelLabels: segmented.channelLabels,
+              source: segmented.source,
+            ),
+            config,
+          );
+          return segment.copyWith(channelSamples: edited.channels);
+        })
+        .toList(growable: false);
+    final TimeSeriesData labelSource =
+        sourceTimeSeries ??
+        applyChannelEdits(
+          TimeSeriesData(
+            channelSamples: segmented.channelSamplesForSegment(
+              segmented.segments.first,
+            ),
+            sampleRate: segmented.sampleRate,
+            channelLabels: segmented.channelLabels,
+            source: segmented.source,
+          ),
+          config,
+        );
+    return segmented.copyWith(
+      segments: segments,
+      channelLabels: labelSource.channelLabels,
+      sourceTimeSeries: sourceTimeSeries,
+      clearSourceTimeSeries: sourceTimeSeries == null,
+      source: segmented.source.isEmpty
+          ? 'Edit Channels'
+          : '${segmented.source} -> Edit Channels',
+    );
   }
 
   static Map<String, dynamic> configForDataset(

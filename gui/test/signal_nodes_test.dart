@@ -2265,6 +2265,63 @@ time,Fz,Cz
     },
   );
 
+  test('Edit Channels also transforms segmented data', () async {
+    final Dataset dataset = Dataset('edit-segments', label: 'Segments');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[1, 2],
+        <double>[3, 4],
+      ],
+      sampleRate: 100,
+      channelLabels: const <String>['Fz', 'Cz'],
+    );
+    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
+      sampleRate: 100,
+      channelLabels: <String>['Fz', 'Cz'],
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[10, 20],
+            <double>[30, 40],
+          ],
+          startSeconds: 0,
+          stopSeconds: 0.02,
+          label: 'A',
+        ),
+      ],
+    );
+
+    await EditChannelsNodeType().run(dataset, <String, dynamic>{
+      'channelEditsByDataset': <String, dynamic>{
+        dataset.id: <String, dynamic>{
+          'edits': <String, dynamic>{
+            '0': <String, dynamic>{'rename': 'Frontal'},
+            '1': <String, dynamic>{'remove': true, 'removeMode': 'delete'},
+          },
+          'newChannels': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'sum',
+              'name': 'Sum',
+              'addSourceIndices': <int>[0, 1],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(dataset.segmentedTimeSeries!.channelLabels, <String>[
+      'Frontal',
+      'Sum',
+    ]);
+    expect(
+      dataset.segmentedTimeSeries!.segments.single.channelSamples,
+      <List<double>>[
+        <double>[10, 20],
+        <double>[40, 60],
+      ],
+    );
+  });
+
   testWidgets('Edit Channels controls fit without internal overflow', (
     WidgetTester tester,
   ) async {
