@@ -313,6 +313,9 @@ class _CanvasViewState extends State<CanvasView> {
                                           height: canvasSize.height,
                                           child: Stack(
                                             children: <Widget>[
+                                              ...logic.nodeGroupWidgets(
+                                                update: () => setState(() {}),
+                                              ),
                                               ...logic.connectionWidgets(),
                                               ...logic.nodeWidgets(
                                                 context: context,

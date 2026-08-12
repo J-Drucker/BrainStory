@@ -1460,6 +1460,23 @@ void main() {
         (NodeModel node) => node.type is AddRemoveMarkersNodeType,
       );
 
+      expect(logic.nodeGroups, hasLength(1));
+      expect(logic.nodeGroups.single.label, 'Viewer edits');
+      expect(logic.nodeGroups.single.nodeIds, <String>{
+        channelNode.id,
+        markerNode.id,
+      });
+
+      final Offset channelStart = channelNode.position;
+      final Offset markerStart = markerNode.position;
+      logic.moveNodeOrSelection(
+        channelNode,
+        channelNode.position + const Offset(400, 180),
+      );
+      final Offset groupDelta = channelNode.position - channelStart;
+      expect(groupDelta, isNot(Offset.zero));
+      expect(markerNode.position, markerStart + groupDelta);
+
       expect(
         logic.connections.any(
           (Map<String, dynamic> connection) =>
@@ -1468,6 +1485,11 @@ void main() {
         ),
         isTrue,
       );
+
+      final Map<String, dynamic> saved = logic.exportProjectJson();
+      final CanvasLogic restored = CanvasLogic()..importProjectJson(saved);
+      expect(restored.nodeGroups, hasLength(1));
+      expect(restored.nodeGroups.single.nodeIds, hasLength(2));
       expect(
         logic.connections.any(
           (Map<String, dynamic> connection) =>
@@ -2012,6 +2034,19 @@ time,Fz,Cz
         ),
         isTrue,
       );
+      expect(logic.nodeGroups, hasLength(1));
+      expect(logic.nodeGroups.single.label, 'PSD setup');
+      expect(logic.nodeGroups.single.nodeIds, <String>{
+        psdNode.id,
+        markerNode.id,
+        segmentationNode.id,
+        averageNode.id,
+      });
+
+      logic.ungroupNodes(logic.nodeGroups.single.id);
+      expect(logic.nodeGroups, isEmpty);
+      await logic.runFromStart(psdNode.id, datasetIds: <String>{dataset.id});
+      expect(logic.nodeGroups, isEmpty);
     },
   );
 
@@ -2147,6 +2182,9 @@ time,Fz,Cz
         ),
         hasLength(1),
       );
+      expect(logic.nodeGroups, hasLength(1));
+      expect(logic.nodeGroups.single.label, 'Segmentation setup');
+      expect(logic.nodeGroups.single.nodeIds, contains(segmentationNode.id));
       expect(dataset.segmentedTimeSeries, isNotNull);
       expect(
         dataset.segmentedTimeSeries!.segments

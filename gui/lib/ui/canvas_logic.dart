@@ -49,6 +49,45 @@ enum RunActivityPhase { initializing, running, finalizing }
 
 enum ProcessingResponsiveness { fast, balanced, responsive }
 
+class CanvasNodeGroup {
+  CanvasNodeGroup({
+    required this.id,
+    required this.label,
+    required Set<String> nodeIds,
+    this.automaticRootNodeId,
+  }) : nodeIds = Set<String>.from(nodeIds);
+
+  final String id;
+  final String label;
+  final Set<String> nodeIds;
+  final String? automaticRootNodeId;
+
+  CanvasNodeGroup copy() => CanvasNodeGroup(
+    id: id,
+    label: label,
+    nodeIds: nodeIds,
+    automaticRootNodeId: automaticRootNodeId,
+  );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'id': id,
+    'label': label,
+    'nodeIds': nodeIds.toList(growable: false),
+    if (automaticRootNodeId != null) 'automaticRootNodeId': automaticRootNodeId,
+  };
+
+  static CanvasNodeGroup fromJson(Map<String, dynamic> json) {
+    return CanvasNodeGroup(
+      id: json['id']?.toString() ?? '',
+      label: json['label']?.toString() ?? 'Group',
+      nodeIds: (json['nodeIds'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .toSet(),
+      automaticRootNodeId: json['automaticRootNodeId']?.toString(),
+    );
+  }
+}
+
 extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
   String get label {
     switch (this) {
@@ -304,6 +343,8 @@ class _CanvasUndoSnapshot {
     required this.nodes,
     required this.datasets,
     required this.connections,
+    required this.nodeGroups,
+    required this.ungroupedAutomaticRootNodeIds,
     required this.nodeRamSnapshots,
     required this.nodeDiskSnapshotIds,
     required this.selectedNodeId,
@@ -317,6 +358,8 @@ class _CanvasUndoSnapshot {
   final List<_NodeUndoSnapshot> nodes;
   final List<_DatasetUndoSnapshot> datasets;
   final List<Map<String, dynamic>> connections;
+  final List<CanvasNodeGroup> nodeGroups;
+  final Set<String> ungroupedAutomaticRootNodeIds;
   final Map<String, Map<String, DatasetArtifactSnapshot>> nodeRamSnapshots;
   final Map<String, Set<String>> nodeDiskSnapshotIds;
   final String? selectedNodeId;
@@ -346,6 +389,12 @@ class _CanvasUndoSnapshot {
             (Map<String, dynamic> connection) => _deepCloneJsonMap(connection),
           )
           .toList(growable: false),
+      nodeGroups: logic.nodeGroups
+          .map((CanvasNodeGroup group) => group.copy())
+          .toList(growable: false),
+      ungroupedAutomaticRootNodeIds: Set<String>.from(
+        logic._ungroupedAutomaticRootNodeIds,
+      ),
       nodeRamSnapshots: <String, Map<String, DatasetArtifactSnapshot>>{
         for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> entry
             in logic._nodeRamSnapshots.entries)
@@ -387,6 +436,13 @@ class _CanvasUndoSnapshot {
           (Map<String, dynamic> connection) => _deepCloneJsonMap(connection),
         ),
       );
+
+    logic.nodeGroups
+      ..clear()
+      ..addAll(nodeGroups.map((CanvasNodeGroup group) => group.copy()));
+    logic._ungroupedAutomaticRootNodeIds
+      ..clear()
+      ..addAll(ungroupedAutomaticRootNodeIds);
 
     logic._nodeRamSnapshots
       ..clear()
@@ -910,6 +966,8 @@ class CanvasLogic {
       .toList(growable: false);
 
   final List<NodeModel> nodes = <NodeModel>[];
+  final List<CanvasNodeGroup> nodeGroups = <CanvasNodeGroup>[];
+  final Set<String> _ungroupedAutomaticRootNodeIds = <String>{};
   final Map<String, Dataset> datasets = <String, Dataset>{};
 
   /// Connection schema:
@@ -1092,6 +1150,7 @@ class CanvasLogic {
     }
     if (recordUndo &&
         (nodes.isNotEmpty ||
+            nodeGroups.isNotEmpty ||
             connections.isNotEmpty ||
             _nodeRamSnapshots.isNotEmpty ||
             _nodeDiskSnapshotIds.isNotEmpty)) {
@@ -1102,6 +1161,8 @@ class CanvasLogic {
 
   void _clearAll() {
     nodes.clear();
+    nodeGroups.clear();
+    _ungroupedAutomaticRootNodeIds.clear();
     connections.clear();
     _nodeRamSnapshots.clear();
     _nodeDiskSnapshotIds.clear();
@@ -1303,6 +1364,8 @@ class CanvasLogic {
 
     _recordUndo(targetIds.length == 1 ? 'delete node' : 'delete nodes');
     nodes.removeWhere((node) => targetIds.contains(node.id));
+    _ungroupedAutomaticRootNodeIds.removeAll(targetIds);
+    _pruneNodeGroups();
     connections.removeWhere(
       (connection) =>
           targetIds.contains(connection['fromNode']) ||
@@ -1953,6 +2016,12 @@ class CanvasLogic {
             },
           )
           .toList(growable: false),
+      'nodeGroups': nodeGroups
+          .map((CanvasNodeGroup group) => group.toJson())
+          .toList(growable: false),
+      'ungroupedAutomaticRootNodeIds': _ungroupedAutomaticRootNodeIds.toList(
+        growable: false,
+      ),
       'connections': connections
           .map(
             (Map<String, dynamic> connection) =>
@@ -2063,6 +2132,28 @@ class CanvasLogic {
       }
       nodes.add(node);
     }
+
+    final Set<String> importedNodeIds = nodes
+        .map((NodeModel node) => node.id)
+        .toSet();
+    final List<dynamic> groupEntries =
+        jsonMap['nodeGroups'] as List<dynamic>? ?? const <dynamic>[];
+    for (final dynamic entry in groupEntries) {
+      final CanvasNodeGroup group = CanvasNodeGroup.fromJson(
+        Map<String, dynamic>.from(entry as Map),
+      );
+      group.nodeIds.removeWhere(
+        (String nodeId) => !importedNodeIds.contains(nodeId),
+      );
+      if (group.id.isNotEmpty && group.nodeIds.length > 1) {
+        nodeGroups.add(group);
+      }
+    }
+    _ungroupedAutomaticRootNodeIds.addAll(
+      (jsonMap['ungroupedAutomaticRootNodeIds'] as List<dynamic>? ??
+              const <dynamic>[])
+          .map((dynamic value) => value.toString()),
+    );
 
     final List<dynamic> connectionEntries =
         jsonMap['connections'] as List<dynamic>? ?? <dynamic>[];
@@ -2326,6 +2417,121 @@ class CanvasLogic {
     }).toList();
   }
 
+  List<Widget> nodeGroupWidgets({required VoidCallback update}) {
+    _pruneNodeGroups();
+    final Map<String, NodeModel> nodeById = <String, NodeModel>{
+      for (final NodeModel node in nodes) node.id: node,
+    };
+    return nodeGroups
+        .map((CanvasNodeGroup group) {
+          final List<NodeModel> members = group.nodeIds
+              .map((String nodeId) => nodeById[nodeId])
+              .whereType<NodeModel>()
+              .toList(growable: false);
+          final double left = members
+              .map((NodeModel node) => node.position.dx)
+              .reduce(math.min);
+          final double top = members
+              .map((NodeModel node) => node.position.dy)
+              .reduce(math.min);
+          final double right = members
+              .map((NodeModel node) => node.position.dx + _cardWidth)
+              .reduce(math.max);
+          final double bottom = members
+              .map((NodeModel node) => node.position.dy + _cardHeight)
+              .reduce(math.max);
+          return _CanvasNodeGroupOutline(
+            rect: Rect.fromLTRB(left - 18, top - 30, right + 18, bottom + 18),
+            label: group.label,
+            onUngroup: () {
+              ungroupNodes(group.id);
+              update();
+            },
+          );
+        })
+        .toList(growable: false);
+  }
+
+  void ungroupNodes(String groupId) {
+    CanvasNodeGroup? target;
+    for (final CanvasNodeGroup group in nodeGroups) {
+      if (group.id == groupId) {
+        target = group;
+        break;
+      }
+    }
+    if (target == null) {
+      return;
+    }
+    _recordUndo('ungroup nodes');
+    if (target.automaticRootNodeId != null) {
+      _ungroupedAutomaticRootNodeIds.add(target.automaticRootNodeId!);
+    }
+    nodeGroups.remove(target);
+  }
+
+  CanvasNodeGroup? _groupForNode(String nodeId) {
+    for (final CanvasNodeGroup group in nodeGroups) {
+      if (group.nodeIds.contains(nodeId)) {
+        return group;
+      }
+    }
+    return null;
+  }
+
+  void _createNodeGroup({
+    required String label,
+    required Set<String> nodeIds,
+    String? automaticRootNodeId,
+  }) {
+    final Set<String> existingNodeIds = nodes
+        .map((NodeModel node) => node.id)
+        .toSet();
+    final Set<String> validIds = nodeIds.intersection(existingNodeIds);
+    if (validIds.length < 2) {
+      return;
+    }
+    CanvasNodeGroup? existing;
+    if (automaticRootNodeId != null) {
+      for (final CanvasNodeGroup group in nodeGroups) {
+        if (group.automaticRootNodeId == automaticRootNodeId) {
+          existing = group;
+          break;
+        }
+      }
+    }
+    if (existing != null) {
+      existing.nodeIds
+        ..clear()
+        ..addAll(validIds);
+      return;
+    }
+    for (final CanvasNodeGroup group in nodeGroups) {
+      group.nodeIds.removeAll(validIds);
+    }
+    _pruneNodeGroups();
+    nodeGroups.add(
+      CanvasNodeGroup(
+        id: 'group_${_nextNodeId()}',
+        label: label,
+        nodeIds: validIds,
+        automaticRootNodeId: automaticRootNodeId,
+      ),
+    );
+  }
+
+  void _pruneNodeGroups() {
+    final Set<String> existingNodeIds = nodes
+        .map((NodeModel node) => node.id)
+        .toSet();
+    for (final CanvasNodeGroup group in nodeGroups) {
+      group.nodeIds.removeWhere(
+        (String nodeId) => !existingNodeIds.contains(nodeId),
+      );
+    }
+    nodeGroups.removeWhere((CanvasNodeGroup group) => group.nodeIds.length < 2);
+  }
+
   List<Widget> nodeWidgets({
     required BuildContext context,
     required VoidCallback update,
@@ -2405,6 +2611,7 @@ class CanvasLogic {
         combination != null &&
         (isNodeMutationLocked(combination.upstream.id) ||
             isNodeMutationLocked(combination.downstream.id));
+    final CanvasNodeGroup? nodeGroup = _groupForNode(node.id);
     final Set<String> nodeDatasetIds = _datasetsForNode(node);
     final bool canLoadFromDisk = await _nodeHasLoadableDiskCache(
       node: node,
@@ -2455,6 +2662,11 @@ class CanvasLogic {
                   ? 'Combine with Previous Node'
                   : 'Combine with Next Node',
             ),
+          ),
+        if (nodeGroup != null)
+          const PopupMenuItem<String>(
+            value: 'ungroup',
+            child: Text('Ungroup Nodes'),
           ),
         const PopupMenuDivider(),
         PopupMenuItem<String>(
@@ -2570,6 +2782,12 @@ class CanvasLogic {
         update();
         if (context.mounted && combinedTitle != null) {
           _showStatusSnackBar(context, 'Combined into $combinedTitle.');
+        }
+        return;
+      case 'ungroup':
+        if (nodeGroup != null) {
+          ungroupNodes(nodeGroup.id);
+          update();
         }
         return;
       case 'delete':
@@ -3182,6 +3400,7 @@ class CanvasLogic {
       ),
       params: <String, dynamic>{
         ...PSDAverageNodeType().defaultParams,
+        '_runtimeGeneratedByNodeId': psdNode.id,
         if (psdNode.params['selectedDatasetIds'] != null)
           'selectedDatasetIds': List<dynamic>.from(
             psdNode.params['selectedDatasetIds'] as List<dynamic>,
@@ -4325,6 +4544,44 @@ class CanvasLogic {
             expandedNodeIds.length != previousExpandedCount || graphChanged;
       }
     } while (graphChanged);
+    for (final String nodeId in expandedNodeIds) {
+      final NodeModel? root = _findNode(nodeId);
+      if (root == null ||
+          root.params.containsKey('_runtimeGeneratedByNodeId')) {
+        continue;
+      }
+      if (root.type is PSDNodeType ||
+          (root.type is SegmentationNodeType &&
+              (root.params['mode'] ?? 'events').toString() ==
+                  'equal_windows')) {
+        _syncAutomaticNodeGroup(root);
+      }
+    }
+  }
+
+  void _syncAutomaticNodeGroup(NodeModel root) {
+    if (_ungroupedAutomaticRootNodeIds.contains(root.id)) {
+      return;
+    }
+    final Set<String> memberIds = <String>{root.id};
+    bool changed;
+    do {
+      changed = false;
+      for (final NodeModel node in nodes) {
+        final String? ownerId = node.params['_runtimeGeneratedByNodeId']
+            ?.toString();
+        if (ownerId != null &&
+            memberIds.contains(ownerId) &&
+            memberIds.add(node.id)) {
+          changed = true;
+        }
+      }
+    } while (changed);
+    _createNodeGroup(
+      label: root.type is PSDNodeType ? 'PSD setup' : 'Segmentation setup',
+      nodeIds: memberIds,
+      automaticRootNodeId: root.id,
+    );
   }
 
   Set<String> _datasetsForNode(NodeModel node) {
@@ -4977,6 +5234,7 @@ class CanvasLogic {
     NodeModel anchorNode = sourceNode;
     NodeModel? lastCreatedNode;
     final List<String> createdNodeTitles = <String>[];
+    final Set<String> createdNodeIds = <String>{};
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
     if (hasChannelEdits) {
@@ -4993,6 +5251,7 @@ class CanvasLogic {
       );
       anchorNode = lastCreatedNode;
       createdNodeTitles.add(lastCreatedNode.title);
+      createdNodeIds.add(lastCreatedNode.id);
     }
     if (hasMarkerEdits) {
       lastCreatedNode = _spawnViewerEditNode(
@@ -5007,10 +5266,14 @@ class CanvasLogic {
       );
       anchorNode = lastCreatedNode;
       createdNodeTitles.add(lastCreatedNode.title);
+      createdNodeIds.add(lastCreatedNode.id);
     }
 
     if (lastCreatedNode == null) {
       return 'No viewer edits were persisted.';
+    }
+    if (createdNodeTitles.length > 1) {
+      _createNodeGroup(label: 'Viewer edits', nodeIds: createdNodeIds);
     }
 
     if (insertBeforeNode != null) {
@@ -6740,8 +7003,10 @@ class CanvasLogic {
   }
 
   void moveNodeOrSelection(NodeModel draggedNode, Offset targetPosition) {
-    if (!selectedNodeIds.contains(draggedNode.id) ||
-        selectedNodeIds.length <= 1) {
+    final CanvasNodeGroup? nodeGroup = _groupForNode(draggedNode.id);
+    final bool movingSelection =
+        selectedNodeIds.contains(draggedNode.id) && selectedNodeIds.length > 1;
+    if (!movingSelection && nodeGroup == null) {
       final Offset nextPosition = _nearestAvailablePosition(
         targetPosition,
         movingNodeId: draggedNode.id,
@@ -6761,7 +7026,9 @@ class CanvasLogic {
       return;
     }
 
-    final Set<String> movingIds = Set<String>.from(selectedNodeIds);
+    final Set<String> movingIds = movingSelection
+        ? Set<String>.from(selectedNodeIds)
+        : Set<String>.from(nodeGroup!.nodeIds);
     final Offset snappedTarget = snapToGrid(targetPosition);
     final Offset delta = snappedTarget - draggedNode.position;
     if (delta == Offset.zero) {
@@ -6783,7 +7050,7 @@ class CanvasLogic {
       return;
     }
 
-    _recordUndo('move nodes');
+    _recordUndo(nodeGroup == null ? 'move nodes' : 'move node group');
     for (final NodeModel node in nodes) {
       final Offset? nextPosition = nextPositions[node.id];
       if (nextPosition != null) {
@@ -7711,4 +7978,78 @@ class _PortConnection {
 
   final int fromPortIndex;
   final int toPortIndex;
+}
+
+class _CanvasNodeGroupOutline extends StatelessWidget {
+  const _CanvasNodeGroupOutline({
+    required this.rect,
+    required this.label,
+    required this.onUngroup,
+  });
+
+  final Rect rect;
+  final String label;
+  final VoidCallback onUngroup;
+
+  @override
+  Widget build(BuildContext context) {
+    const Color outlineColor = Color(0xFF8B93A7);
+    return Positioned.fromRect(
+      rect: rect,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: <Widget>[
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: outlineColor.withValues(alpha: 0.58),
+                    width: 1,
+                  ),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 8,
+            top: 0,
+            child: Container(
+              height: 28,
+              padding: const EdgeInsets.only(left: 7),
+              color: const Color(0xFF15171C),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Tooltip(
+                    message: 'Ungroup',
+                    child: IconButton(
+                      onPressed: onUngroup,
+                      icon: const Icon(Icons.link_off, size: 15),
+                      color: Colors.white60,
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 28,
+                        height: 28,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
