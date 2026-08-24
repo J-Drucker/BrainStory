@@ -3,6 +3,7 @@ part of 'node_type.dart';
 class _NodeConfigDialog extends StatefulWidget {
   const _NodeConfigDialog({
     required this.title,
+    required this.helpText,
     required this.params,
     required this.datasets,
     required this.availableDatasetIds,
@@ -19,6 +20,7 @@ class _NodeConfigDialog extends StatefulWidget {
   });
 
   final String title;
+  final String? helpText;
   final Map<String, dynamic> params;
   final Map<String, Dataset> datasets;
   final Set<String> availableDatasetIds;
@@ -229,6 +231,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
       context: context,
       builder: (_) => _NodeHelpDialog(
         title: widget.title,
+        helpText: widget.helpText,
         portStatusSummary: widget.portStatusSummary,
         datasets: widget.datasets,
         selectedDatasetIds: Set<String>.from(
@@ -272,6 +275,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
 class _NodeHelpDialog extends StatelessWidget {
   const _NodeHelpDialog({
     required this.title,
+    required this.helpText,
     required this.portStatusSummary,
     required this.datasets,
     required this.selectedDatasetIds,
@@ -280,6 +284,7 @@ class _NodeHelpDialog extends StatelessWidget {
   });
 
   final String title;
+  final String? helpText;
   final NodePortStatusSummary portStatusSummary;
   final Map<String, Dataset> datasets;
   final Set<String> selectedDatasetIds;
@@ -296,6 +301,10 @@ class _NodeHelpDialog extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              if (helpText != null) ...<Widget>[
+                Text(helpText!),
+                const SizedBox(height: 16),
+              ],
               _PortStatusHeader(summary: portStatusSummary),
               const SizedBox(height: 16),
               _MetadataDialogBody(
@@ -955,8 +964,8 @@ class _DatasetControlSectionState extends State<_DatasetControlSection> {
                     const SizedBox(width: 8),
                     Text(
                       '$selectedCount/${widget.datasets.length}',
-                      style: const TextStyle(
-                        color: Colors.black54,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -966,33 +975,20 @@ class _DatasetControlSectionState extends State<_DatasetControlSection> {
             ),
             if (_expanded) ...<Widget>[
               const SizedBox(height: 8),
-              Row(
-                children: <Widget>[
-                  Checkbox(
-                    value: allChecked,
-                    onChanged: (bool? value) {
-                      if (value == true) {
-                        widget.onChanged(
-                          widget.datasets
+              TextButton(
+                onPressed: () {
+                  widget.onChanged(
+                    allChecked
+                        ? <String>{}
+                        : widget.datasets
                               .map(
                                 (MapEntry<String, Dataset> entry) =>
                                     entry.value.id,
                               )
                               .toSet(),
-                        );
-                      } else {
-                        widget.onChanged(<String>{});
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 4),
-                  const Expanded(
-                    child: Text(
-                      'Run for all datasets',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
+                  );
+                },
+                child: Text(allChecked ? 'Unselect all' : 'Select all'),
               ),
               const SizedBox(height: 10),
               const _DatasetControlHeader(),

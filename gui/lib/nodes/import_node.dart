@@ -36,6 +36,20 @@ class ImportNodeType extends NodeType {
   String get title => 'Import';
 
   @override
+  String get helpText =>
+      'Choose which datasets this import node should expose. CSV, TSV, '
+      'whitespace-delimited text, EDF, ANT Neuro .cnt, BrainVision '
+      '(.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. ANT CNT '
+      'imports use BrainStory\'s bundled native LIBEEP reader and preserve '
+      'markers and impedance measurements. For BrainVision imports, select '
+      'the .vhdr file and BrainStory will use the sibling .eeg and .vmrk '
+      'automatically. For EEGLAB imports, select either file from the pair; '
+      'BrainStory will normalize to the .set metadata file and use the sibling '
+      '.fdt automatically. BrainStory infers timing when possible and falls '
+      'back to its internal default when necessary. Multi-channel text tables '
+      'and EDF channel sets are preserved.';
+
+  @override
   NodeCategory get category => NodeCategory.import;
 
   @override
@@ -73,53 +87,59 @@ class ImportNodeType extends NodeType {
     );
 
     return SizedBox(
-      height: 320,
+      height: 210,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text(
-            entries.isEmpty
-                ? 'Open datasets from the right panel, then choose which ones this import node should expose below.'
-                : 'Choose which datasets this import node should expose using the table below.',
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'CSV, TSV, whitespace-delimited text, EDF, ANT Neuro .cnt, BrainVision (.vhdr/.eeg/.vmrk), and EEGLAB .set/.fdt pairs are supported. ANT CNT imports use BrainStory\'s bundled native LIBEEP reader and preserve markers and impedance measurements. For BrainVision imports, select the .vhdr file and BrainStory will use the sibling .eeg and .vmrk automatically. For EEGLAB imports, you can select either file from the pair; BrainStory will normalize to the .set metadata file and use the sibling .fdt automatically. BrainStory will infer timing when it can and quietly fall back to its internal default when it cannot. Multi-channel text tables and EDF channel sets are preserved.',
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Dataset names in BrainStory',
-            style: TextStyle(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
           Expanded(
             child: entries.isEmpty
-                ? const Text(
-                    'Add files first, then map each filename to the name BrainStory should use.',
-                  )
-                : ListView.separated(
-                    itemCount: entries.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (BuildContext context, int index) {
-                      final Dataset dataset = entries[index].value;
-                      final String sourceName = datasetSourceName(dataset);
-                      final String currentValue =
-                          aliases[dataset.id]?.toString() ?? dataset.label;
-                      return _DatasetAliasField(
-                        key: ValueKey<String>(dataset.id),
-                        sourceName: sourceName,
-                        currentValue: currentValue,
-                        onChanged: (String value) {
-                          final Map<String, dynamic> nextAliases =
-                              Map<String, dynamic>.from(
-                                params['datasetAliases'] as Map? ??
-                                    <String, dynamic>{},
-                              );
-                          nextAliases[dataset.id] = value;
-                          params['datasetAliases'] = nextAliases;
-                        },
-                      );
-                    },
+                ? const Center(child: Text('No datasets opened yet.'))
+                : Column(
+                    children: <Widget>[
+                      const _DatasetAliasHeader(),
+                      const Divider(height: 12),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: entries.length,
+                          separatorBuilder: (_, __) =>
+                              const Divider(height: 12),
+                          itemBuilder: (BuildContext context, int index) {
+                            final Dataset dataset = entries[index].value;
+                            return _DatasetAliasField(
+                              key: ValueKey<String>(dataset.id),
+                              sourceName: datasetSourceName(dataset),
+                              currentValue:
+                                  aliases[dataset.id]?.toString() ??
+                                  dataset.label,
+                              rename: aliases.containsKey(dataset.id),
+                              onChanged: (String value) {
+                                final Map<String, dynamic> nextAliases =
+                                    Map<String, dynamic>.from(
+                                      params['datasetAliases'] as Map? ??
+                                          <String, dynamic>{},
+                                    );
+                                nextAliases[dataset.id] = value;
+                                params['datasetAliases'] = nextAliases;
+                              },
+                              onRenameChanged: (bool rename, String value) {
+                                final Map<String, dynamic> nextAliases =
+                                    Map<String, dynamic>.from(
+                                      params['datasetAliases'] as Map? ??
+                                          <String, dynamic>{},
+                                    );
+                                if (rename) {
+                                  nextAliases[dataset.id] = value;
+                                } else {
+                                  nextAliases.remove(dataset.id);
+                                }
+                                params['datasetAliases'] = nextAliases;
+                                setState(() {});
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
           ),
         ],
@@ -1752,17 +1772,39 @@ class _EdfSignalHeader {
   }
 }
 
+class _DatasetAliasHeader extends StatelessWidget {
+  const _DatasetAliasHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    const TextStyle style = TextStyle(fontWeight: FontWeight.w700);
+    return const Row(
+      children: <Widget>[
+        Expanded(flex: 4, child: Text('Filename', style: style)),
+        SizedBox(width: 12),
+        Expanded(flex: 3, child: Text('Name', style: style)),
+        SizedBox(width: 12),
+        SizedBox(width: 72, child: Text('Rename', style: style)),
+      ],
+    );
+  }
+}
+
 class _DatasetAliasField extends StatefulWidget {
   const _DatasetAliasField({
     super.key,
     required this.sourceName,
     required this.currentValue,
+    required this.rename,
     required this.onChanged,
+    required this.onRenameChanged,
   });
 
   final String sourceName;
   final String currentValue;
+  final bool rename;
   final ValueChanged<String> onChanged;
+  final void Function(bool rename, String value) onRenameChanged;
 
   @override
   State<_DatasetAliasField> createState() => _DatasetAliasFieldState();
@@ -1797,32 +1839,40 @@ class _DatasetAliasFieldState extends State<_DatasetAliasField> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.black12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            widget.sourceName,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 6),
-          TextField(
+    return Row(
+      children: <Widget>[
+        Expanded(
+          flex: 4,
+          child: Text(widget.sourceName, overflow: TextOverflow.ellipsis),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 3,
+          child: TextField(
             controller: _controller,
+            enabled: widget.rename,
             decoration: const InputDecoration(
-              labelText: 'BrainStory name',
+              hintText: 'Optional name',
               isDense: true,
               border: OutlineInputBorder(),
             ),
             onChanged: widget.onChanged,
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 72,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Checkbox(
+              value: widget.rename,
+              onChanged: (bool? value) {
+                widget.onRenameChanged(value ?? false, _controller.text);
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

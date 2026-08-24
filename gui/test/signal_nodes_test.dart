@@ -672,6 +672,71 @@ void main() {
     expect(runParams!['impedance_line_mode'], 'line');
   });
 
+  testWidgets(
+    'import dialog keeps guidance in help and uses compact controls',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final ImportNodeType nodeType = ImportNodeType();
+      final Dataset dataset = Dataset('/tmp/recording.cnt', label: 'Recording');
+      final Map<String, Dataset> datasets = <String, Dataset>{
+        dataset.id: dataset,
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (BuildContext context) => TextButton(
+                onPressed: () {
+                  showDialog<void>(
+                    context: context,
+                    builder: (_) => nodeType.buildConfigWidget(
+                      Map<String, dynamic>.from(nodeType.defaultParams),
+                      (_) {},
+                      datasets: datasets,
+                      availableDatasetIds: <String>{dataset.id},
+                      datasetSourceLabels: const <String, List<String>>{},
+                      processedDatasetStates: const <String, DatasetState>{},
+                      portStatusSummary: const NodePortStatusSummary(
+                        inputs: <NodePortDatasetSummary>[],
+                        outputs: <NodePortDatasetSummary>[],
+                      ),
+                      processingSteps: const <String>[],
+                    ),
+                  );
+                },
+                child: const Text('Open import'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open import'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Filename'), findsOneWidget);
+      expect(find.text('Name'), findsOneWidget);
+      expect(find.text('Rename'), findsOneWidget);
+      expect(find.textContaining('CSV, TSV'), findsNothing);
+
+      await tester.tap(find.byTooltip('Help'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('CSV, TSV'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Datasets'));
+      await tester.pumpAndSettle();
+      expect(find.text('Unselect all'), findsOneWidget);
+      await tester.tap(find.text('Unselect all'));
+      await tester.pumpAndSettle();
+      expect(find.text('Select all'), findsOneWidget);
+    },
+  );
+
   test('artifact identity and change sets serialize cleanly', () {
     const ArtifactIdentity identity = ArtifactIdentity(
       artifactId: 'artifact-node-2-dataset-1-signal',

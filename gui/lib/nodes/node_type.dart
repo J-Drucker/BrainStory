@@ -256,6 +256,7 @@ class NodeExecutionContext {
 
 abstract class NodeType {
   String get title;
+  String? get helpText => null;
   NodeCategory get category => NodeCategory.other;
   String get subcategory => 'Subcategory 1';
   List<NodePlacement> get additionalPlacements => const <NodePlacement>[];
@@ -319,6 +320,7 @@ abstract class NodeType {
   }) {
     return _NodeConfigDialog(
       title: title,
+      helpText: helpText,
       params: params,
       datasets: datasets,
       availableDatasetIds: availableDatasetIds,
