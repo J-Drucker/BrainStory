@@ -7558,33 +7558,23 @@ class CanvasLogic {
     NodeModel toNode, {
     required int fromPortIndex,
   }) {
-    return _nodeEdgeAnchorFacing(fromNode, toNode);
+    if (_shouldUseVerticalAnchors(fromNode, toNode)) {
+      return Offset(
+        fromNode.position.dx + (_cardWidth / 2),
+        fromNode.position.dy + _cardHeight,
+      );
+    }
+    return Offset(
+      fromNode.position.dx + _cardWidth,
+      fromNode.position.dy + (_cardHeight / 2),
+    );
   }
 
   Offset _inputAnchor(NodeModel fromNode, NodeModel toNode) {
-    return _nodeEdgeAnchorFacing(toNode, fromNode);
-  }
-
-  Offset _nodeEdgeAnchorFacing(NodeModel node, NodeModel target) {
-    final Offset nodeCenter = Offset(
-      node.position.dx + (_cardWidth / 2),
-      node.position.dy + (_cardHeight / 2),
-    );
-    final Offset targetCenter = Offset(
-      target.position.dx + (_cardWidth / 2),
-      target.position.dy + (_cardHeight / 2),
-    );
-    final Offset delta = targetCenter - nodeCenter;
-    if (delta.dx.abs() > delta.dy.abs()) {
-      return Offset(
-        delta.dx >= 0 ? node.position.dx + _cardWidth : node.position.dx,
-        nodeCenter.dy,
-      );
+    if (_shouldUseVerticalAnchors(fromNode, toNode)) {
+      return Offset(toNode.position.dx + (_cardWidth / 2), toNode.position.dy);
     }
-    if (delta.dy >= 0) {
-      return Offset(nodeCenter.dx, node.position.dy + _cardHeight);
-    }
-    return Offset(nodeCenter.dx, node.position.dy);
+    return Offset(toNode.position.dx, toNode.position.dy + (_cardHeight / 2));
   }
 
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {

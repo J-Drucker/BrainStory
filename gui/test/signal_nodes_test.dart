@@ -37,6 +37,7 @@ import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/platform/ant_cnt_import.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/canvas_view.dart';
+import 'package:brainstory_gui/ui/connection_painter.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,6 +54,37 @@ void main() {
     expect(logic.canUndo, isTrue);
     expect(logic.undoLast(), 'add Import');
     expect(logic.nodes, isEmpty);
+  });
+
+  test('connection anchors use vertical flow by default', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(ResampleNodeType());
+    final NodeModel upstream = logic.nodes[0]
+      ..position = const Offset(100, 100);
+    final NodeModel downstream = logic.nodes[1]
+      ..position = const Offset(200, 200);
+    logic.connections.add(<String, dynamic>{
+      'fromNode': upstream.id,
+      'fromPort': 0,
+      'toNode': downstream.id,
+      'toPort': 0,
+    });
+
+    ConnectionPainter painter =
+        (logic.connectionWidgets().single as CustomPaint).painter!
+            as ConnectionPainter;
+    expect(painter.preferVertical, isTrue);
+    expect(painter.start, const Offset(180, 172));
+    expect(painter.end, const Offset(280, 200));
+
+    downstream.position = const Offset(-100, 100);
+    painter =
+        (logic.connectionWidgets().single as CustomPaint).painter!
+            as ConnectionPainter;
+    expect(painter.preferVertical, isFalse);
+    expect(painter.start, const Offset(260, 136));
+    expect(painter.end, const Offset(-100, 136));
   });
 
   test('consecutive channel and marker edits combine into one node', () {
