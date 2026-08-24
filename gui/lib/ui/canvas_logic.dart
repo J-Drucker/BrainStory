@@ -1540,7 +1540,7 @@ class CanvasLogic {
         final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
         final double high = (params['high'] as num?)?.toDouble() ?? 40.0;
         final double steepness =
-            (params['steepness'] as num?)?.toDouble() ?? 0.8;
+            (params['steepness'] as num?)?.toDouble() ?? 0.5;
         final double? notch = (params['notch'] as num?)?.toDouble();
         return 'A bandpass filter ($low-$high Hz, steepness $steepness${notch == null ? '' : ', notch at $notch Hz'}) was applied.';
       case 'PSD':

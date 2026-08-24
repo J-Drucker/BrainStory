@@ -2572,7 +2572,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
             sampleRate: timeSeries.sampleRate,
             lowCutHz: previewLow,
             highCutHz: previewHigh,
-            steepness: 0.8,
+            steepness: 0.5,
           ),
         )
         .toList(growable: false);

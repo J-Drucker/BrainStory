@@ -21,7 +21,7 @@ class BandpassNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => {
     'low': 1.0,
     'high': 40.0,
-    'steepness': 0.8,
+    'steepness': 0.5,
     'notch': null,
   };
 
@@ -46,7 +46,7 @@ class BandpassNodeType extends NodeType {
 
     final double low = (params['low'] as num?)?.toDouble() ?? 1.0;
     final double high = (params['high'] as num?)?.toDouble() ?? 40.0;
-    final double steepness = (params['steepness'] as num?)?.toDouble() ?? 0.8;
+    final double steepness = (params['steepness'] as num?)?.toDouble() ?? 0.5;
     final double? notch = (params['notch'] as num?)?.toDouble();
 
     dataset.ram.putIfAbsent(
@@ -70,10 +70,15 @@ class BandpassNodeType extends NodeType {
           .toList(growable: false),
       sampleRate: sampleRate,
       channelLabels: timeSeries.channelLabels,
+      channelCoordinates: timeSeries.channelCoordinates,
       impedanceData: timeSeries.impedanceData,
       markers: timeSeries.markers,
+      factors: timeSeries.factors,
       source: timeSeries.source,
     );
+    // A filter always operates on the continuous recording. Any inherited
+    // segments refer to the pre-filter signal and must be recreated downstream.
+    dataset.segmentedTimeSeries = null;
     dataset.ram['bandpass.params'] = <String, dynamic>{
       'low': low,
       'high': high,
@@ -90,7 +95,7 @@ class BandpassNodeType extends NodeType {
   }) {
     params.putIfAbsent('low', () => 1.0);
     params.putIfAbsent('high', () => 40.0);
-    params.putIfAbsent('steepness', () => 0.8);
+    params.putIfAbsent('steepness', () => 0.5);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -112,12 +117,11 @@ class BandpassNodeType extends NodeType {
             params['high'] = double.tryParse(value) ?? params['high'];
           },
         ),
-        _BandpassNumberField(
+        _BandpassSteepnessField(
           key: const ValueKey<String>('bandpass-steepness'),
-          label: 'Steepness',
-          value: params['steepness']?.toString() ?? '0.8',
-          onChanged: (String value) {
-            params['steepness'] = double.tryParse(value) ?? params['steepness'];
+          value: (params['steepness'] as num?)?.toDouble() ?? 0.5,
+          onChanged: (double value) {
+            params['steepness'] = value;
           },
         ),
         _BandpassNumberField(
@@ -129,6 +133,47 @@ class BandpassNodeType extends NodeType {
           },
         ),
       ],
+    );
+  }
+}
+
+class _BandpassSteepnessField extends StatelessWidget {
+  const _BandpassSteepnessField({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  double get _normalizedValue {
+    if (value < 0.25) return 0.15;
+    if (value < 0.75) return 0.5;
+    if (value < 0.9) return 0.8;
+    return 1.0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonFormField<double>(
+      initialValue: _normalizedValue,
+      decoration: const InputDecoration(
+        labelText: 'Steepness',
+        helperText: 'Higher orders have sharper cutoffs.',
+      ),
+      items: const <DropdownMenuItem<double>>[
+        DropdownMenuItem<double>(value: 0.15, child: Text('Gentle (order 2)')),
+        DropdownMenuItem<double>(value: 0.5, child: Text('Standard (order 4)')),
+        DropdownMenuItem<double>(value: 0.8, child: Text('Steep (order 6)')),
+        DropdownMenuItem<double>(
+          value: 1.0,
+          child: Text('Very steep (order 8)'),
+        ),
+      ],
+      onChanged: (double? value) {
+        if (value != null) onChanged(value);
+      },
     );
   }
 }
@@ -198,6 +243,15 @@ List<double> applyBandpassFilter(
     return <double>[];
   }
 
+  _validateBandpassParams(
+    input: input,
+    sampleRate: sampleRate,
+    lowCutHz: lowCutHz,
+    highCutHz: highCutHz,
+    steepness: steepness,
+    notchHz: notchHz,
+  );
+
   final List<double>? nativeOutput = applyBandpassFilterNative(
     input,
     sampleRate: sampleRate,
@@ -210,36 +264,142 @@ List<double> applyBandpassFilter(
     return nativeOutput;
   }
 
-  final double nyquist = sampleRate / 2.0;
-  final double normalizedSteepness = steepness.clamp(0.0, 1.0);
-  final double q = 0.6 + (normalizedSteepness * 3.4);
-  List<double> output = List<double>.from(input);
-
-  if (lowCutHz > 0 && lowCutHz < nyquist) {
-    output = _runBiquad(
-      output,
-      _Biquad.highPass(sampleRate: sampleRate, cutoffHz: lowCutHz, q: q),
-    );
-  }
-
-  if (highCutHz > 0 && highCutHz < nyquist) {
-    output = _runBiquad(
-      output,
-      _Biquad.lowPass(sampleRate: sampleRate, cutoffHz: highCutHz, q: q),
-    );
-  }
-
-  if (notchHz != null && notchHz > 0 && notchHz < nyquist) {
-    output = _runBiquad(
-      output,
-      _Biquad.notch(
+  final int order = _butterworthOrder(steepness);
+  final List<_Biquad> sections = <_Biquad>[];
+  if (lowCutHz > 0) {
+    sections.addAll(
+      _butterworthSections(
         sampleRate: sampleRate,
-        centerHz: notchHz,
-        q: math.max(1.0, q),
+        cutoffHz: lowCutHz,
+        order: order,
+        highPass: true,
       ),
     );
   }
+  if (highCutHz > 0) {
+    sections.addAll(
+      _butterworthSections(
+        sampleRate: sampleRate,
+        cutoffHz: highCutHz,
+        order: order,
+        highPass: false,
+      ),
+    );
+  }
+  if (notchHz != null) {
+    final double notchQ = math.max(1.0, 0.6 + (steepness * 3.4));
+    sections.add(
+      _Biquad.notch(sampleRate: sampleRate, centerHz: notchHz, q: notchQ),
+    );
+  }
+  final double slowestFrequency = lowCutHz > 0
+      ? lowCutHz
+      : highCutHz > 0
+      ? highCutHz
+      : notchHz ?? (sampleRate / 2);
+  final int settlingPad = (10 * sampleRate / slowestFrequency).ceil();
+  return _runZeroPhaseFilter(input, sections, settlingPad: settlingPad);
+}
 
+void _validateBandpassParams({
+  required List<double> input,
+  required double sampleRate,
+  required double lowCutHz,
+  required double highCutHz,
+  required double steepness,
+  required double? notchHz,
+}) {
+  final double nyquist = sampleRate / 2.0;
+  if (!sampleRate.isFinite || sampleRate <= 0) {
+    throw ArgumentError.value(sampleRate, 'sampleRate', 'Must be positive.');
+  }
+  if (input.any((double value) => !value.isFinite)) {
+    throw ArgumentError.value(input, 'input', 'Samples must be finite.');
+  }
+  if (!steepness.isFinite || steepness < 0 || steepness > 1) {
+    throw ArgumentError.value(steepness, 'steepness', 'Must be from 0 to 1.');
+  }
+  if (!lowCutHz.isFinite || lowCutHz < 0 || lowCutHz >= nyquist) {
+    throw ArgumentError.value(
+      lowCutHz,
+      'lowCutHz',
+      'Must be zero (disabled) or below Nyquist ($nyquist Hz).',
+    );
+  }
+  if (!highCutHz.isFinite || highCutHz < 0 || highCutHz >= nyquist) {
+    throw ArgumentError.value(
+      highCutHz,
+      'highCutHz',
+      'Must be zero (disabled) or below Nyquist ($nyquist Hz).',
+    );
+  }
+  if (lowCutHz > 0 && highCutHz > 0 && lowCutHz >= highCutHz) {
+    throw ArgumentError('Low cutoff must be lower than high cutoff.');
+  }
+  if (notchHz != null &&
+      (!notchHz.isFinite || notchHz <= 0 || notchHz >= nyquist)) {
+    throw ArgumentError.value(
+      notchHz,
+      'notchHz',
+      'Must be positive and below Nyquist ($nyquist Hz).',
+    );
+  }
+}
+
+int _butterworthOrder(double steepness) {
+  if (steepness < 0.25) return 2;
+  if (steepness < 0.75) return 4;
+  if (steepness < 0.9) return 6;
+  return 8;
+}
+
+List<_Biquad> _butterworthSections({
+  required double sampleRate,
+  required double cutoffHz,
+  required int order,
+  required bool highPass,
+}) {
+  return List<_Biquad>.generate(order ~/ 2, (int sectionIndex) {
+    final int section = (order ~/ 2) - 1 - sectionIndex;
+    final double angle = ((2 * section + 1) * math.pi) / (2 * order);
+    final double q = 1 / (2 * math.sin(angle));
+    return highPass
+        ? _Biquad.highPass(sampleRate: sampleRate, cutoffHz: cutoffHz, q: q)
+        : _Biquad.lowPass(sampleRate: sampleRate, cutoffHz: cutoffHz, q: q);
+  }, growable: false);
+}
+
+List<double> _runZeroPhaseFilter(
+  List<double> input,
+  List<_Biquad> sections, {
+  required int settlingPad,
+}) {
+  if (sections.isEmpty || input.length < 2) return List<double>.from(input);
+  final int padLength = math.min(
+    math.max(sections.length * 6, settlingPad),
+    input.length - 1,
+  );
+  List<double> output = _oddReflectionPad(input, padLength);
+  for (final _Biquad section in sections) {
+    output = _runBiquad(output, section);
+  }
+  output = output.reversed.toList(growable: false);
+  for (final _Biquad section in sections) {
+    output = _runBiquad(output, section);
+  }
+  output = output.reversed.toList(growable: false);
+  return output.sublist(padLength, padLength + input.length);
+}
+
+List<double> _oddReflectionPad(List<double> input, int padLength) {
+  final List<double> output = <double>[];
+  for (int index = padLength; index >= 1; index--) {
+    output.add((2 * input.first) - input[index]);
+  }
+  output.addAll(input);
+  for (int index = 1; index <= padLength; index++) {
+    output.add((2 * input.last) - input[input.length - 1 - index]);
+  }
   return output;
 }
 
