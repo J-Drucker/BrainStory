@@ -3,6 +3,7 @@ import 'dataset.dart';
 
 class DatasetArtifactSnapshot {
   const DatasetArtifactSnapshot({
+    this.datasetLabel,
     this.timeSeries,
     this.segmentedTimeSeries,
     this.spectrum,
@@ -12,10 +13,12 @@ class DatasetArtifactSnapshot {
     this.timeFrequency,
     this.matrixTransformation,
     this.markers,
-    this.artifactIdentities = const <BrainStoryArtifactKind, ArtifactIdentity>{},
+    this.artifactIdentities =
+        const <BrainStoryArtifactKind, ArtifactIdentity>{},
     this.includedKinds,
   });
 
+  final String? datasetLabel;
   final TimeSeriesData? timeSeries;
   final SegmentedTimeSeriesData? segmentedTimeSeries;
   final FrequencySpectrumData? spectrum;
@@ -52,51 +55,66 @@ class DatasetArtifactSnapshot {
         ? null
         : Set<BrainStoryArtifactKind>.from(includedKinds);
     return DatasetArtifactSnapshot(
-      timeSeries: (kinds != null && !kinds.contains(BrainStoryArtifactKind.timeSeries)) ||
+      datasetLabel: dataset.label,
+      timeSeries:
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.timeSeries)) ||
               dataset.timeSeries == null
           ? null
           : TimeSeriesData.fromJson(dataset.timeSeries!.toJson()),
       segmentedTimeSeries:
-          (kinds != null && !kinds.contains(BrainStoryArtifactKind.segmentedTimeSeries)) ||
-                  dataset.segmentedTimeSeries == null
+          (kinds != null &&
+                  !kinds.contains(
+                    BrainStoryArtifactKind.segmentedTimeSeries,
+                  )) ||
+              dataset.segmentedTimeSeries == null
           ? null
           : SegmentedTimeSeriesData.fromJson(
               dataset.segmentedTimeSeries!.toJson(),
             ),
-      spectrum: (kinds != null && !kinds.contains(BrainStoryArtifactKind.spectrum)) ||
+      spectrum:
+          (kinds != null && !kinds.contains(BrainStoryArtifactKind.spectrum)) ||
               dataset.spectrum == null
           ? null
           : FrequencySpectrumData.fromJson(dataset.spectrum!.toJson()),
       fooofResult:
-          (kinds != null && !kinds.contains(BrainStoryArtifactKind.fooofResult)) ||
-                  dataset.fooofResult == null
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.fooofResult)) ||
+              dataset.fooofResult == null
           ? null
           : FooofResultData.fromJson(dataset.fooofResult!.toJson()),
       featureTable:
-          (kinds != null && !kinds.contains(BrainStoryArtifactKind.featureTable)) ||
-                  dataset.featureTable == null
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.featureTable)) ||
+              dataset.featureTable == null
           ? null
           : FeatureTableData.fromJson(dataset.featureTable!.toJson()),
       bridgeDetection:
-          (kinds != null && !kinds.contains(BrainStoryArtifactKind.bridgeDetection)) ||
-                  dataset.bridgeDetection == null
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.bridgeDetection)) ||
+              dataset.bridgeDetection == null
           ? null
           : BridgeDetectionData.fromJson(dataset.bridgeDetection!.toJson()),
       timeFrequency:
-          (kinds != null && !kinds.contains(BrainStoryArtifactKind.timeFrequency)) ||
-                  dataset.timeFrequency == null
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.timeFrequency)) ||
+              dataset.timeFrequency == null
           ? null
           : TimeFrequencyData.fromJson(dataset.timeFrequency!.toJson()),
       matrixTransformation:
           (kinds != null &&
-                      !kinds.contains(BrainStoryArtifactKind.matrixTransformation)) ||
-                  dataset.matrixTransformation == null
+                  !kinds.contains(
+                    BrainStoryArtifactKind.matrixTransformation,
+                  )) ||
+              dataset.matrixTransformation == null
           ? null
           : MatrixTransformationData.fromJson(
               dataset.matrixTransformation!.toJson(),
             ),
       markers: (kinds != null && kinds.contains(BrainStoryArtifactKind.markers))
-          ? List<TimeMarker>.from(dataset.timeSeries?.markers ?? const <TimeMarker>[])
+          ? List<TimeMarker>.from(
+              dataset.timeSeries?.markers ?? const <TimeMarker>[],
+            )
           : null,
       artifactIdentities: kinds == null
           ? dataset.artifactIdentities
@@ -111,6 +129,9 @@ class DatasetArtifactSnapshot {
   }
 
   void applyToDataset(Dataset dataset) {
+    if (datasetLabel != null) {
+      dataset.label = datasetLabel!;
+    }
     if (ownsKind(BrainStoryArtifactKind.timeSeries)) {
       dataset.timeSeries = timeSeries == null
           ? null
@@ -166,8 +187,8 @@ class DatasetArtifactSnapshot {
     } else {
       final Map<BrainStoryArtifactKind, ArtifactIdentity> nextIdentities =
           Map<BrainStoryArtifactKind, ArtifactIdentity>.from(
-        dataset.artifactIdentities,
-      );
+            dataset.artifactIdentities,
+          );
       for (final BrainStoryArtifactKind kind in includedKinds!) {
         final ArtifactIdentity? identity = artifactIdentities[kind];
         if (identity == null) {
@@ -182,6 +203,7 @@ class DatasetArtifactSnapshot {
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
+      if (datasetLabel != null) 'datasetLabel': datasetLabel,
       if (timeSeries != null) 'timeSeries': timeSeries!.toJson(),
       if (segmentedTimeSeries != null)
         'segmentedTimeSeries': segmentedTimeSeries!.toJson(),
@@ -193,21 +215,24 @@ class DatasetArtifactSnapshot {
       if (matrixTransformation != null)
         'matrixTransformation': matrixTransformation!.toJson(),
       if (markers != null)
-        'markers':
-            markers!.map((TimeMarker marker) => marker.toJson()).toList(),
+        'markers': markers!
+            .map((TimeMarker marker) => marker.toJson())
+            .toList(),
       if (artifactIdentities.isNotEmpty)
         'artifactIdentities': artifactIdentities.map(
           (BrainStoryArtifactKind key, ArtifactIdentity value) =>
               MapEntry<String, dynamic>(key.name, value.toJson()),
         ),
       if (includedKinds != null)
-        'includedKinds':
-            includedKinds!.map((BrainStoryArtifactKind kind) => kind.name).toList(),
+        'includedKinds': includedKinds!
+            .map((BrainStoryArtifactKind kind) => kind.name)
+            .toList(),
     };
   }
 
   static DatasetArtifactSnapshot fromJson(Map<String, dynamic> json) {
     return DatasetArtifactSnapshot(
+      datasetLabel: json['datasetLabel']?.toString(),
       timeSeries: json['timeSeries'] is Map<String, dynamic>
           ? TimeSeriesData.fromJson(json['timeSeries'] as Map<String, dynamic>)
           : null,
@@ -217,13 +242,19 @@ class DatasetArtifactSnapshot {
             )
           : null,
       spectrum: json['spectrum'] is Map<String, dynamic>
-          ? FrequencySpectrumData.fromJson(json['spectrum'] as Map<String, dynamic>)
+          ? FrequencySpectrumData.fromJson(
+              json['spectrum'] as Map<String, dynamic>,
+            )
           : null,
       fooofResult: json['fooofResult'] is Map<String, dynamic>
-          ? FooofResultData.fromJson(json['fooofResult'] as Map<String, dynamic>)
+          ? FooofResultData.fromJson(
+              json['fooofResult'] as Map<String, dynamic>,
+            )
           : null,
       featureTable: json['featureTable'] is Map<String, dynamic>
-          ? FeatureTableData.fromJson(json['featureTable'] as Map<String, dynamic>)
+          ? FeatureTableData.fromJson(
+              json['featureTable'] as Map<String, dynamic>,
+            )
           : null,
       bridgeDetection: json['bridgeDetection'] is Map<String, dynamic>
           ? BridgeDetectionData.fromJson(
@@ -242,34 +273,55 @@ class DatasetArtifactSnapshot {
           : null,
       markers: json['markers'] is List
           ? (json['markers'] as List<dynamic>)
-              .map(
-                (dynamic value) => TimeMarker.fromJson(
-                  Map<String, dynamic>.from(
-                    value as Map? ?? const <String, dynamic>{},
+                .map(
+                  (dynamic value) => TimeMarker.fromJson(
+                    Map<String, dynamic>.from(
+                      value as Map? ?? const <String, dynamic>{},
+                    ),
                   ),
-                ),
-              )
-              .toList(growable: false)
+                )
+                .toList(growable: false)
           : null,
       artifactIdentities:
           (json['artifactIdentities'] as Map? ?? const <String, dynamic>{})
-              .map<BrainStoryArtifactKind, ArtifactIdentity>(
-        (dynamic key, dynamic value) {
-          return MapEntry<BrainStoryArtifactKind, ArtifactIdentity>(
-            artifactKindFromWireValue(key.toString()),
-            ArtifactIdentity.fromJson(
-              Map<String, dynamic>.from(
-                value as Map? ?? const <String, dynamic>{},
-              ),
-            ),
-          );
-        },
-      ),
+              .map<BrainStoryArtifactKind, ArtifactIdentity>((
+                dynamic key,
+                dynamic value,
+              ) {
+                return MapEntry<BrainStoryArtifactKind, ArtifactIdentity>(
+                  artifactKindFromWireValue(key.toString()),
+                  ArtifactIdentity.fromJson(
+                    Map<String, dynamic>.from(
+                      value as Map? ?? const <String, dynamic>{},
+                    ),
+                  ),
+                );
+              }),
       includedKinds: json['includedKinds'] is List
           ? (json['includedKinds'] as List<dynamic>)
-              .map((dynamic value) => artifactKindFromWireValue(value.toString()))
-              .toSet()
+                .map(
+                  (dynamic value) =>
+                      artifactKindFromWireValue(value.toString()),
+                )
+                .toSet()
           : null,
+    );
+  }
+
+  DatasetArtifactSnapshot withDatasetLabel(String label) {
+    return DatasetArtifactSnapshot(
+      datasetLabel: label,
+      timeSeries: timeSeries,
+      segmentedTimeSeries: segmentedTimeSeries,
+      spectrum: spectrum,
+      fooofResult: fooofResult,
+      featureTable: featureTable,
+      bridgeDetection: bridgeDetection,
+      timeFrequency: timeFrequency,
+      matrixTransformation: matrixTransformation,
+      markers: markers,
+      artifactIdentities: artifactIdentities,
+      includedKinds: includedKinds,
     );
   }
 }

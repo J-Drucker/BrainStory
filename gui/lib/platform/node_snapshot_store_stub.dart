@@ -5,10 +5,25 @@ Future<String> saveNodeSnapshotJson({
   required String datasetId,
   required String jsonPayload,
 }) {
-  throw UnsupportedError('Node snapshot disk storage is not available on this platform.');
+  throw UnsupportedError(
+    'Node snapshot disk storage is not available on this platform.',
+  );
 }
 
 Future<String?> loadNodeSnapshotJson({
+  required String nodeId,
+  required String datasetId,
+}) async {
+  return null;
+}
+
+void saveNodeSnapshotMetadataJsonSync({
+  required String nodeId,
+  required String datasetId,
+  required String jsonPayload,
+}) {}
+
+Future<String?> loadNodeSnapshotMetadataJson({
   required String nodeId,
   required String datasetId,
 }) async {

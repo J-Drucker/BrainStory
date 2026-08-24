@@ -938,39 +938,8 @@ dynamic _deepCloneJsonValue(dynamic value) {
   return value;
 }
 
-bool _jsonValuesEqual(dynamic left, dynamic right) {
-  if (identical(left, right) || left == right) {
-    return true;
-  }
-  if (left is Map && right is Map) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (final dynamic key in left.keys) {
-      if (!right.containsKey(key) || !_jsonValuesEqual(left[key], right[key])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  if (left is List && right is List) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (int index = 0; index < left.length; index++) {
-      if (!_jsonValuesEqual(left[index], right[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return false;
-}
-
 class CanvasLogic {
   static const String _lastRunParamsByDatasetKey = '_lastRunParamsByDataset';
-  static const String _importMetadataOnlyDatasetIdsKey =
-      '_importMetadataOnlyDatasetIds';
 
   CanvasLogic({this.runUiYieldsEnabled = true});
 
@@ -2057,27 +2026,6 @@ class CanvasLogic {
     );
   }
 
-  bool _importComputationParamsEqual(
-    Map<String, dynamic> previous,
-    Map<String, dynamic> next,
-  ) {
-    Map<String, dynamic> computationParams(Map<String, dynamic> params) {
-      final Map<String, dynamic> result = _deepCloneJsonMap(
-        _exportableNodeParams(params),
-      );
-      result
-        ..remove('datasetAliases')
-        ..remove('selectedDatasetIds')
-        ..remove('storagePolicy');
-      return result;
-    }
-
-    return _jsonValuesEqual(
-      computationParams(previous),
-      computationParams(next),
-    );
-  }
-
   void importProjectJson(Map<String, dynamic> jsonMap) {
     clearAll(recordUndo: false);
     datasets.clear();
@@ -3156,30 +3104,11 @@ class CanvasLogic {
     final Set<String> previousAvailableDatasetIds = _availableDatasetIdsForNode(
       node,
     );
-    final Map<String, String> previousImportLabels = node.type is ImportNodeType
-        ? <String, String>{
-            for (final Dataset dataset in datasets.values)
-              dataset.id: ImportNodeType.resolvedDatasetLabel(
-                previousParams,
-                dataset,
-              ),
-          }
-        : const <String, String>{};
     final Map<String, dynamic> nextParams = Map<String, dynamic>.from(params);
     for (final MapEntry<String, dynamic> entry in node.params.entries) {
       if (entry.key.startsWith('_')) {
         nextParams[entry.key] = entry.value;
       }
-    }
-    final bool importComputationUnchanged =
-        node.type is ImportNodeType &&
-        _importComputationParamsEqual(previousParams, nextParams);
-    final Set<String> metadataOnlyImportDatasetIds = Set<String>.from(
-      previousParams[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
-          const <dynamic>[],
-    );
-    if (!importComputationUnchanged) {
-      metadataOnlyImportDatasetIds.clear();
     }
     node.params = nextParams;
     if (node.type is ImportNodeType) {
@@ -3187,58 +3116,64 @@ class CanvasLogic {
     }
     final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
     for (final Dataset dataset in datasets.values) {
+      final NodeParameterChangeImpact impact = node.type.parameterChangeImpact(
+        previousParams,
+        nextParams,
+        dataset,
+      );
+      if (impact == NodeParameterChangeImpact.metadataOnly) {
+        node.type.applyMetadataOnlyParams(previousParams, nextParams, dataset);
+        _propagateDatasetMetadata(dataset);
+      }
+
       if (!availableDatasetIds.contains(dataset.id)) {
         node.datasetStates[dataset.id] = DatasetState.notReady;
-        metadataOnlyImportDatasetIds.remove(dataset.id);
         continue;
       }
-
-      if (node.type is ImportNodeType && importComputationUnchanged) {
-        final DatasetState currentState =
-            node.datasetStates[dataset.id] ?? DatasetState.notReady;
-        if (!previousAvailableDatasetIds.contains(dataset.id) ||
-            currentState == DatasetState.notReady) {
-          node.datasetStates[dataset.id] = DatasetState.ready;
-          metadataOnlyImportDatasetIds.remove(dataset.id);
-          continue;
-        }
-
-        final String previousLabel =
-            previousImportLabels[dataset.id] ?? dataset.label;
-        final String nextLabel = ImportNodeType.resolvedDatasetLabel(
-          node.params,
-          dataset,
-        );
-        if (previousLabel != nextLabel) {
-          if (currentState == DatasetState.done ||
-              metadataOnlyImportDatasetIds.contains(dataset.id)) {
-            node.datasetStates[dataset.id] = DatasetState.stale;
-            metadataOnlyImportDatasetIds.add(dataset.id);
-            continue;
-          }
-          metadataOnlyImportDatasetIds.remove(dataset.id);
-          node.datasetStates[dataset.id] = DatasetState.stale;
-          _markImmediateChildrenStale(node.id, dataset.id);
-          continue;
-        }
-
-        // Selection order and storage policy do not change imported samples.
+      final DatasetState currentState =
+          node.datasetStates[dataset.id] ?? DatasetState.notReady;
+      if (!previousAvailableDatasetIds.contains(dataset.id) ||
+          currentState == DatasetState.notReady) {
+        node.datasetStates[dataset.id] = DatasetState.ready;
         continue;
       }
-
-      metadataOnlyImportDatasetIds.remove(dataset.id);
-      node.datasetStates[dataset.id] = DatasetState.stale;
-      _markImmediateChildrenStale(node.id, dataset.id);
-    }
-    if (node.type is ImportNodeType) {
-      if (metadataOnlyImportDatasetIds.isEmpty) {
-        node.params.remove(_importMetadataOnlyDatasetIdsKey);
-      } else {
-        node.params[_importMetadataOnlyDatasetIdsKey] =
-            metadataOnlyImportDatasetIds.toList(growable: false);
+      if (impact == NodeParameterChangeImpact.computation) {
+        node.datasetStates[dataset.id] = DatasetState.stale;
+        _markImmediateChildrenStale(node.id, dataset.id);
       }
     }
     update();
+  }
+
+  void _propagateDatasetMetadata(Dataset dataset) {
+    for (final Map<String, DatasetArtifactSnapshot> snapshots
+        in _nodeRamSnapshots.values) {
+      final DatasetArtifactSnapshot? snapshot = snapshots[dataset.id];
+      if (snapshot != null) {
+        snapshots[dataset.id] = snapshot.withDatasetLabel(dataset.label);
+      }
+    }
+    if (!supportsNodeSnapshotDiskStore) {
+      return;
+    }
+    final String metadataJson = jsonEncode(<String, dynamic>{
+      'datasetLabel': dataset.label,
+    });
+    for (final MapEntry<String, Set<String>> entry
+        in _nodeDiskSnapshotIds.entries) {
+      if (!entry.value.contains(dataset.id)) {
+        continue;
+      }
+      try {
+        saveNodeSnapshotMetadataJsonSync(
+          nodeId: entry.key,
+          datasetId: dataset.id,
+          jsonPayload: metadataJson,
+        );
+      } catch (_) {
+        // The in-memory rename remains valid if a cache sidecar is unavailable.
+      }
+    }
   }
 
   @visibleForTesting
@@ -4455,48 +4390,38 @@ class CanvasLogic {
         try {
           dataset.ram.remove('artifact.lastChangeSet');
           await _restoreUpstreamInputForRun(node, dataset);
-          final bool metadataOnlyImportRun =
-              wasStale &&
-              await _canApplyImportMetadataWithoutReload(node, dataset);
-          if (wasStale && !metadataOnlyImportRun) {
+          if (wasStale) {
             await _restoreStaleNodeOutputForRun(node, dataset);
           }
           final List<String> sourceArtifactIds = node.type is ImportNodeType
               ? const <String>[]
               : _sourceArtifactIdsForDataset(dataset);
           await setRunDetail(
-            metadataOnlyImportRun
-                ? 'Updating imported artifact name to ${dataset.label}...'
-                : 'Running ${node.title} on ${dataset.label} (${processingResponsiveness.value.label}, ${node.type.executionChunkingStrategy})...',
+            'Running ${node.title} on ${dataset.label} (${processingResponsiveness.value.label}, ${node.type.executionChunkingStrategy})...',
             phase: RunActivityPhase.running,
           );
-          if (!metadataOnlyImportRun) {
-            await node.type.runChunked(
-              dataset,
-              node.params,
-              NodeExecutionContext(
-                setProgress: (String detail) =>
-                    setRunDetailQuiet(detail, phase: RunActivityPhase.running),
-                yieldIfNeeded: _executionChunkBoundary,
-              ),
-            );
-          }
+          await node.type.runChunked(
+            dataset,
+            node.params,
+            NodeExecutionContext(
+              setProgress: (String detail) =>
+                  setRunDetailQuiet(detail, phase: RunActivityPhase.running),
+              yieldIfNeeded: _executionChunkBoundary,
+            ),
+          );
           node.datasetStates[dataset.id] = DatasetState.done;
           _rememberLastRunParams(node, dataset.id);
-          _clearPendingImportMetadataUpdate(node, dataset.id);
-          if (!metadataOnlyImportRun) {
-            await _materializeNodeOutput(
-              node,
-              dataset,
-              sourceArtifactIds: sourceArtifactIds,
-              keepRamSnapshot: dataset.id == hotDatasetId,
-            );
-            _markImmediateChildrenStale(
-              node.id,
-              dataset.id,
-              changeSet: _takeLastChangeSet(dataset),
-            );
-          }
+          await _materializeNodeOutput(
+            node,
+            dataset,
+            sourceArtifactIds: sourceArtifactIds,
+            keepRamSnapshot: dataset.id == hotDatasetId,
+          );
+          _markImmediateChildrenStale(
+            node.id,
+            dataset.id,
+            changeSet: _takeLastChangeSet(dataset),
+          );
         } catch (_) {
           node.datasetStates[dataset.id] =
               _availableDatasetIdsForNode(node).contains(dataset.id)
@@ -5030,6 +4955,13 @@ class CanvasLogic {
       return true;
     }
     if (changeSet.changeTypes.isEmpty) {
+      return false;
+    }
+    if (changeSet.changeTypes.every(
+      (ArtifactChangeType type) =>
+          type == ArtifactChangeType.datasetMetadata ||
+          type == ArtifactChangeType.storage,
+    )) {
       return false;
     }
 
@@ -5591,6 +5523,7 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: jsonEncode(snapshot.toJson()),
       );
+      _saveSnapshotMetadata(node.id, dataset);
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
@@ -5676,50 +5609,6 @@ class CanvasLogic {
         .where((String id) => id.trim().isNotEmpty)
         .toSet()
         .toList(growable: false);
-  }
-
-  Future<bool> _canApplyImportMetadataWithoutReload(
-    NodeModel node,
-    Dataset dataset,
-  ) async {
-    if (node.type is! ImportNodeType) {
-      return false;
-    }
-    final Set<String> pendingDatasetIds = Set<String>.from(
-      node.params[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
-          const <dynamic>[],
-    );
-    if (!pendingDatasetIds.contains(dataset.id)) {
-      return false;
-    }
-    if (dataset.timeSeries != null ||
-        _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true ||
-        _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true) {
-      return true;
-    }
-    if (!supportsNodeSnapshotDiskStore ||
-        !await hasNodeSnapshotOnDisk(nodeId: node.id, datasetId: dataset.id)) {
-      return false;
-    }
-    _nodeDiskSnapshotIds.putIfAbsent(node.id, () => <String>{}).add(dataset.id);
-    return true;
-  }
-
-  void _clearPendingImportMetadataUpdate(NodeModel node, String datasetId) {
-    if (node.type is! ImportNodeType) {
-      return;
-    }
-    final Set<String> pendingDatasetIds = Set<String>.from(
-      node.params[_importMetadataOnlyDatasetIdsKey] as List<dynamic>? ??
-          const <dynamic>[],
-    )..remove(datasetId);
-    if (pendingDatasetIds.isEmpty) {
-      node.params.remove(_importMetadataOnlyDatasetIdsKey);
-    } else {
-      node.params[_importMetadataOnlyDatasetIdsKey] = pendingDatasetIds.toList(
-        growable: false,
-      );
-    }
   }
 
   void _rememberLastRunParams(NodeModel node, String datasetId) {
@@ -6135,6 +6024,7 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: jsonEncode(snapshot.toJson()),
       );
+      _saveSnapshotMetadata(node.id, dataset);
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
@@ -6173,9 +6063,12 @@ class CanvasLogic {
       final Map<String, dynamic> decoded = Map<String, dynamic>.from(
         jsonDecode(jsonPayload) as Map,
       );
-      final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
-        decoded,
-      );
+      final DatasetArtifactSnapshot snapshot =
+          await _applyStoredSnapshotMetadata(
+            node.id,
+            dataset.id,
+            DatasetArtifactSnapshot.fromJson(decoded),
+          );
       if (snapshot.isEmpty) {
         continue;
       }
@@ -6498,6 +6391,7 @@ class CanvasLogic {
               },
         )..remove(BrainStoryArtifactKind.segmentedTimeSeries);
     return DatasetArtifactSnapshot(
+      datasetLabel: snapshot.datasetLabel,
       timeSeries: snapshot.timeSeries,
       spectrum: snapshot.spectrum,
       fooofResult: snapshot.fooofResult,
@@ -6534,6 +6428,7 @@ class CanvasLogic {
       return snapshot;
     }
     return DatasetArtifactSnapshot(
+      datasetLabel: snapshot.datasetLabel,
       timeSeries: kinds.contains(BrainStoryArtifactKind.timeSeries)
           ? snapshot.timeSeries
           : null,
@@ -6601,8 +6496,10 @@ class CanvasLogic {
     final Map<String, dynamic> decoded = Map<String, dynamic>.from(
       jsonDecode(jsonPayload) as Map,
     );
-    final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
-      decoded,
+    final DatasetArtifactSnapshot snapshot = await _applyStoredSnapshotMetadata(
+      nodeId,
+      datasetId,
+      DatasetArtifactSnapshot.fromJson(decoded),
     );
     if (snapshot.isEmpty) {
       return null;
@@ -6613,6 +6510,37 @@ class CanvasLogic {
       () => <String, DatasetArtifactSnapshot>{},
     )[datasetId] = snapshot;
     return snapshot;
+  }
+
+  void _saveSnapshotMetadata(String nodeId, Dataset dataset) {
+    saveNodeSnapshotMetadataJsonSync(
+      nodeId: nodeId,
+      datasetId: dataset.id,
+      jsonPayload: jsonEncode(<String, dynamic>{'datasetLabel': dataset.label}),
+    );
+  }
+
+  Future<DatasetArtifactSnapshot> _applyStoredSnapshotMetadata(
+    String nodeId,
+    String datasetId,
+    DatasetArtifactSnapshot snapshot,
+  ) async {
+    final String? metadataJson = await loadNodeSnapshotMetadataJson(
+      nodeId: nodeId,
+      datasetId: datasetId,
+    );
+    if (metadataJson == null || metadataJson.trim().isEmpty) {
+      return snapshot;
+    }
+    try {
+      final Map<String, dynamic> metadata = Map<String, dynamic>.from(
+        jsonDecode(metadataJson) as Map,
+      );
+      final String? label = metadata['datasetLabel']?.toString();
+      return label == null ? snapshot : snapshot.withDatasetLabel(label);
+    } catch (_) {
+      return snapshot;
+    }
   }
 
   Future<void> _refreshDiskSnapshotFlagsForLoadedProject() async {

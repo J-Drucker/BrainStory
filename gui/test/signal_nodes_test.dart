@@ -1077,6 +1077,11 @@ void main() {
         BrainStoryArtifactKind.timeSeries,
       )!;
       consumerNode.datasetStates[dataset.id] = DatasetState.done;
+      await logic.releaseNodeActiveMemoryForTest(importNode, <String>{
+        dataset.id,
+      });
+      importNode.datasetStates[dataset.id] = DatasetState.done;
+      consumerNode.datasetStates[dataset.id] = DatasetState.done;
 
       final Map<String, dynamic> renamedParams = Map<String, dynamic>.from(
         importNode.params,
@@ -1087,7 +1092,7 @@ void main() {
       logic.applyNodeParamsForTest(importNode, renamedParams);
 
       expect(dataset.label, 'Renamed recording');
-      expect(importNode.datasetStates[dataset.id], DatasetState.stale);
+      expect(importNode.datasetStates[dataset.id], DatasetState.done);
       expect(consumerNode.datasetStates[dataset.id], DatasetState.done);
 
       dataset
@@ -1099,7 +1104,7 @@ void main() {
 
       expect(importNode.datasetStates[dataset.id], DatasetState.done);
       expect(consumerNode.datasetStates[dataset.id], DatasetState.done);
-      expect(dataset.timeSeries, isNull);
+      expect(dataset.timeSeries!.primaryChannel, <double>[1, 2, 3]);
       final Dataset cachedView = await logic.materializedDatasetViewForNode(
         importNode.id,
         dataset,

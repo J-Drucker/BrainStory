@@ -32,6 +32,7 @@ BrainStoryArtifactKind artifactKindFromWireValue(String? wireValue) {
 enum ArtifactChangeType {
   signalSamples,
   markers,
+  datasetMetadata,
   channelLabels,
   channelTopology,
   channelCoordinates,
@@ -140,6 +141,8 @@ class ArtifactChangeSet {
   bool get touchesSamples =>
       changeTypes.contains(ArtifactChangeType.signalSamples);
   bool get touchesMarkers => changeTypes.contains(ArtifactChangeType.markers);
+  bool get touchesDatasetMetadata =>
+      changeTypes.contains(ArtifactChangeType.datasetMetadata);
   bool get touchesChannelTopology =>
       changeTypes.contains(ArtifactChangeType.channelTopology);
   bool get touchesChannelLabels =>

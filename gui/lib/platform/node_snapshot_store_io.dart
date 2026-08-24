@@ -24,6 +24,27 @@ Future<String?> loadNodeSnapshotJson({
   return file.readAsString();
 }
 
+void saveNodeSnapshotMetadataJsonSync({
+  required String nodeId,
+  required String datasetId,
+  required String jsonPayload,
+}) {
+  final File file = _snapshotMetadataFile(nodeId: nodeId, datasetId: datasetId);
+  file.parent.createSync(recursive: true);
+  file.writeAsStringSync(jsonPayload, flush: true);
+}
+
+Future<String?> loadNodeSnapshotMetadataJson({
+  required String nodeId,
+  required String datasetId,
+}) async {
+  final File file = _snapshotMetadataFile(nodeId: nodeId, datasetId: datasetId);
+  if (!await file.exists()) {
+    return null;
+  }
+  return file.readAsString();
+}
+
 Future<bool> hasNodeSnapshotOnDisk({
   required String nodeId,
   required String datasetId,
@@ -39,6 +60,13 @@ Future<void> deleteNodeSnapshotFromDisk({
   if (await file.exists()) {
     await file.delete();
   }
+  final File metadataFile = _snapshotMetadataFile(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
+  if (await metadataFile.exists()) {
+    await metadataFile.delete();
+  }
 }
 
 File _snapshotFile({required String nodeId, required String datasetId}) {
@@ -47,6 +75,14 @@ File _snapshotFile({required String nodeId, required String datasetId}) {
     _joinPath(<String>[root.path, 'nodes', nodeId]),
   );
   return File(_joinPath(<String>[nodeDir.path, '$datasetId.json']));
+}
+
+File _snapshotMetadataFile({
+  required String nodeId,
+  required String datasetId,
+}) {
+  final File snapshot = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  return File('${snapshot.path}.metadata');
 }
 
 Directory _cacheRoot() {

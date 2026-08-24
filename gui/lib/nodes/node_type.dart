@@ -28,6 +28,8 @@ enum NodeStoragePolicy {
   onDemand,
 }
 
+enum NodeParameterChangeImpact { none, metadataOnly, computation }
+
 extension NodeCategoryPresentation on NodeCategory {
   String get label {
     switch (this) {
@@ -298,6 +300,24 @@ abstract class NodeType {
   List<PortSpec> get inputs;
   List<PortSpec> get outputs;
 
+  NodeParameterChangeImpact parameterChangeImpact(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {
+    final Map<String, dynamic> previous = _executionParams(previousParams);
+    final Map<String, dynamic> next = _executionParams(nextParams);
+    return _nodeParamValuesEqual(previous, next)
+        ? NodeParameterChangeImpact.none
+        : NodeParameterChangeImpact.computation;
+  }
+
+  void applyMetadataOnlyParams(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {}
+
   Widget buildBody(
     Map<String, dynamic> params, {
     required Map<String, Dataset> datasets,
@@ -346,6 +366,46 @@ abstract class NodeType {
   ) {
     return run(dataset, params);
   }
+}
+
+Map<String, dynamic> _executionParams(Map<String, dynamic> params) {
+  return <String, dynamic>{
+    for (final MapEntry<String, dynamic> entry in params.entries)
+      if (!entry.key.startsWith('_') &&
+          entry.key != 'selectedDatasetIds' &&
+          entry.key != 'storagePolicy')
+        entry.key: entry.value,
+  };
+}
+
+bool _nodeParamValuesEqual(dynamic left, dynamic right) {
+  if (identical(left, right) || left == right) {
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (final dynamic key in left.keys) {
+      if (!right.containsKey(key) ||
+          !_nodeParamValuesEqual(left[key], right[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (int index = 0; index < left.length; index++) {
+      if (!_nodeParamValuesEqual(left[index], right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
 }
 
 class NodeParamTextField extends StatefulWidget {

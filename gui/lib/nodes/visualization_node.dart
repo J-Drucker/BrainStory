@@ -31,11 +31,18 @@ class VisualizationNodeType extends NodeType {
   List<PortSpec> get outputs => const [];
 
   @override
+  NodeParameterChangeImpact parameterChangeImpact(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) => NodeParameterChangeImpact.none;
+
+  @override
   Widget buildBody(
-      Map<String, dynamic> params, {
-        required Map<String, Dataset> datasets,
-        required void Function(void Function()) setState,
-      }) {
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
     params.putIfAbsent('backend', () => 'mne');
     params.putIfAbsent('window_sec', () => 5.0);
     params.putIfAbsent('channel', () => 'all');
@@ -62,10 +69,7 @@ class VisualizationNodeType extends NodeType {
           style: TextStyle(color: Colors.black54),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Display',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
+        const Text('Display', style: TextStyle(fontWeight: FontWeight.w600)),
         RadioGroup<String>(
           groupValue: params['display_mode']?.toString() ?? 'panel',
           onChanged: (String? value) {

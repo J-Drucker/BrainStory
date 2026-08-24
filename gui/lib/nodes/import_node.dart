@@ -74,6 +74,39 @@ class ImportNodeType extends NodeType {
   ];
 
   @override
+  NodeParameterChangeImpact parameterChangeImpact(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {
+    final Map<String, dynamic> previousComputationParams =
+        Map<String, dynamic>.from(previousParams)..remove('datasetAliases');
+    final Map<String, dynamic> nextComputationParams =
+        Map<String, dynamic>.from(nextParams)..remove('datasetAliases');
+    if (super.parameterChangeImpact(
+          previousComputationParams,
+          nextComputationParams,
+          dataset,
+        ) ==
+        NodeParameterChangeImpact.computation) {
+      return NodeParameterChangeImpact.computation;
+    }
+    return resolvedDatasetLabel(previousParams, dataset) ==
+            resolvedDatasetLabel(nextParams, dataset)
+        ? NodeParameterChangeImpact.none
+        : NodeParameterChangeImpact.metadataOnly;
+  }
+
+  @override
+  void applyMetadataOnlyParams(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {
+    dataset.label = resolvedDatasetLabel(nextParams, dataset);
+  }
+
+  @override
   Widget buildBody(
     Map<String, dynamic> params, {
     required Map<String, Dataset> datasets,
