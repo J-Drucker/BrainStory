@@ -7,6 +7,7 @@ import 'edit_channels_and_markers_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
 import 'impedances_node.dart';
+import 'ica_component_rejection_node.dart';
 import 'machine_learning_nodes.dart';
 import 'multimodal_nodes.dart';
 import 'psd_node.dart';
@@ -122,6 +123,10 @@ class NodeRegistry {
       visible: false,
     ),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => ICANodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => IcaComponentRejectionNodeType(),
+    ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => EigenvalueDecompositionNodeType(),

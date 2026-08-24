@@ -13,6 +13,7 @@ import '../nodes/sleep_staging_node.dart';
 import '../nodes/edit_channels_node.dart';
 import 'canvas_logic.dart';
 import 'channel_positions_dialog.dart';
+import 'ica_viewer.dart';
 import 'raw_signal_browser.dart';
 
 class VisualizationPanel extends StatelessWidget {
@@ -255,6 +256,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                         .visualizationViewForNodeAndDatasets(node, datasets);
                     final bool needsActiveDatasetPicker =
                         (view == 'raw' ||
+                            view == 'ica' ||
                             view == 'segments' ||
                             view == 'hypnogram' ||
                             view == 'bridge') &&
@@ -475,6 +477,28 @@ class _VisualizationChart extends StatelessWidget {
         dataset: activeDataset,
         params: params,
         onChanged: onChanged,
+      );
+    }
+    if (view == 'ica') {
+      final Dataset activeDataset = datasets.firstWhere(
+        (Dataset dataset) => dataset.id == activeDatasetId,
+        orElse: () => datasets.first,
+      );
+      return IcaViewer(
+        dataset: activeDataset,
+        onApply: (Set<int> excludedComponents) async {
+          final String message = await logic.persistIcaComponentExclusions(
+            viewerNodeId: nodeId,
+            dataset: activeDataset,
+            excludedComponents: excludedComponents,
+          );
+          if (context.mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(message)));
+          }
+          onDataChanged();
+        },
       );
     }
     if (view == 'hypnogram') {

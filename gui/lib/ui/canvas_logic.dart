@@ -18,10 +18,12 @@ import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/import_node.dart';
+import '../nodes/ica_component_rejection_node.dart';
 import '../nodes/impedances_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import '../nodes/node_registry.dart';
 import '../nodes/node_type.dart';
+import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/psd_average_node.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/realign_node.dart';
@@ -4025,6 +4027,11 @@ class CanvasLogic {
       return 'impedances';
     }
     for (final Dataset dataset in datasets) {
+      if (_isIcaVisualizationDataset(dataset)) {
+        return 'ica';
+      }
+    }
+    for (final Dataset dataset in datasets) {
       if (dataset.bridgeDetection != null) {
         return 'bridge';
       }
@@ -4071,6 +4078,9 @@ class CanvasLogic {
     if (node.type is BridgeDetectorNodeType) {
       return 'bridge';
     }
+    if (node.type is ICANodeType) {
+      return 'ica';
+    }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents = _immediateParents(node.id);
       if (parents.any(
@@ -4082,6 +4092,9 @@ class CanvasLogic {
         (NodeModel parent) => parent.type is BridgeDetectorNodeType,
       )) {
         return 'bridge';
+      }
+      if (parents.any((NodeModel parent) => parent.type is ICANodeType)) {
+        return 'ica';
       }
       if (parents.any((NodeModel parent) => parent.type is PSDNodeType)) {
         return 'psd';
@@ -4104,6 +4117,29 @@ class CanvasLogic {
       return 'segments';
     }
     return node.type is PSDNodeType ? 'psd' : 'raw';
+  }
+
+  bool _isIcaVisualizationDataset(Dataset dataset) {
+    final MatrixTransformationData? transform = dataset.matrixTransformation;
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (transform == null ||
+        timeSeries == null ||
+        !transform.algorithm.toLowerCase().contains('ica') ||
+        transform.componentCount == 0 ||
+        timeSeries.channelCount != transform.componentCount) {
+      return false;
+    }
+    if (transform.componentLabels.isEmpty) {
+      return timeSeries.channelLabels.every(
+        (String label) => label.toUpperCase().startsWith('IC '),
+      );
+    }
+    return List<bool>.generate(
+      transform.componentLabels.length,
+      (int index) =>
+          index < timeSeries.channelLabels.length &&
+          transform.componentLabels[index] == timeSeries.channelLabels[index],
+    ).every((bool matches) => matches);
   }
 
   List<String> processingStepsForNode(String nodeId) {
@@ -5325,6 +5361,87 @@ class CanvasLogic {
       finalDetail = 'Save and run failed: $error';
       rethrow;
     }
+  }
+
+  Future<String> persistIcaComponentExclusions({
+    required String viewerNodeId,
+    required Dataset dataset,
+    required Set<int> excludedComponents,
+    bool runAfterApply = true,
+  }) async {
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode == null) {
+      return 'The visualized node is no longer available.';
+    }
+    final NodeModel? sourceNode = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (sourceNode == null) {
+      return 'Could not resolve the ICA source branch.';
+    }
+    final List<int> sortedExcluded = excludedComponents.toList()..sort();
+    final int componentCount =
+        dataset.matrixTransformation?.componentCount ?? 0;
+    if (componentCount == 0 ||
+        sortedExcluded.any(
+          (int index) => index < 0 || index >= componentCount,
+        )) {
+      return 'The selected ICA components do not match this ICA result.';
+    }
+
+    NodeModel? rejectionNode;
+    for (final NodeModel child in _immediateChildren(sourceNode.id)) {
+      if (child.type is IcaComponentRejectionNodeType &&
+          child.params['createdByIcaViewer'] == true &&
+          child.params['icaSourceNodeId'] == sourceNode.id &&
+          (child.params['selectedDatasetIds'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .contains(dataset.id)) {
+        rejectionNode = child;
+        break;
+      }
+    }
+
+    final bool created = rejectionNode == null;
+    _recordUndo(
+      created
+          ? 'apply ICA component exclusions'
+          : 'update ICA component exclusions',
+      datasetArtifactIds: <String>{dataset.id},
+    );
+    if (rejectionNode == null) {
+      rejectionNode = _spawnViewerEditNode(
+        sourceNode: sourceNode,
+        type: IcaComponentRejectionNodeType(),
+        datasetId: dataset.id,
+        params: <String, dynamic>{
+          'excludedComponents': sortedExcluded,
+          'createdByIcaViewer': true,
+          'icaSourceNodeId': sourceNode.id,
+        },
+      );
+    } else {
+      rejectionNode.params['excludedComponents'] = sortedExcluded;
+      final DatasetState state =
+          rejectionNode.datasetStates[dataset.id] ?? DatasetState.ready;
+      rejectionNode.datasetStates[dataset.id] = state == DatasetState.done
+          ? DatasetState.stale
+          : DatasetState.ready;
+      _markImmediateChildrenStale(rejectionNode.id, dataset.id);
+    }
+
+    if (!runAfterApply) {
+      return '${created ? 'Created' : 'Updated'} ${rejectionNode.title}.';
+    }
+    final NodeModel nodeToRun = rejectionNode;
+    return runQueued(
+      label: 'Running ${nodeToRun.title}',
+      lockedNodeIds: <String>{sourceNode.id, nodeToRun.id},
+      action: () => runThisStep(nodeToRun.id, datasetIds: <String>{dataset.id}),
+      successDetail: () =>
+          '${created ? 'Created' : 'Updated'} and ran ${nodeToRun.title}.',
+    );
   }
 
   String _viewerEditSaveMessage({
