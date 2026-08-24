@@ -250,7 +250,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         child: const Text('Cancel'),
       ),
       if (widget.onSaveAndRun != null)
-        ElevatedButton.icon(
+        ElevatedButton(
           onPressed: () async {
             final Map<String, dynamic> params = Map<String, dynamic>.from(
               localParams,
@@ -258,8 +258,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
             Navigator.pop(context);
             await widget.onSaveAndRun!(params);
           },
-          icon: const Icon(Icons.play_arrow),
-          label: const Text('Save & Run'),
+          child: const Text('Save & Run'),
         ),
       ElevatedButton(
         onPressed: () {
