@@ -9,6 +9,7 @@ import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../nodes/add_remove_markers_node.dart';
 import '../nodes/bandpass_node.dart';
+import '../nodes/channel_marker_edit_config_editor.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import 'artifact_template_preview.dart';
@@ -1333,16 +1334,20 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     if (baseTimeSeries == null || baseTimeSeries.channels.isEmpty) {
       return;
     }
-    final List<String> baseLabels =
-        baseTimeSeries.channelLabels.length == baseTimeSeries.channelCount
-        ? baseTimeSeries.channelLabels
-        : List<String>.generate(
-            baseTimeSeries.channelCount,
-            (int index) => index < baseTimeSeries.channelLabels.length
-                ? baseTimeSeries.channelLabels[index]
-                : 'Ch ${index + 1}',
-            growable: false,
-          );
+    await _showChannelMarkerEditPanel(
+      initialTab: ChannelMarkerEditTab.channels,
+      channelIndex: channelIndex,
+    );
+  }
+
+  Future<void> _showChannelMarkerEditPanel({
+    required ChannelMarkerEditTab initialTab,
+    int? channelIndex,
+  }) async {
+    final TimeSeriesData? baseTimeSeries = widget.dataset.timeSeries;
+    if (baseTimeSeries == null) {
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (BuildContext context) {
@@ -1362,21 +1367,25 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: <Widget>[
                             Text(
-                              'Edit Channels',
+                              'Edit channels and markers',
                               style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Channel ${channelIndex + 1}: ${baseLabels[channelIndex]}',
-                              style: TextStyle(
-                                color: Colors.black.withValues(alpha: 0.65),
-                                fontWeight: FontWeight.w500,
-                              ),
                             ),
                           ],
                         ),
                       ),
-                      OutlinedButton.icon(
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: ChannelMarkerEditConfigEditor(
+                      dataset: widget.dataset,
+                      channelConfig: _effectiveChannelEditConfig(),
+                      markers: _currentMarkersForDataset(),
+                      initialTab: initialTab,
+                      initialVisibleChannelIndices: channelIndex == null
+                          ? null
+                          : <int>[channelIndex],
+                      channelHeaderAction: OutlinedButton.icon(
                         onPressed: () => showChannelPositionsDialog(
                           context,
                           dataset: widget.dataset,
@@ -1384,20 +1393,13 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         icon: const Icon(Icons.public, size: 18),
                         label: const Text('Channel positions'),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Expanded(
-                    child: ChannelEditConfigEditor(
-                      channelLabels: baseLabels,
-                      config: _effectiveChannelEditConfig(),
-                      initialVisibleChannelIndices: <int>[channelIndex],
-                      currentCoordinateCount:
-                          baseTimeSeries.channelCoordinates.length,
-                      onChanged: (Map<String, dynamic> config) {
+                      onChannelConfigChanged: (Map<String, dynamic> config) {
                         setState(() {
                           _draftChannelEditConfig = config;
                         });
+                      },
+                      onMarkersChanged: (List<TimeMarker> markers) {
+                        _setDraftMarkersForDataset(markers);
                       },
                     ),
                   ),
@@ -1875,6 +1877,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Future<void> _showRecodeMarkersDialog() async {
+    if (widget.dataset.timeSeries != null) {
+      await _showChannelMarkerEditPanel(
+        initialTab: ChannelMarkerEditTab.markers,
+      );
+      return;
+    }
     final List<TimeMarker> markers = _currentMarkersForDataset();
     if (markers.isEmpty || !mounted) {
       return;

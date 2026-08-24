@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import 'channel_marker_edit_config_editor.dart';
 import 'node_type.dart';
 
 class MarkerBoundaryCombinationResult {
@@ -48,8 +49,6 @@ class AddRemoveMarkersNodeType extends NodeType {
     required Map<String, Dataset> datasets,
     required void Function(void Function()) setState,
   }) {
-    final int markerCount =
-        (params['markers'] as List<dynamic>? ?? const <dynamic>[]).length;
     final bool generatedMarkers = params['markerGenerator'] == 'fft_windows';
     if (generatedMarkers) {
       return Column(
@@ -67,16 +66,45 @@ class AddRemoveMarkersNodeType extends NodeType {
         ],
       );
     }
-    return MarkerEditConfigEditor(
-      rawMarkers: params['markers'] as List<dynamic>? ?? const <dynamic>[],
-      datasets: datasets.values.toList(growable: false),
-      markerCount: markerCount,
-      onChanged: (List<Map<String, dynamic>> markers) {
-        setState(() {
-          params['markers'] = markers;
-          params['applyEmptyMarkerSet'] = true;
-        });
-      },
+    final List<dynamic> selectedDatasetIds =
+        params['selectedDatasetIds'] as List<dynamic>? ?? const <dynamic>[];
+    final Dataset? dataset = datasets.values
+        .where(
+          (Dataset item) =>
+              item.timeSeries != null &&
+              (selectedDatasetIds.isEmpty ||
+                  selectedDatasetIds.contains(item.id)),
+        )
+        .cast<Dataset?>()
+        .firstWhere((Dataset? item) => item != null, orElse: () => null);
+    if (dataset == null || dataset.timeSeries == null) {
+      return const Text('Select a dataset with markers to edit.');
+    }
+    final List<dynamic> rawMarkers =
+        params['markers'] as List<dynamic>? ?? const <dynamic>[];
+    final List<TimeMarker> markers =
+        ((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
+            rawMarkers.isNotEmpty
+        ? markersForDataset(dataset.id, rawMarkers)
+        : dataset.timeSeries!.markers;
+    return SizedBox(
+      height: 520,
+      child: MarkerLabelEditConfigEditor(
+        markers: markers,
+        onChanged: (List<TimeMarker> nextMarkers) {
+          setState(() {
+            params['markers'] = nextMarkers
+                .map(
+                  (TimeMarker marker) => <String, dynamic>{
+                    ...marker.toJson(),
+                    'datasetId': dataset.id,
+                  },
+                )
+                .toList(growable: false);
+            params['applyEmptyMarkerSet'] = true;
+          });
+        },
+      ),
     );
   }
 

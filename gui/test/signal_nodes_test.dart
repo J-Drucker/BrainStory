@@ -13,6 +13,7 @@ import 'package:brainstory_gui/nodes/add_remove_markers_node.dart';
 import 'package:brainstory_gui/nodes/bandpass_node.dart';
 import 'package:brainstory_gui/nodes/bridge_detector_node.dart';
 import 'package:brainstory_gui/nodes/channel_coordinates_node.dart';
+import 'package:brainstory_gui/nodes/channel_marker_edit_config_editor.dart';
 import 'package:brainstory_gui/nodes/amplitude_features_node.dart';
 import 'package:brainstory_gui/nodes/edit_channels_node.dart';
 import 'package:brainstory_gui/nodes/edit_channels_and_markers_node.dart';
@@ -1478,7 +1479,7 @@ void main() {
   );
 
   test(
-    'persistViewerEdits creates separate channel and marker edit nodes',
+    'persistViewerEdits creates one combined channel and marker edit node',
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -1520,58 +1521,35 @@ void main() {
         },
       );
 
-      expect(message, 'Created Edit Channels -> Edit Markers.');
+      expect(message, 'Created Edit Channels and Markers.');
       expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Cz']);
 
-      final NodeModel channelNode = logic.nodes.firstWhere(
-        (NodeModel node) => node.type is EditChannelsNodeType,
+      final NodeModel editNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is EditChannelsAndMarkersNodeType,
       );
-      final NodeModel markerNode = logic.nodes.firstWhere(
-        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
-      );
-
-      expect(logic.nodeGroups, hasLength(1));
-      expect(logic.nodeGroups.single.label, 'Viewer edits');
-      expect(logic.nodeGroups.single.nodeIds, <String>{
-        channelNode.id,
-        markerNode.id,
-      });
-
-      final Offset channelStart = channelNode.position;
-      final Offset markerStart = markerNode.position;
-      logic.moveNodeOrSelection(
-        channelNode,
-        channelNode.position + const Offset(400, 180),
-      );
-      final Offset groupDelta = channelNode.position - channelStart;
-      expect(groupDelta, isNot(Offset.zero));
-      expect(markerNode.position, markerStart + groupDelta);
+      expect(logic.nodeGroups, isEmpty);
 
       expect(
         logic.connections.any(
           (Map<String, dynamic> connection) =>
               connection['fromNode'] == sourceNode.id &&
-              connection['toNode'] == channelNode.id,
+              connection['toNode'] == editNode.id,
         ),
         isTrue,
       );
 
       final Map<String, dynamic> saved = logic.exportProjectJson();
       final CanvasLogic restored = CanvasLogic()..importProjectJson(saved);
-      expect(restored.nodeGroups, hasLength(1));
-      expect(restored.nodeGroups.single.nodeIds, hasLength(2));
+      expect(restored.nodeGroups, isEmpty);
       expect(
-        logic.connections.any(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == channelNode.id &&
-              connection['toNode'] == markerNode.id,
+        restored.nodes.where(
+          (NodeModel node) => node.type is EditChannelsAndMarkersNodeType,
         ),
-        isTrue,
+        hasLength(1),
       );
       final Dataset materialized = Dataset(dataset.id, label: 'Materialized')
         ..timeSeries = TimeSeriesData.fromJson(dataset.timeSeries!.toJson());
-      await channelNode.type.run(materialized, channelNode.params);
-      await markerNode.type.run(materialized, markerNode.params);
+      await editNode.type.run(materialized, editNode.params);
 
       expect(materialized.timeSeries!.channelLabels, <String>['Fz']);
       expect(materialized.timeSeries!.markers, hasLength(1));
@@ -2458,6 +2436,50 @@ time,Fz,Cz
     expect(tester.takeException(), isNull);
     expect(find.text('Import channel coordinates'), findsOneWidget);
     expect(find.text('Rereference'), findsOneWidget);
+  });
+
+  testWidgets('combined edit parameters share channel and marker tabs', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = Dataset('dataset-1', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[1, 2, 3],
+          <double>[4, 5, 6],
+        ],
+        sampleRate: 1000,
+        channelLabels: const <String>['Fz', 'Cz'],
+        markers: const <TimeMarker>[
+          TimeMarker(onsetMicros: 1000, label: 'blink'),
+        ],
+      );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 700,
+            child: ChannelMarkerEditConfigEditor(
+              dataset: dataset,
+              channelConfig: const <String, dynamic>{},
+              markers: dataset.timeSeries!.markers,
+              onChannelConfigChanged: (_) {},
+              onMarkersChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Channels'), findsOneWidget);
+    expect(find.text('Markers'), findsOneWidget);
+    await tester.tap(find.text('Markers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename or delete marker labels.'), findsOneWidget);
+    expect(find.text('blink'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   test('loadDatasetSignal imports the sample EDF fixture', () async {

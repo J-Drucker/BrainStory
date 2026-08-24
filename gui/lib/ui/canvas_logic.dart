@@ -5179,7 +5179,24 @@ class CanvasLogic {
     final Set<String> createdNodeIds = <String>{};
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
-    if (hasChannelEdits) {
+    if (hasChannelEdits && hasMarkerEdits) {
+      lastCreatedNode = _spawnViewerEditNode(
+        sourceNode: anchorNode,
+        insertBeforeNode: insertBeforeNode,
+        type: EditChannelsAndMarkersNodeType(),
+        datasetId: dataset.id,
+        params: <String, dynamic>{
+          'channelEditsByDataset': <String, dynamic>{
+            dataset.id: channelEditConfigValue,
+          },
+          'markers': markerEditsValue,
+          'applyEmptyMarkerSet': true,
+        },
+      );
+      anchorNode = lastCreatedNode;
+      createdNodeTitles.add(lastCreatedNode.title);
+      createdNodeIds.add(lastCreatedNode.id);
+    } else if (hasChannelEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
@@ -5195,7 +5212,7 @@ class CanvasLogic {
       createdNodeTitles.add(lastCreatedNode.title);
       createdNodeIds.add(lastCreatedNode.id);
     }
-    if (hasMarkerEdits) {
+    if (hasMarkerEdits && !hasChannelEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
