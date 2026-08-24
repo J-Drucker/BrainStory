@@ -24,3 +24,6 @@ tests/*.tsv
 tests/*.bst
 tests/swez/
 tests/swez
+
+# Malformed legacy recent-project path written as one local filename
+/gui\\BrainStory\\recent_project.txt
