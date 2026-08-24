@@ -2630,6 +2630,13 @@ class CanvasLogic {
       ),
       items: <PopupMenuEntry<String>>[
         PopupMenuItem<String>(
+          value: 'edit',
+          enabled: !mutationLocked,
+          child: Text(
+            mutationLocked ? 'Edit Parameters (locked)' : 'Edit Parameters',
+          ),
+        ),
+        PopupMenuItem<String>(
           value: 'run_this',
           child: Text(queueRun ? 'Queue This Step' : 'Run This Step'),
         ),
@@ -2645,13 +2652,6 @@ class CanvasLogic {
         const PopupMenuItem<String>(
           value: 'memory',
           child: Text('Memory management'),
-        ),
-        PopupMenuItem<String>(
-          value: 'edit',
-          enabled: !mutationLocked,
-          child: Text(
-            mutationLocked ? 'Edit Parameters (locked)' : 'Edit Parameters',
-          ),
         ),
         if (combination != null)
           PopupMenuItem<String>(
