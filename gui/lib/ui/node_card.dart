@@ -124,12 +124,24 @@ class NodeCard extends StatelessWidget {
                     showOutputHandles: hasVisibleOutputHandles,
                   ),
                   if (showConnectionOutputs) ...<Widget>[
-                    _buildConnectionHandle(NodeConnectionEdge.right),
-                    _buildConnectionHandle(NodeConnectionEdge.bottom),
+                    _buildConnectionHandle(
+                      NodeConnectionEdge.right,
+                      forceVisible: hovering,
+                    ),
+                    _buildConnectionHandle(
+                      NodeConnectionEdge.bottom,
+                      forceVisible: hovering,
+                    ),
                   ],
                   if (showConnectionInputs) ...<Widget>[
-                    _buildConnectionHandle(NodeConnectionEdge.left),
-                    _buildConnectionHandle(NodeConnectionEdge.top),
+                    _buildConnectionHandle(
+                      NodeConnectionEdge.left,
+                      forceVisible: hovering,
+                    ),
+                    _buildConnectionHandle(
+                      NodeConnectionEdge.top,
+                      forceVisible: hovering,
+                    ),
                   ],
                 ],
               ),
@@ -140,7 +152,10 @@ class NodeCard extends StatelessWidget {
     );
   }
 
-  Widget _buildConnectionHandle(NodeConnectionEdge edge) {
+  Widget _buildConnectionHandle(
+    NodeConnectionEdge edge, {
+    required bool forceVisible,
+  }) {
     const double hitSize = 24;
     final bool output =
         edge == NodeConnectionEdge.right || edge == NodeConnectionEdge.bottom;
@@ -158,7 +173,9 @@ class NodeCard extends StatelessWidget {
         NodeConnectionEdge.right => (height - hitSize) / 2,
       },
       child: _NodeConnectionHandle(
+        key: ValueKey<String>('node-wire-handle-${edge.name}'),
         selected: output && selectedConnectionEdge == edge,
+        forceVisible: forceVisible,
         onTap: () {
           if (output) {
             onConnectionOutputTap?.call(edge);
@@ -322,9 +339,15 @@ class NodeCard extends StatelessWidget {
 }
 
 class _NodeConnectionHandle extends StatefulWidget {
-  const _NodeConnectionHandle({required this.selected, required this.onTap});
+  const _NodeConnectionHandle({
+    super.key,
+    required this.selected,
+    required this.forceVisible,
+    required this.onTap,
+  });
 
   final bool selected;
+  final bool forceVisible;
   final VoidCallback onTap;
 
   @override
@@ -338,7 +361,7 @@ class _NodeConnectionHandleState extends State<_NodeConnectionHandle> {
   Widget build(BuildContext context) {
     const Color paleBlue = Color(0xFF9EDCF3);
     const Color cerulean = Color(0xFF007BA7);
-    final bool visible = _hovered || widget.selected;
+    final bool visible = _hovered || widget.forceVisible || widget.selected;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),

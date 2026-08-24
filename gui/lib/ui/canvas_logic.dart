@@ -2580,6 +2580,11 @@ class CanvasLogic {
           update();
         },
         onTap: () {
+          if (_canCompleteConnectionDraft(node)) {
+            completeConnectionDraftAtNode(node);
+            update();
+            return;
+          }
           _handleNodeTap(node);
           update();
         },
@@ -2902,6 +2907,13 @@ class CanvasLogic {
       ..clear()
       ..add(toNode.id);
     return true;
+  }
+
+  bool completeConnectionDraftAtNode(NodeModel toNode) {
+    final NodeConnectionEdge edge = _pendingFromEdge == NodeConnectionEdge.right
+        ? NodeConnectionEdge.left
+        : NodeConnectionEdge.top;
+    return completeConnectionDraft(toNode, edge);
   }
 
   _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {

@@ -40,6 +40,7 @@ import 'package:brainstory_gui/ui/canvas_view.dart';
 import 'package:brainstory_gui/ui/connection_painter.dart';
 import 'package:brainstory_gui/ui/node_card.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -90,13 +91,54 @@ void main() {
     logic.connections.clear();
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
     expect(logic.hasConnectionDraft, isTrue);
-    expect(
-      logic.completeConnectionDraft(downstream, NodeConnectionEdge.top),
-      isTrue,
-    );
+    expect(logic.completeConnectionDraftAtNode(downstream), isTrue);
     expect(logic.hasConnectionDraft, isFalse);
     expect(logic.connections.single['fromEdge'], 'bottom');
     expect(logic.connections.single['toEdge'], 'top');
+  });
+
+  testWidgets('hovering anywhere on a node reveals its wire handles', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: <Widget>[
+              NodeCard(
+                width: 160,
+                height: 72,
+                title: 'Example',
+                nodeNumber: 1,
+                position: Offset.zero,
+                onDragEnd: (_) {},
+                color: Colors.blueGrey,
+                showConnectionOutputs: true,
+                onConnectionOutputTap: (_) {},
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final Finder handle = find.byKey(
+      const ValueKey<String>('node-wire-handle-right'),
+    );
+    final Finder visual = find.descendant(
+      of: handle,
+      matching: find.byType(AnimatedContainer),
+    );
+    expect(tester.getSize(visual).width, 0);
+
+    final TestGesture mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+    );
+    await mouse.addPointer();
+    await mouse.moveTo(const Offset(80, 36));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(visual).width, 12);
   });
 
   test('consecutive channel and marker edits combine into one node', () {
