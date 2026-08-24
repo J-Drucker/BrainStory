@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+enum NodeConnectionEdge { right, bottom, left, top }
+
 class NodeOutputHandleViewData {
   const NodeOutputHandleViewData({
     required this.portIndex,
@@ -30,11 +32,17 @@ class NodeCard extends StatelessWidget {
   final bool done;
   final List<NodeOutputHandleViewData> outputHandles;
   final int? selectedOutputPortIndex;
+  final bool connectionDraftActive;
+  final NodeConnectionEdge? selectedConnectionEdge;
+  final bool showConnectionOutputs;
+  final bool showConnectionInputs;
 
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
   final void Function()? onDoubleTap;
   final void Function(int portIndex)? onOutputTap;
+  final ValueChanged<NodeConnectionEdge>? onConnectionOutputTap;
+  final ValueChanged<NodeConnectionEdge>? onConnectionInputTap;
   final void Function(Offset globalPosition)? onContextMenuAt;
 
   final Color color;
@@ -54,9 +62,15 @@ class NodeCard extends StatelessWidget {
     this.done = false,
     this.outputHandles = const <NodeOutputHandleViewData>[],
     this.selectedOutputPortIndex,
+    this.connectionDraftActive = false,
+    this.selectedConnectionEdge,
+    this.showConnectionOutputs = false,
+    this.showConnectionInputs = false,
     this.onTap,
     this.onDoubleTap,
     this.onOutputTap,
+    this.onConnectionOutputTap,
+    this.onConnectionInputTap,
     this.onContextMenuAt,
   });
 
@@ -109,10 +123,48 @@ class NodeCard extends StatelessWidget {
                   ..._buildOutputHandles(
                     showOutputHandles: hasVisibleOutputHandles,
                   ),
+                  if (showConnectionOutputs) ...<Widget>[
+                    _buildConnectionHandle(NodeConnectionEdge.right),
+                    _buildConnectionHandle(NodeConnectionEdge.bottom),
+                  ],
+                  if (showConnectionInputs) ...<Widget>[
+                    _buildConnectionHandle(NodeConnectionEdge.left),
+                    _buildConnectionHandle(NodeConnectionEdge.top),
+                  ],
                 ],
               ),
             ),
           );
+        },
+      ),
+    );
+  }
+
+  Widget _buildConnectionHandle(NodeConnectionEdge edge) {
+    const double hitSize = 24;
+    final bool output =
+        edge == NodeConnectionEdge.right || edge == NodeConnectionEdge.bottom;
+    return Positioned(
+      left: switch (edge) {
+        NodeConnectionEdge.left => -hitSize / 2,
+        NodeConnectionEdge.right => width - (hitSize / 2),
+        NodeConnectionEdge.top ||
+        NodeConnectionEdge.bottom => (width - hitSize) / 2,
+      },
+      top: switch (edge) {
+        NodeConnectionEdge.top => -hitSize / 2,
+        NodeConnectionEdge.bottom => height - (hitSize / 2),
+        NodeConnectionEdge.left ||
+        NodeConnectionEdge.right => (height - hitSize) / 2,
+      },
+      child: _NodeConnectionHandle(
+        selected: output && selectedConnectionEdge == edge,
+        onTap: () {
+          if (output) {
+            onConnectionOutputTap?.call(edge);
+          } else {
+            onConnectionInputTap?.call(edge);
+          }
         },
       ),
     );
@@ -266,6 +318,62 @@ class NodeCard extends StatelessWidget {
           );
         })
         .toList(growable: false);
+  }
+}
+
+class _NodeConnectionHandle extends StatefulWidget {
+  const _NodeConnectionHandle({required this.selected, required this.onTap});
+
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  State<_NodeConnectionHandle> createState() => _NodeConnectionHandleState();
+}
+
+class _NodeConnectionHandleState extends State<_NodeConnectionHandle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const Color paleBlue = Color(0xFF9EDCF3);
+    const Color cerulean = Color(0xFF007BA7);
+    final bool visible = _hovered || widget.selected;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: SizedBox.square(
+          dimension: 24,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              width: visible ? 12 : 0,
+              height: visible ? 12 : 0,
+              decoration: BoxDecoration(
+                color: widget.selected ? cerulean : paleBlue,
+                shape: BoxShape.circle,
+                border: visible
+                    ? Border.all(color: Colors.white, width: 1.5)
+                    : null,
+                boxShadow: visible
+                    ? <BoxShadow>[
+                        BoxShadow(
+                          color: (widget.selected ? cerulean : paleBlue)
+                              .withValues(alpha: 0.55),
+                          blurRadius: 6,
+                        ),
+                      ]
+                    : const <BoxShadow>[],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

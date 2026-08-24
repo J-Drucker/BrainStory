@@ -38,6 +38,7 @@ import 'package:brainstory_gui/platform/ant_cnt_import.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/canvas_view.dart';
 import 'package:brainstory_gui/ui/connection_painter.dart';
+import 'package:brainstory_gui/ui/node_card.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,6 +86,17 @@ void main() {
     expect(painter.preferVertical, isFalse);
     expect(painter.start, const Offset(260, 136));
     expect(painter.end, const Offset(-100, 136));
+
+    logic.connections.clear();
+    logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
+    expect(logic.hasConnectionDraft, isTrue);
+    expect(
+      logic.completeConnectionDraft(downstream, NodeConnectionEdge.top),
+      isTrue,
+    );
+    expect(logic.hasConnectionDraft, isFalse);
+    expect(logic.connections.single['fromEdge'], 'bottom');
+    expect(logic.connections.single['toEdge'], 'top');
   });
 
   test('consecutive channel and marker edits combine into one node', () {

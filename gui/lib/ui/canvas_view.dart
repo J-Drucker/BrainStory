@@ -38,6 +38,7 @@ class _CanvasViewState extends State<CanvasView> {
   final GlobalKey _canvasKey = GlobalKey();
   Offset? _selectionStart;
   Offset? _selectionCurrent;
+  Offset? _connectionCursor;
   _KeyboardPane _keyboardPane = _KeyboardPane.canvas;
   Timer? _recentJobsCollapseTimer;
   bool _recentJobsCollapsed = true;
@@ -218,147 +219,175 @@ class _CanvasViewState extends State<CanvasView> {
                                       controller: _horizontalScrollController,
                                       primary: false,
                                       scrollDirection: Axis.horizontal,
-                                      child: GestureDetector(
-                                        onTapDown: (TapDownDetails details) {
-                                          _keyboardFocusNode.requestFocus();
-                                          final Offset canvasOffset =
-                                              _globalToRawCanvasOffset(
-                                                details.globalPosition,
-                                              );
+                                      child: MouseRegion(
+                                        onHover: (PointerHoverEvent event) {
+                                          if (!logic.hasConnectionDraft) return;
                                           setState(() {
-                                            if (HardwareKeyboard
-                                                    .instance
-                                                    .isControlPressed &&
-                                                logic.deleteConnectionAt(
-                                                  canvasOffset,
-                                                )) {
+                                            _connectionCursor =
+                                                _globalToRawCanvasOffset(
+                                                  event.position,
+                                                );
+                                          });
+                                        },
+                                        child: GestureDetector(
+                                          onTapDown: (TapDownDetails details) {
+                                            _keyboardFocusNode.requestFocus();
+                                            final Offset canvasOffset =
+                                                _globalToRawCanvasOffset(
+                                                  details.globalPosition,
+                                                );
+                                            setState(() {
+                                              if (HardwareKeyboard
+                                                      .instance
+                                                      .isControlPressed &&
+                                                  logic.deleteConnectionAt(
+                                                    canvasOffset,
+                                                  )) {
+                                                return;
+                                              }
+                                              if (!logic.selectConnectionAt(
+                                                canvasOffset,
+                                              )) {
+                                                logic.selectedConnectionIndex =
+                                                    null;
+                                                logic.selectedNodeIds.clear();
+                                                logic.selectedNodeId = null;
+                                              }
+                                            });
+                                          },
+                                          onTap: () {
+                                            if (!logic.hasConnectionDraft) {
                                               return;
                                             }
-                                            if (!logic.selectConnectionAt(
-                                              canvasOffset,
-                                            )) {
-                                              logic.selectedConnectionIndex =
-                                                  null;
-                                              logic.selectedNodeIds.clear();
-                                              logic.selectedNodeId = null;
+                                            setState(() {
                                               logic.clearConnectionDraft();
-                                            }
-                                          });
-                                        },
-                                        onPanStart: (DragStartDetails details) {
-                                          _keyboardFocusNode.requestFocus();
-                                          final Offset canvasOffset =
-                                              _globalToRawCanvasOffset(
-                                                details.globalPosition,
-                                              );
-                                          setState(() {
-                                            _selectionStart = canvasOffset;
-                                            _selectionCurrent = canvasOffset;
-                                            logic.selectedConnectionIndex =
-                                                null;
-                                            logic.clearConnectionDraft();
-                                          });
-                                        },
-                                        onPanUpdate:
-                                            (DragUpdateDetails details) {
-                                              final Offset canvasOffset =
-                                                  _globalToRawCanvasOffset(
-                                                    details.globalPosition,
-                                                  );
-                                              setState(() {
-                                                _selectionCurrent =
-                                                    canvasOffset;
-                                              });
-                                            },
-                                        onPanEnd: (DragEndDetails details) {
-                                          final Offset? start = _selectionStart;
-                                          final Offset? current =
-                                              _selectionCurrent;
-                                          setState(() {
-                                            _selectionStart = null;
-                                            _selectionCurrent = null;
-                                            if (start != null &&
-                                                current != null) {
-                                              logic.selectNodesInRect(
-                                                Rect.fromPoints(
-                                                  start,
-                                                  current,
-                                                ).inflate(2),
-                                              );
-                                            }
-                                          });
-                                        },
-                                        onPanCancel: () {
-                                          setState(() {
-                                            _selectionStart = null;
-                                            _selectionCurrent = null;
-                                          });
-                                        },
-                                        onSecondaryTapDown:
-                                            (TapDownDetails details) {
-                                              setState(() {
-                                                if (!logic.deleteConnectionAt(
-                                                  _globalToRawCanvasOffset(
-                                                    details.globalPosition,
-                                                  ),
-                                                )) {
+                                            });
+                                          },
+                                          onPanStart:
+                                              (DragStartDetails details) {
+                                                _keyboardFocusNode
+                                                    .requestFocus();
+                                                final Offset canvasOffset =
+                                                    _globalToRawCanvasOffset(
+                                                      details.globalPosition,
+                                                    );
+                                                setState(() {
+                                                  _selectionStart =
+                                                      canvasOffset;
+                                                  _selectionCurrent =
+                                                      canvasOffset;
                                                   logic.selectedConnectionIndex =
                                                       null;
-                                                }
-                                              });
-                                            },
-                                        child: SizedBox(
-                                          key: _canvasKey,
-                                          width: canvasSize.width,
-                                          height: canvasSize.height,
-                                          child: Stack(
-                                            children: <Widget>[
-                                              ...logic.nodeGroupWidgets(
-                                                update: () => setState(() {}),
-                                              ),
-                                              ...logic.connectionWidgets(),
-                                              ...logic.nodeWidgets(
-                                                context: context,
-                                                update: () => setState(() {}),
-                                                translateDropOffset:
-                                                    _globalToCanvasOffset,
-                                                openVisualizationWindow:
-                                                    _openVisualizationWindow,
-                                              ),
-                                              if (_selectionStart != null &&
-                                                  _selectionCurrent != null)
-                                                Positioned.fromRect(
-                                                  rect: Rect.fromPoints(
-                                                    _selectionStart!,
-                                                    _selectionCurrent!,
-                                                  ),
-                                                  child: IgnorePointer(
-                                                    child: DecoratedBox(
-                                                      decoration: BoxDecoration(
-                                                        color:
-                                                            const Color(
-                                                              0xFF6DD3FF,
-                                                            ).withValues(
-                                                              alpha: 0.10,
-                                                            ),
-                                                        border: Border.all(
+                                                  logic.clearConnectionDraft();
+                                                });
+                                              },
+                                          onPanUpdate:
+                                              (DragUpdateDetails details) {
+                                                final Offset canvasOffset =
+                                                    _globalToRawCanvasOffset(
+                                                      details.globalPosition,
+                                                    );
+                                                setState(() {
+                                                  _selectionCurrent =
+                                                      canvasOffset;
+                                                });
+                                              },
+                                          onPanEnd: (DragEndDetails details) {
+                                            final Offset? start =
+                                                _selectionStart;
+                                            final Offset? current =
+                                                _selectionCurrent;
+                                            setState(() {
+                                              _selectionStart = null;
+                                              _selectionCurrent = null;
+                                              if (start != null &&
+                                                  current != null) {
+                                                logic.selectNodesInRect(
+                                                  Rect.fromPoints(
+                                                    start,
+                                                    current,
+                                                  ).inflate(2),
+                                                );
+                                              }
+                                            });
+                                          },
+                                          onPanCancel: () {
+                                            setState(() {
+                                              _selectionStart = null;
+                                              _selectionCurrent = null;
+                                            });
+                                          },
+                                          onSecondaryTapDown:
+                                              (TapDownDetails details) {
+                                                setState(() {
+                                                  if (!logic.deleteConnectionAt(
+                                                    _globalToRawCanvasOffset(
+                                                      details.globalPosition,
+                                                    ),
+                                                  )) {
+                                                    logic.selectedConnectionIndex =
+                                                        null;
+                                                  }
+                                                });
+                                              },
+                                          child: SizedBox(
+                                            key: _canvasKey,
+                                            width: canvasSize.width,
+                                            height: canvasSize.height,
+                                            child: Stack(
+                                              children: <Widget>[
+                                                ...logic.nodeGroupWidgets(
+                                                  update: () => setState(() {}),
+                                                ),
+                                                ...logic.connectionWidgets(),
+                                                if (logic.hasConnectionDraft &&
+                                                    _connectionCursor != null)
+                                                  logic.connectionDraftWidget(
+                                                    _connectionCursor!,
+                                                  )!,
+                                                ...logic.nodeWidgets(
+                                                  context: context,
+                                                  update: () => setState(() {}),
+                                                  translateDropOffset:
+                                                      _globalToCanvasOffset,
+                                                  openVisualizationWindow:
+                                                      _openVisualizationWindow,
+                                                ),
+                                                if (_selectionStart != null &&
+                                                    _selectionCurrent != null)
+                                                  Positioned.fromRect(
+                                                    rect: Rect.fromPoints(
+                                                      _selectionStart!,
+                                                      _selectionCurrent!,
+                                                    ),
+                                                    child: IgnorePointer(
+                                                      child: DecoratedBox(
+                                                        decoration: BoxDecoration(
                                                           color:
                                                               const Color(
                                                                 0xFF6DD3FF,
                                                               ).withValues(
-                                                                alpha: 0.88,
+                                                                alpha: 0.10,
                                                               ),
-                                                          width: 1.5,
+                                                          border: Border.all(
+                                                            color:
+                                                                const Color(
+                                                                  0xFF6DD3FF,
+                                                                ).withValues(
+                                                                  alpha: 0.88,
+                                                                ),
+                                                            width: 1.5,
+                                                          ),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                4,
+                                                              ),
                                                         ),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              4,
-                                                            ),
                                                       ),
                                                     ),
                                                   ),
-                                                ),
-                                            ],
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       ),

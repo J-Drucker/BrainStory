@@ -1000,6 +1000,7 @@ class CanvasLogic {
 
   String? _pendingFromNodeId;
   int? _pendingFromPortIndex;
+  NodeConnectionEdge? _pendingFromEdge;
   int _lastGeneratedNodeIdMicros = 0;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
   final Map<String, bool> _collapsedSubcategories = <String, bool>{};
@@ -1016,6 +1017,7 @@ class CanvasLogic {
 
   bool get canUndo => _undoStack.isNotEmpty;
   bool get hasActiveRun => runActivity.value != null;
+  bool get hasConnectionDraft => _pendingFromNodeId != null;
 
   bool get selectedMutationBlocked {
     final int? connectionIndex = selectedConnectionIndex;
@@ -1478,6 +1480,7 @@ class CanvasLogic {
   void _clearPendingConnection() {
     _pendingFromNodeId = null;
     _pendingFromPortIndex = null;
+    _pendingFromEdge = null;
   }
 
   void _collectNodeBranches(
@@ -2363,9 +2366,17 @@ class CanvasLogic {
         fromNode,
         toNode,
         fromPortIndex: fromPort,
+        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
       );
-      final Offset end = _inputAnchor(fromNode, toNode);
-      final bool preferVertical = _shouldUseVerticalAnchors(fromNode, toNode);
+      final NodeConnectionEdge? toEdge = _connectionEdgeFromName(
+        connection['toEdge']?.toString(),
+      );
+      final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
+      final bool preferVertical =
+          _connectionEdgeFromName(connection['fromEdge']?.toString()) ==
+              NodeConnectionEdge.bottom ||
+          (connection['fromEdge'] == null &&
+              _shouldUseVerticalAnchors(fromNode, toNode));
 
       return CustomPaint(
         painter: ConnectionPainter(
@@ -2381,6 +2392,28 @@ class CanvasLogic {
         size: Size.infinite,
       );
     }).toList();
+  }
+
+  Widget? connectionDraftWidget(Offset cursor) {
+    final NodeModel? fromNode = _findNode(_pendingFromNodeId ?? '');
+    final int? fromPort = _pendingFromPortIndex;
+    if (fromNode == null || fromPort == null || _pendingFromEdge == null) {
+      return null;
+    }
+    final Offset start = _anchorForEdge(fromNode, _pendingFromEdge!);
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: ConnectionPainter(
+          start: start,
+          end: cursor,
+          preferVertical: _pendingFromEdge == NodeConnectionEdge.bottom,
+          gridWidth: _gridWidth,
+          gridHeight: _gridHeight,
+          color: const Color(0xFF007BA7),
+        ),
+        size: Size.infinite,
+      ),
+    );
   }
 
   List<Widget> nodeGroupWidgets({required VoidCallback update}) {
@@ -2518,6 +2551,21 @@ class CanvasLogic {
         highlighted: _isHighlighted(node),
         highlightColor: _nodeHighlightColor(node),
         done: node.visualState == DatasetState.done,
+        connectionDraftActive: hasConnectionDraft,
+        selectedConnectionEdge: _pendingFromNodeId == node.id
+            ? _pendingFromEdge
+            : null,
+        showConnectionOutputs:
+            !hasConnectionDraft && node.outputPorts.isNotEmpty,
+        showConnectionInputs: _canCompleteConnectionDraft(node),
+        onConnectionOutputTap: (NodeConnectionEdge edge) {
+          startConnectionDraft(node, edge);
+          update();
+        },
+        onConnectionInputTap: (NodeConnectionEdge edge) {
+          completeConnectionDraft(node, edge);
+          update();
+        },
         onDragEnd: (Offset globalOffset) {
           moveNodeOrSelection(node, translateDropOffset(globalOffset));
           update();
@@ -2770,64 +2818,64 @@ class CanvasLogic {
   }
 
   void _handleNodeTap(NodeModel node) {
-    final bool canUseSelectionAsConnectionSource =
-        selectedNodeId != null &&
-        selectedNodeId != node.id &&
-        selectedNodeIds.length <= 1;
-    if (!canUseSelectionAsConnectionSource) {
-      selectedNodeId = node.id;
-      selectedNodeIds
-        ..clear()
-        ..add(node.id);
-      selectedConnectionIndex = null;
-      return;
-    }
+    selectedNodeId = node.id;
+    selectedNodeIds
+      ..clear()
+      ..add(node.id);
+    selectedConnectionIndex = null;
+  }
 
-    final NodeModel? fromNode = _findNode(selectedNodeId!);
-    if (fromNode == null) {
-      selectedNodeId = node.id;
-      selectedNodeIds
-        ..clear()
-        ..add(node.id);
-      selectedConnectionIndex = null;
-      _clearPendingConnection();
-      return;
-    }
-    if (isNodeMutationLocked(fromNode.id) || isNodeMutationLocked(node.id)) {
-      selectedNodeId = node.id;
-      selectedNodeIds
-        ..clear()
-        ..add(node.id);
-      selectedConnectionIndex = null;
-      _clearPendingConnection();
-      return;
-    }
+  void startConnectionDraft(NodeModel node, NodeConnectionEdge edge) {
+    if (isNodeMutationLocked(node.id)) return;
+    final List<_EffectiveOutputPort> ports = _effectiveOutputPorts(node);
+    if (ports.isEmpty) return;
+    _pendingFromNodeId = node.id;
+    _pendingFromPortIndex = ports.first.portIndex;
+    _pendingFromEdge = edge;
+    selectedConnectionIndex = null;
+  }
 
-    final _PortConnection? portConnection = _firstMatchingPortConnection(
+  bool _canCompleteConnectionDraft(NodeModel toNode) {
+    final NodeModel? fromNode = _findNode(_pendingFromNodeId ?? '');
+    final int? fromPortIndex = _pendingFromPortIndex;
+    return fromNode != null &&
+        fromPortIndex != null &&
+        fromNode.id != toNode.id &&
+        !isNodeMutationLocked(fromNode.id) &&
+        !isNodeMutationLocked(toNode.id) &&
+        _matchingInputPortForOutputPort(fromNode, fromPortIndex, toNode) !=
+            null &&
+        !_collectDescendantsInclusive(toNode.id).contains(fromNode.id);
+  }
+
+  bool completeConnectionDraft(NodeModel toNode, NodeConnectionEdge edge) {
+    final NodeModel? fromNode = _findNode(_pendingFromNodeId ?? '');
+    final int? fromPortIndex = _pendingFromPortIndex;
+    if (fromNode == null ||
+        fromPortIndex == null ||
+        fromNode.id == toNode.id ||
+        isNodeMutationLocked(fromNode.id) ||
+        isNodeMutationLocked(toNode.id)) {
+      return false;
+    }
+    final int? toPortIndex = _matchingInputPortForOutputPort(
       fromNode,
-      node,
+      fromPortIndex,
+      toNode,
     );
-    final bool validDirection = _isValidDownstreamPlacement(fromNode, node);
     final bool introducesCycle = _collectDescendantsInclusive(
-      node.id,
+      toNode.id,
     ).contains(fromNode.id);
-
-    if (portConnection == null || !validDirection || introducesCycle) {
-      selectedNodeId = node.id;
-      selectedNodeIds
-        ..clear()
-        ..add(node.id);
-      selectedConnectionIndex = null;
-      return;
-    }
+    if (toPortIndex == null || introducesCycle) return false;
 
     final Map<String, dynamic> nextConnection = <String, dynamic>{
       'fromNode': fromNode.id,
-      'fromPort': portConnection.fromPortIndex,
-      'toNode': node.id,
-      'toPort': portConnection.toPortIndex,
+      'fromPort': fromPortIndex,
+      'fromEdge': (_pendingFromEdge ?? NodeConnectionEdge.bottom).name,
+      'toNode': toNode.id,
+      'toPort': toPortIndex,
+      'toEdge': edge.name,
     };
-
     final bool duplicate = connections.any(
       (Map<String, dynamic> connection) =>
           connection['fromNode'] == nextConnection['fromNode'] &&
@@ -2835,18 +2883,16 @@ class CanvasLogic {
           connection['toNode'] == nextConnection['toNode'] &&
           connection['toPort'] == nextConnection['toPort'],
     );
-
     if (!duplicate) {
       _recordUndo('connect nodes');
       connections.add(nextConnection);
     }
-
-    selectedNodeId = node.id;
+    _clearPendingConnection();
+    selectedNodeId = toNode.id;
     selectedNodeIds
       ..clear()
-      ..add(node.id);
-    selectedConnectionIndex = null;
-    _clearPendingConnection();
+      ..add(toNode.id);
+    return true;
   }
 
   _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {
@@ -7328,8 +7374,13 @@ class CanvasLogic {
         fromNode,
         toNode,
         fromPortIndex: fromPort,
+        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
       );
-      final Offset end = _inputAnchor(fromNode, toNode);
+      final Offset end = _inputAnchor(
+        fromNode,
+        toNode,
+        edge: _connectionEdgeFromName(connection['toEdge']?.toString()),
+      );
       final Rect corridor = Rect.fromLTRB(
         math.min(start.dx, end.dx) - corridorPadding,
         math.min(start.dy, end.dy) - corridorPadding,
@@ -7547,17 +7598,13 @@ class CanvasLogic {
     return null;
   }
 
-  bool _isValidDownstreamPlacement(NodeModel fromNode, NodeModel toNode) {
-    final double dx = toNode.position.dx - fromNode.position.dx;
-    final double dy = toNode.position.dy - fromNode.position.dy;
-    return dx >= 24 || dy >= 24;
-  }
-
   Offset _outputAnchor(
     NodeModel fromNode,
     NodeModel toNode, {
     required int fromPortIndex,
+    NodeConnectionEdge? edge,
   }) {
+    if (edge != null) return _anchorForEdge(fromNode, edge);
     if (_shouldUseVerticalAnchors(fromNode, toNode)) {
       return Offset(
         fromNode.position.dx + (_cardWidth / 2),
@@ -7570,11 +7617,44 @@ class CanvasLogic {
     );
   }
 
-  Offset _inputAnchor(NodeModel fromNode, NodeModel toNode) {
+  Offset _inputAnchor(
+    NodeModel fromNode,
+    NodeModel toNode, {
+    NodeConnectionEdge? edge,
+  }) {
+    if (edge != null) return _anchorForEdge(toNode, edge);
     if (_shouldUseVerticalAnchors(fromNode, toNode)) {
       return Offset(toNode.position.dx + (_cardWidth / 2), toNode.position.dy);
     }
     return Offset(toNode.position.dx, toNode.position.dy + (_cardHeight / 2));
+  }
+
+  Offset _anchorForEdge(NodeModel node, NodeConnectionEdge edge) {
+    return switch (edge) {
+      NodeConnectionEdge.right => Offset(
+        node.position.dx + _cardWidth,
+        node.position.dy + (_cardHeight / 2),
+      ),
+      NodeConnectionEdge.bottom => Offset(
+        node.position.dx + (_cardWidth / 2),
+        node.position.dy + _cardHeight,
+      ),
+      NodeConnectionEdge.left => Offset(
+        node.position.dx,
+        node.position.dy + (_cardHeight / 2),
+      ),
+      NodeConnectionEdge.top => Offset(
+        node.position.dx + (_cardWidth / 2),
+        node.position.dy,
+      ),
+    };
+  }
+
+  NodeConnectionEdge? _connectionEdgeFromName(String? name) {
+    for (final NodeConnectionEdge edge in NodeConnectionEdge.values) {
+      if (edge.name == name) return edge;
+    }
+    return null;
   }
 
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
@@ -7597,8 +7677,13 @@ class CanvasLogic {
         fromNode,
         toNode,
         fromPortIndex: fromPort,
+        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
       );
-      final Offset end = _inputAnchor(fromNode, toNode);
+      final Offset end = _inputAnchor(
+        fromNode,
+        toNode,
+        edge: _connectionEdgeFromName(connection['toEdge']?.toString()),
+      );
       if (_isPointNearConnection(
         point,
         start,
