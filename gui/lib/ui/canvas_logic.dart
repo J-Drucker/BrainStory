@@ -7203,7 +7203,8 @@ class CanvasLogic {
                                         : null,
                                     onSaveToDisk:
                                         supportsNodeSnapshotDiskStore &&
-                                            row.inRam
+                                            row.inRam &&
+                                            !row.onDisk
                                         ? () async {
                                             final NodeModel? node = _findNode(
                                               row.nodeId,
