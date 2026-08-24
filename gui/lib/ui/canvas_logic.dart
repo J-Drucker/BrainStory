@@ -499,71 +499,87 @@ class _MemoryRowWidget extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 10,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _MemoryInfoPill(
-              label: 'Processing',
-              value: row.processingLabel,
-              color: switch (row.processingLabel) {
-                'Done' => const Color(0xFF43C26B),
-                'Ready' => const Color(0xFF5CC8FF),
-                'Stale' => const Color(0xFFFFB347),
-                'Partial' => const Color(0xFFC7D85A),
-                'Running' => const Color(0xFF7FE36A),
-                'Waiting' => const Color(0xFFC0CAD4),
-                'Input locked' => const Color(0xFFFFD166),
-                _ => const Color(0xFF8C98A4),
-              },
-            ),
-            _MemoryInfoPill(
-              label: 'RAM',
-              value: row.inRam ? 'Loaded' : 'Not loaded',
-              color: row.inRam
-                  ? const Color(0xFF5CC8FF)
-                  : const Color(0xFF8C98A4),
-            ),
-            _MemoryInfoPill(
-              label: 'Disk',
-              value: row.onDisk ? 'Saved' : 'Not saved',
-              color: row.onDisk
-                  ? const Color(0xFF43C26B)
-                  : const Color(0xFF8C98A4),
-            ),
-            _MemoryInfoPill(
-              label: 'Precision',
-              value: row.precisionLabel,
-              color: const Color(0xFFD0B56E),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            OutlinedButton(
-              onPressed: onLoadFromDisk == null
-                  ? null
-                  : () => onLoadFromDisk!(),
-              child: const Text('Load from disk'),
-            ),
-            OutlinedButton(
-              onPressed: onReleaseRam == null ? null : () => onReleaseRam!(),
-              child: const Text('Purge RAM'),
-            ),
-            if (supportsDisk)
-              OutlinedButton(
-                onPressed: onSaveToDisk == null ? null : () => onSaveToDisk!(),
-                child: const Text('Save to disk'),
+            Expanded(
+              flex: 2,
+              child: _MemoryStatusColumn(
+                label: 'Processing',
+                value: row.processingLabel,
+                color: switch (row.processingLabel) {
+                  'Done' => const Color(0xFF43C26B),
+                  'Ready' => const Color(0xFF5CC8FF),
+                  'Stale' => const Color(0xFFFFB347),
+                  'Partial' => const Color(0xFFC7D85A),
+                  'Running' => const Color(0xFF7FE36A),
+                  'Waiting' => const Color(0xFFC0CAD4),
+                  'Input locked' => const Color(0xFFFFD166),
+                  _ => const Color(0xFF8C98A4),
+                },
               ),
-            if (supportsDisk)
-              OutlinedButton(
-                onPressed: onPurgeDisk == null ? null : () => onPurgeDisk!(),
-                child: const Text('Purge disk'),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 3,
+              child: _MemoryStatusColumn(
+                label: 'RAM',
+                value: row.inRam ? 'Loaded' : 'Not loaded',
+                color: row.inRam
+                    ? const Color(0xFF5CC8FF)
+                    : const Color(0xFF8C98A4),
+                actions: <Widget>[
+                  OutlinedButton(
+                    onPressed: onLoadFromDisk == null
+                        ? null
+                        : () => onLoadFromDisk!(),
+                    child: const Text('Load from disk'),
+                  ),
+                  OutlinedButton(
+                    onPressed: onReleaseRam == null
+                        ? null
+                        : () => onReleaseRam!(),
+                    child: const Text('Purge RAM'),
+                  ),
+                ],
               ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 3,
+              child: _MemoryStatusColumn(
+                label: 'Disk',
+                value: row.onDisk ? 'Saved' : 'Not saved',
+                color: row.onDisk
+                    ? const Color(0xFF43C26B)
+                    : const Color(0xFF8C98A4),
+                actions: supportsDisk
+                    ? <Widget>[
+                        OutlinedButton(
+                          onPressed: onSaveToDisk == null
+                              ? null
+                              : () => onSaveToDisk!(),
+                          child: const Text('Save to disk'),
+                        ),
+                        OutlinedButton(
+                          onPressed: onPurgeDisk == null
+                              ? null
+                              : () => onPurgeDisk!(),
+                          child: const Text('Purge disk'),
+                        ),
+                      ]
+                    : const <Widget>[],
+              ),
+            ),
+            const SizedBox(width: 24),
+            Expanded(
+              flex: 2,
+              child: _MemoryStatusColumn(
+                label: 'Precision',
+                value: row.precisionLabel,
+                color: const Color(0xFFD0B56E),
+              ),
+            ),
           ],
         ),
       ],
@@ -571,44 +587,46 @@ class _MemoryRowWidget extends StatelessWidget {
   }
 }
 
-class _MemoryInfoPill extends StatelessWidget {
-  const _MemoryInfoPill({
+class _MemoryStatusColumn extends StatelessWidget {
+  const _MemoryStatusColumn({
     required this.label,
     required this.value,
     required this.color,
+    this.actions = const <Widget>[],
   });
 
   final String label;
   final String value;
   final Color color;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.5)),
-      ),
-      child: RichText(
-        text: TextSpan(
-          children: <TextSpan>[
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            TextSpan(
-              text: value,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        if (actions.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 8, children: actions),
+        ],
+      ],
     );
   }
 }
