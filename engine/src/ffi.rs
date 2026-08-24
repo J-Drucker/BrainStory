@@ -1,10 +1,49 @@
+use std::ffi::CString;
+use std::os::raw::c_char;
 use std::slice;
 
 use crate::filtering::bandpass_filter;
+use crate::ica::fast_ica;
 use crate::spectrum::single_sided_spectrum;
+use serde_json::json;
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
+
+#[no_mangle]
+pub extern "C" fn brainstory_fast_ica(
+    samples_ptr: *const f64,
+    channel_count: usize,
+    sample_count: usize,
+    component_count: usize,
+    tolerance: f64,
+    max_iterations: usize,
+    seed: u64,
+) -> *mut c_char {
+    let result = if samples_ptr.is_null() {
+        Err("ICA did not receive a sample buffer.".to_string())
+    } else if let Some(value_count) = channel_count.checked_mul(sample_count) {
+        let samples = unsafe { slice::from_raw_parts(samples_ptr, value_count) };
+        fast_ica(
+            samples,
+            channel_count,
+            sample_count,
+            component_count,
+            tolerance,
+            max_iterations,
+            seed,
+        )
+    } else {
+        Err("ICA input dimensions overflowed the native address space.".to_string())
+    };
+    let payload = match result {
+        Ok(result) => json!({"ok": true, "result": result}),
+        Err(error) => json!({"ok": false, "error": error}),
+    };
+    CString::new(payload.to_string())
+        .expect("JSON cannot contain NUL bytes")
+        .into_raw()
+}
 
 #[no_mangle]
 pub extern "C" fn brainstory_single_sided_spectrum(
@@ -130,9 +169,11 @@ pub extern "C" fn brainstory_segment_mean_sd(
 #[cfg(test)]
 mod tests {
     use super::{
-        brainstory_bandpass_filter, brainstory_segment_mean_sd, brainstory_single_sided_spectrum,
-        STATUS_OK,
+        brainstory_bandpass_filter, brainstory_fast_ica, brainstory_segment_mean_sd,
+        brainstory_single_sided_spectrum, STATUS_OK,
     };
+    use crate::ant_cnt::brainstory_engine_free_string;
+    use std::ffi::CStr;
 
     #[test]
     fn computes_mean_and_sd_for_flattened_traces() {
@@ -193,5 +234,25 @@ mod tests {
         assert!(bin_count > 0);
         assert_eq!(frequencies[0], 1.0);
         assert!(power[..bin_count].iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn computes_ica_through_the_c_api() {
+        let sample_count = 256;
+        let mut samples = Vec::with_capacity(sample_count * 2);
+        samples.extend((0..sample_count).map(|index| (index as f64 / 9.0).sin()));
+        samples.extend(
+            (0..sample_count)
+                .map(|index| (index as f64 / 9.0).sin() + 0.5 * (index as f64 / 5.0).cos()),
+        );
+        let pointer = brainstory_fast_ica(samples.as_ptr(), 2, sample_count, 2, 1.0e-4, 500, 42);
+        assert!(!pointer.is_null());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        brainstory_engine_free_string(pointer);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["result"]["activations"].as_array().unwrap().len(), 2);
     }
 }

@@ -85,8 +85,99 @@ typedef _AntCntImportDart =
 typedef _FreeStringNative = ffi.Void Function(ffi.Pointer<ffi.Uint8> pointer);
 typedef _FreeStringDart = void Function(ffi.Pointer<ffi.Uint8> pointer);
 
+typedef _IcaNative =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      ffi.IntPtr channelCount,
+      ffi.IntPtr sampleCount,
+      ffi.IntPtr componentCount,
+      ffi.Double tolerance,
+      ffi.IntPtr maxIterations,
+      ffi.Uint64 seed,
+    );
+typedef _IcaDart =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      int channelCount,
+      int sampleCount,
+      int componentCount,
+      double tolerance,
+      int maxIterations,
+      int seed,
+    );
+
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
+
+NativeIcaResult? computeIcaNative(
+  List<List<double>> channels, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required int seed,
+}) {
+  if (channels.isEmpty || channels.first.isEmpty) {
+    throw ArgumentError('ICA requires non-empty channel data.');
+  }
+  final int sampleCount = channels.first.length;
+  if (channels.any((List<double> channel) => channel.length != sampleCount)) {
+    throw ArgumentError('ICA channels must have equal sample counts.');
+  }
+  final _IcaDart? ica = _engineLibrary.fastIca;
+  if (ica == null || _nativeMemory.unavailable) {
+    return null;
+  }
+
+  final int valueCount = channels.length * sampleCount;
+  final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
+    valueCount,
+  );
+  try {
+    int flatIndex = 0;
+    for (final List<double> channel in channels) {
+      for (final double value in channel) {
+        samplesPtr[flatIndex++] = value;
+      }
+    }
+    final ffi.Pointer<ffi.Uint8> resultPointer = ica(
+      samplesPtr,
+      channels.length,
+      sampleCount,
+      componentCount,
+      tolerance,
+      maxIterations,
+      seed,
+    );
+    if (resultPointer == ffi.nullptr) {
+      throw StateError('The native ICA engine returned no result.');
+    }
+    try {
+      final Map<String, dynamic> response = Map<String, dynamic>.from(
+        jsonDecode(_decodeNativeString(resultPointer)) as Map,
+      );
+      if (response['ok'] != true) {
+        throw StateError(
+          response['error']?.toString() ?? 'The native ICA engine failed.',
+        );
+      }
+      return NativeIcaResult.fromJson(
+        Map<String, dynamic>.from(response['result'] as Map),
+      );
+    } finally {
+      _engineLibrary.freeString(resultPointer);
+    }
+  } finally {
+    _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+  }
+}
+
+String _decodeNativeString(ffi.Pointer<ffi.Uint8> pointer) {
+  final List<int> bytes = <int>[];
+  for (int index = 0; pointer[index] != 0; index++) {
+    bytes.add(pointer[index]);
+  }
+  return utf8.decode(bytes);
+}
 
 NativeSpectrumResult? computeSingleSidedSpectrumNative(
   List<double> samples, {
@@ -300,6 +391,20 @@ class _BrainstoryEngineLibrary {
   _BrainstoryEngineLibrary() : _library = _tryLoadLibrary();
 
   final ffi.DynamicLibrary? _library;
+
+  _IcaDart? get fastIca {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) {
+      return null;
+    }
+    try {
+      return library.lookupFunction<_IcaNative, _IcaDart>(
+        'brainstory_fast_ica',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
   _SingleSidedSpectrumDart? get singleSidedSpectrum {
     final ffi.DynamicLibrary? library = _library;

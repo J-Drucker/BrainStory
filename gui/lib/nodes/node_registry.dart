@@ -121,11 +121,7 @@ class NodeRegistry {
       create: () => PCANodeType(),
       visible: false,
     ),
-    NodeRegistryEntry(
-      group: NodeGroup.transform,
-      create: () => ICANodeType(),
-      visible: false,
-    ),
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => ICANodeType()),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => EigenvalueDecompositionNodeType(),

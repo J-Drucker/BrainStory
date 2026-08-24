@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/brainstory_engine.dart';
 import 'node_type.dart';
 
 abstract class _MatrixTransformNodeType extends NodeType {
@@ -16,20 +17,20 @@ abstract class _MatrixTransformNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'componentCount': 8,
-        'whiten': true,
-      };
+    'componentCount': 8,
+    'whiten': true,
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'transformed', type: PortType.signal),
-        PortSpec(name: 'transform', type: PortType.matrixTransformation),
-      ];
+    PortSpec(name: 'transformed', type: PortType.signal),
+    PortSpec(name: 'transform', type: PortType.matrixTransformation),
+  ];
 
   @override
   Widget buildBody(
@@ -44,10 +45,7 @@ abstract class _MatrixTransformNodeType extends NodeType {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Text(
-          description,
-          style: const TextStyle(color: Colors.black87),
-        ),
+        Text(description, style: const TextStyle(color: Colors.black87)),
         const SizedBox(height: 12),
         NodeParamTextField(
           params: params,
@@ -84,19 +82,24 @@ abstract class _MatrixTransformNodeType extends NodeType {
       return;
     }
 
-    final int inputChannels = timeSeries.channelCount == 0 ? 1 : timeSeries.channelCount;
+    final int inputChannels = timeSeries.channelCount == 0
+        ? 1
+        : timeSeries.channelCount;
     final int requestedComponents =
         (params['componentCount'] as num?)?.round() ?? inputChannels;
     final int componentCount = requestedComponents.clamp(1, inputChannels);
 
     dataset.timeSeries = timeSeries.copyWith(
-      source: '${timeSeries.source.isEmpty ? methodName : '${timeSeries.source} -> $methodName'} (placeholder)',
+      source:
+          '${timeSeries.source.isEmpty ? methodName : '${timeSeries.source} -> $methodName'} (placeholder)',
       channelLabels: List<String>.generate(
         componentCount,
         (int index) => '$methodName ${index + 1}',
         growable: false,
       ),
-      channelSamples: timeSeries.channels.take(componentCount).toList(growable: false),
+      channelSamples: timeSeries.channels
+          .take(componentCount)
+          .toList(growable: false),
     );
 
     dataset.matrixTransformation = MatrixTransformationData(
@@ -114,7 +117,8 @@ abstract class _MatrixTransformNodeType extends NodeType {
         (int index) => '$methodName ${index + 1}',
         growable: false,
       ),
-      source: '$methodName placeholder transform; whiten=${(params['whiten'] as bool?) ?? true}',
+      source:
+          '$methodName placeholder transform; whiten=${(params['whiten'] as bool?) ?? true}',
     );
   }
 }
@@ -140,7 +144,174 @@ class ICANodeType extends _MatrixTransformNodeType {
 
   @override
   String get description =>
-      'Independent Component Analysis placeholder. This will eventually emit component activations plus the learned unmixing/mixing transform.';
+      'FastICA separates a continuous multichannel recording into statistically independent component activations.';
+
+  @override
+  Map<String, dynamic> get defaultParams => <String, dynamic>{
+    'componentCount': 0,
+    'tolerance': 1.0e-4,
+    'maxIterations': 200,
+    'seed': 42,
+  };
+
+  @override
+  Widget buildBody(
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
+    params.putIfAbsent('componentCount', () => 0);
+    params.putIfAbsent('tolerance', () => 1.0e-4);
+    params.putIfAbsent('maxIterations', () => 200);
+    params.putIfAbsent('seed', () => 42);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(description, style: const TextStyle(color: Colors.black87)),
+        const SizedBox(height: 12),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'componentCount',
+          labelText: 'Components',
+          helperText: 'Use 0 to select the numerical rank automatically.',
+          keyboardType: TextInputType.number,
+          parser: (String value, dynamic previous) =>
+              int.tryParse(value) ?? previous,
+        ),
+        const SizedBox(height: 8),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'tolerance',
+          labelText: 'Convergence tolerance',
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          parser: (String value, dynamic previous) =>
+              double.tryParse(value) ?? previous,
+        ),
+        const SizedBox(height: 8),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'maxIterations',
+          labelText: 'Maximum iterations',
+          keyboardType: TextInputType.number,
+          parser: (String value, dynamic previous) =>
+              int.tryParse(value) ?? previous,
+        ),
+        const SizedBox(height: 8),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'seed',
+          labelText: 'Deterministic seed',
+          keyboardType: TextInputType.number,
+          parser: (String value, dynamic previous) =>
+              int.tryParse(value) ?? previous,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Input is centered and whitened automatically. ICA runs on the full continuous recording.',
+          style: TextStyle(color: Colors.black54),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries == null || timeSeries.channels.isEmpty) return;
+    final List<List<double>> channels = timeSeries.channels;
+    if (channels.length < 2) {
+      throw ArgumentError('ICA requires at least two channels.');
+    }
+    final int sampleCount = channels.first.length;
+    if (sampleCount < 32 || sampleCount < channels.length * 3) {
+      throw ArgumentError(
+        'ICA requires at least 32 samples and at least three samples per channel.',
+      );
+    }
+    if (channels.any((List<double> channel) => channel.length != sampleCount)) {
+      throw ArgumentError('All ICA input channels must have equal lengths.');
+    }
+    final int componentCount = (params['componentCount'] as num?)?.toInt() ?? 0;
+    final double tolerance =
+        (params['tolerance'] as num?)?.toDouble() ?? 1.0e-4;
+    final int maxIterations = (params['maxIterations'] as num?)?.toInt() ?? 200;
+    final int seed = (params['seed'] as num?)?.toInt() ?? 42;
+    if (componentCount < 0 || componentCount > channels.length) {
+      throw ArgumentError(
+        'ICA components must be 0 (automatic) or no greater than the channel count.',
+      );
+    }
+    if (!tolerance.isFinite || tolerance <= 0 || tolerance >= 1) {
+      throw ArgumentError('ICA tolerance must be between 0 and 1.');
+    }
+    if (maxIterations <= 0 || maxIterations > 100000) {
+      throw ArgumentError('ICA maximum iterations must be from 1 to 100000.');
+    }
+    if (seed < 0) {
+      throw ArgumentError('ICA seed must be non-negative.');
+    }
+
+    final NativeIcaResult? result = computeIcaNative(
+      channels,
+      componentCount: componentCount,
+      tolerance: tolerance,
+      maxIterations: maxIterations,
+      seed: seed,
+    );
+    if (result == null) {
+      throw UnsupportedError(
+        'ICA requires the BrainStory Rust engine on this platform.',
+      );
+    }
+    final List<String> componentLabels = List<String>.generate(
+      result.activations.length,
+      (int index) => 'IC ${index + 1}',
+      growable: false,
+    );
+    final List<String> originalChannelLabels =
+        timeSeries.channelLabels.length == channels.length
+        ? List<String>.from(timeSeries.channelLabels)
+        : List<String>.generate(
+            channels.length,
+            (int index) => 'Channel ${index + 1}',
+            growable: false,
+          );
+    final String inputSource = timeSeries.source.isEmpty
+        ? 'ICA'
+        : '${timeSeries.source} -> ICA';
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: result.activations,
+      sampleRate: timeSeries.sampleRate,
+      channelLabels: componentLabels,
+      markers: timeSeries.markers,
+      factors: timeSeries.factors,
+      source: inputSource,
+    );
+    dataset.segmentedTimeSeries = null;
+    dataset.matrixTransformation = MatrixTransformationData(
+      matrix: result.unmixingMatrix,
+      unmixingMatrix: result.unmixingMatrix,
+      mixingMatrix: result.mixingMatrix,
+      whiteningMatrix: result.whiteningMatrix,
+      dewhiteningMatrix: result.dewhiteningMatrix,
+      channelMeans: result.channelMeans,
+      originalChannelLabels: originalChannelLabels,
+      originalChannelCoordinates: timeSeries.channelCoordinates,
+      originalImpedanceData: timeSeries.impedanceData,
+      componentLabels: componentLabels,
+      componentEnergies: result.componentEnergies,
+      algorithm: 'FastICA (symmetric, tanh)',
+      converged: result.converged,
+      iterationCount: result.iterationCount,
+      numericalRank: result.numericalRank,
+      tolerance: result.tolerance,
+      maxIterations: result.maxIterations,
+      seed: result.seed,
+      source:
+          '$inputSource; ${result.converged ? 'converged' : 'did not converge'} after ${result.iterationCount} iteration(s)',
+    );
+  }
 }
 
 class EigenvalueDecompositionNodeType extends _MatrixTransformNodeType {
@@ -167,20 +338,20 @@ class MicrostatesNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'stateCount': 4,
-        'clusteringAlgorithm': 'Modified K-Means',
-      };
+    'stateCount': 4,
+    'clusteringAlgorithm': 'Modified K-Means',
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'microstate signal', type: PortType.signal),
-        PortSpec(name: 'microstate transform', type: PortType.matrixTransformation),
-      ];
+    PortSpec(name: 'microstate signal', type: PortType.signal),
+    PortSpec(name: 'microstate transform', type: PortType.matrixTransformation),
+  ];
 
   @override
   Widget buildBody(
@@ -238,7 +409,10 @@ class MicrostatesNodeType extends NodeType {
       return;
     }
 
-    final int stateCount = ((params['stateCount'] as num?)?.round() ?? 4).clamp(2, 32);
+    final int stateCount = ((params['stateCount'] as num?)?.round() ?? 4).clamp(
+      2,
+      32,
+    );
     final String algorithm =
         params['clusteringAlgorithm']?.toString() ?? 'Modified K-Means';
 

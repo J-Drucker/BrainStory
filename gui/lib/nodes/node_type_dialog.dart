@@ -663,6 +663,25 @@ class _MetadataDialogBody extends StatelessWidget {
           ? 0
           : matrixTransformation.matrix.first.length;
       rows.add(_metadataRow('Matrix transform', '$rowCount x $columnCount'));
+      if (matrixTransformation.algorithm.isNotEmpty) {
+        final bool? converged = matrixTransformation.converged;
+        final String convergence = converged == null
+            ? ''
+            : converged
+            ? 'converged in ${matrixTransformation.iterationCount} iteration(s)'
+            : 'NOT CONVERGED after ${matrixTransformation.iterationCount} iteration(s)';
+        rows.add(
+          _metadataRow(
+            matrixTransformation.algorithm,
+            <String>[
+              '${matrixTransformation.componentCount} component(s)',
+              if (convergence.isNotEmpty) convergence,
+              if (matrixTransformation.numericalRank > 0)
+                'rank ${matrixTransformation.numericalRank}',
+            ].join(' • '),
+          ),
+        );
+      }
     }
 
     return Padding(

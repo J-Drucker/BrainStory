@@ -20,3 +20,11 @@ NativeSpectrumResult? computeSingleSidedSpectrumNative(
   required double lowHz,
   required double highHz,
 }) => null;
+
+NativeIcaResult? computeIcaNative(
+  List<List<double>> channels, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required int seed,
+}) => null;

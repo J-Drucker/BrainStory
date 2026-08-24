@@ -1434,35 +1434,176 @@ class TimeFrequencyData {
 class MatrixTransformationData {
   const MatrixTransformationData({
     required this.matrix,
+    this.unmixingMatrix = const <List<double>>[],
+    this.mixingMatrix = const <List<double>>[],
+    this.whiteningMatrix = const <List<double>>[],
+    this.dewhiteningMatrix = const <List<double>>[],
+    this.channelMeans = const <double>[],
+    this.originalChannelLabels = const <String>[],
+    this.originalChannelCoordinates = const <String, ChannelCoordinate>{},
+    this.originalImpedanceData,
     this.componentLabels = const <String>[],
+    this.componentEnergies = const <double>[],
+    this.algorithm = '',
+    this.converged,
+    this.iterationCount = 0,
+    this.numericalRank = 0,
+    this.tolerance = 0.0,
+    this.maxIterations = 0,
+    this.seed = 0,
     this.source = '',
   });
 
+  /// Legacy transform matrix. For ICA this is the unmixing matrix.
   final List<List<double>> matrix;
+  final List<List<double>> unmixingMatrix;
+  final List<List<double>> mixingMatrix;
+  final List<List<double>> whiteningMatrix;
+  final List<List<double>> dewhiteningMatrix;
+  final List<double> channelMeans;
+  final List<String> originalChannelLabels;
+  final Map<String, ChannelCoordinate> originalChannelCoordinates;
+  final ImpedanceData? originalImpedanceData;
   final List<String> componentLabels;
+  final List<double> componentEnergies;
+  final String algorithm;
+  final bool? converged;
+  final int iterationCount;
+  final int numericalRank;
+  final double tolerance;
+  final int maxIterations;
+  final int seed;
   final String source;
+
+  int get componentCount => componentLabels.isNotEmpty
+      ? componentLabels.length
+      : (unmixingMatrix.isNotEmpty ? unmixingMatrix.length : matrix.length);
+
+  List<List<double>> reconstructSensorChannels(
+    List<List<double>> componentActivations, {
+    Set<int> excludedComponents = const <int>{},
+  }) {
+    if (mixingMatrix.isEmpty || channelMeans.length != mixingMatrix.length) {
+      throw StateError(
+        'The transformation does not contain ICA reconstruction data.',
+      );
+    }
+    final int components = mixingMatrix.first.length;
+    if (componentActivations.length != components ||
+        componentActivations.isEmpty) {
+      throw ArgumentError(
+        'Component activations do not match the ICA mixing matrix.',
+      );
+    }
+    final int sampleCount = componentActivations.first.length;
+    if (componentActivations.any(
+      (List<double> values) => values.length != sampleCount,
+    )) {
+      throw ArgumentError(
+        'All component activation channels must have equal lengths.',
+      );
+    }
+    return List<List<double>>.generate(mixingMatrix.length, (int channel) {
+      return List<double>.generate(sampleCount, (int sample) {
+        double value = channelMeans[channel];
+        for (int component = 0; component < components; component++) {
+          if (!excludedComponents.contains(component)) {
+            value +=
+                mixingMatrix[channel][component] *
+                componentActivations[component][sample];
+          }
+        }
+        return value;
+      }, growable: false);
+    }, growable: false);
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'matrix': matrix,
+      'unmixingMatrix': unmixingMatrix,
+      'mixingMatrix': mixingMatrix,
+      'whiteningMatrix': whiteningMatrix,
+      'dewhiteningMatrix': dewhiteningMatrix,
+      'channelMeans': channelMeans,
+      'originalChannelLabels': originalChannelLabels,
+      'originalChannelCoordinates': originalChannelCoordinates.map(
+        (String key, ChannelCoordinate value) =>
+            MapEntry<String, dynamic>(key, value.toJson()),
+      ),
+      if (originalImpedanceData != null)
+        'originalImpedanceData': originalImpedanceData!.toJson(),
       'componentLabels': componentLabels,
+      'componentEnergies': componentEnergies,
+      'algorithm': algorithm,
+      if (converged != null) 'converged': converged,
+      'iterationCount': iterationCount,
+      'numericalRank': numericalRank,
+      'tolerance': tolerance,
+      'maxIterations': maxIterations,
+      'seed': seed,
       'source': source,
     };
   }
 
   static MatrixTransformationData fromJson(Map<String, dynamic> json) {
-    return MatrixTransformationData(
-      matrix: (json['matrix'] as List<dynamic>? ?? const <dynamic>[])
+    List<List<double>> matrixFrom(String key) {
+      return (json[key] as List<dynamic>? ?? const <dynamic>[])
           .map(
             (dynamic row) => (row as List<dynamic>)
                 .map((dynamic value) => (value as num).toDouble())
                 .toList(growable: false),
           )
-          .toList(growable: false),
+          .toList(growable: false);
+    }
+
+    final List<List<double>> legacyMatrix = matrixFrom('matrix');
+    final List<List<double>> unmixing = matrixFrom('unmixingMatrix');
+    return MatrixTransformationData(
+      matrix: legacyMatrix.isNotEmpty ? legacyMatrix : unmixing,
+      unmixingMatrix: unmixing.isNotEmpty ? unmixing : legacyMatrix,
+      mixingMatrix: matrixFrom('mixingMatrix'),
+      whiteningMatrix: matrixFrom('whiteningMatrix'),
+      dewhiteningMatrix: matrixFrom('dewhiteningMatrix'),
+      channelMeans:
+          (json['channelMeans'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      originalChannelLabels:
+          (json['originalChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      originalChannelCoordinates:
+          (json['originalChannelCoordinates'] as Map? ??
+                  const <String, dynamic>{})
+              .map<String, ChannelCoordinate>((dynamic key, dynamic value) {
+                return MapEntry<String, ChannelCoordinate>(
+                  key.toString(),
+                  ChannelCoordinate.fromJson(
+                    Map<String, dynamic>.from(value as Map),
+                  ),
+                );
+              }),
+      originalImpedanceData: ImpedanceData.fromJsonOrNull(
+        json['originalImpedanceData'],
+      ),
       componentLabels:
           (json['componentLabels'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
               .toList(growable: false),
+      componentEnergies:
+          (json['componentEnergies'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      algorithm: json['algorithm']?.toString() ?? '',
+      converged: json.containsKey('converged')
+          ? json['converged'] == true
+          : null,
+      iterationCount: (json['iterationCount'] as num?)?.toInt() ?? 0,
+      numericalRank: (json['numericalRank'] as num?)?.toInt() ?? 0,
+      tolerance: (json['tolerance'] as num?)?.toDouble() ?? 0.0,
+      maxIterations: (json['maxIterations'] as num?)?.toInt() ?? 0,
+      seed: (json['seed'] as num?)?.toInt() ?? 0,
       source: json['source']?.toString() ?? '',
     );
   }

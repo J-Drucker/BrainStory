@@ -47,6 +47,22 @@ NativeSpectrumResult? computeSingleSidedSpectrumNative(
   );
 }
 
+NativeIcaResult? computeIcaNative(
+  List<List<double>> channels, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required int seed,
+}) {
+  return impl.computeIcaNative(
+    channels,
+    componentCount: componentCount,
+    tolerance: tolerance,
+    maxIterations: maxIterations,
+    seed: seed,
+  );
+}
+
 AggregateSeriesStats? computeAggregateSeriesStatsWithFallback(
   List<List<double>> traces,
 ) {

@@ -11,7 +11,7 @@ Signal Processing,Frequency Domain,FOOOF,toy,yes
 Signal Processing,Frequency Domain,Spectral Features,dart,yes
 Signal Processing,Matrix Transformation,Microstates,toy,no
 Signal Processing,Matrix Transformation,PCA,toy,no
-Signal Processing,Matrix Transformation,ICA,toy,no
+Signal Processing,Matrix Transformation,ICA,rust,yes
 Signal Processing,Matrix Transformation,Eigenvalue Decomposition,toy,no
 Signal Processing,Matrix Transformation,Source Reconstruction,toy,no
 Multimodal,Electrocardiography (EKG),Detect Peaks,toy,yes

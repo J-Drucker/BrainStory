@@ -1,0 +1,154 @@
+import 'dart:math' as math;
+
+import 'package:brainstory_gui/model/data_artifacts.dart';
+import 'package:brainstory_gui/model/dataset.dart';
+import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
+import 'package:brainstory_gui/nodes/node_registry.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('ICA node emits components and reconstruction-ready metadata', () async {
+    const int sampleCount = 2048;
+    const double sampleRate = 256.0;
+    final List<List<double>> sources = <List<double>>[
+      List<double>.generate(
+        sampleCount,
+        (int index) => math.sin(2 * math.pi * 3.0 * index / sampleRate),
+      ),
+      List<double>.generate(
+        sampleCount,
+        (int index) =>
+            math.sin(2 * math.pi * 5.0 * index / sampleRate) >= 0 ? 1 : -1,
+      ),
+      List<double>.generate(
+        sampleCount,
+        (int index) => ((index * 37 % 101) - 50) / 50.0,
+      ),
+    ];
+    const List<List<double>> mixing = <List<double>>[
+      <double>[1.0, 0.5, 0.2],
+      <double>[0.3, 1.2, 0.4],
+      <double>[0.2, 0.1, 0.9],
+    ];
+    const List<double> means = <double>[10.0, -4.0, 2.0];
+    final List<List<double>> channels = List<List<double>>.generate(3, (
+      int channel,
+    ) {
+      return List<double>.generate(sampleCount, (int sample) {
+        return means[channel] +
+            List<int>.generate(3, (int index) => index)
+                .map(
+                  (int source) =>
+                      mixing[channel][source] * sources[source][sample],
+                )
+                .reduce((double left, double right) => left + right);
+      }, growable: false);
+    }, growable: false);
+    final Dataset dataset = Dataset('ica-test');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: channels,
+      sampleRate: sampleRate,
+      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+      channelCoordinates: const <String, ChannelCoordinate>{
+        'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.6, z: 0.8),
+      },
+      impedanceData: ImpedanceData(
+        channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+        measurementTimesMicros: const <int>[0],
+        ohmsByChannel: const <List<double?>>[
+          <double?>[5000],
+          <double?>[6000],
+          <double?>[7000],
+        ],
+      ),
+      source: 'synthetic',
+    );
+
+    await ICANodeType().run(dataset, ICANodeType().defaultParams);
+
+    final TimeSeriesData components = dataset.timeSeries!;
+    final MatrixTransformationData transform = dataset.matrixTransformation!;
+    expect(components.channelLabels, <String>['IC 1', 'IC 2', 'IC 3']);
+    expect(components.channels, hasLength(3));
+    expect(transform.algorithm, contains('FastICA'));
+    expect(transform.converged, isTrue);
+    expect(transform.unmixingMatrix, hasLength(3));
+    expect(transform.mixingMatrix, hasLength(3));
+    expect(transform.originalChannelLabels, <String>['Fz', 'Cz', 'Pz']);
+    expect(transform.originalChannelCoordinates, contains('Fz'));
+    expect(transform.originalImpedanceData?.channelCount, 3);
+    expect(
+      transform.componentEnergies.reduce((double a, double b) => a + b),
+      closeTo(1.0, 1.0e-10),
+    );
+
+    final List<List<double>> reconstructed = transform
+        .reconstructSensorChannels(components.channels);
+    double maximumError = 0.0;
+    for (int channel = 0; channel < channels.length; channel++) {
+      for (int sample = 0; sample < sampleCount; sample++) {
+        maximumError = math.max(
+          maximumError,
+          (reconstructed[channel][sample] - channels[channel][sample]).abs(),
+        );
+      }
+    }
+    expect(maximumError, lessThan(1.0e-8));
+  });
+
+  test('ICA transformation survives JSON round trip', () {
+    const MatrixTransformationData original = MatrixTransformationData(
+      matrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      unmixingMatrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      mixingMatrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      channelMeans: <double>[3, 4],
+      originalChannelLabels: <String>['A', 'B'],
+      componentLabels: <String>['IC 1', 'IC 2'],
+      componentEnergies: <double>[0.7, 0.3],
+      algorithm: 'FastICA',
+      converged: true,
+      iterationCount: 12,
+      numericalRank: 2,
+      tolerance: 0.0001,
+      maxIterations: 200,
+      seed: 42,
+    );
+
+    final MatrixTransformationData decoded = MatrixTransformationData.fromJson(
+      original.toJson(),
+    );
+    expect(decoded.mixingMatrix, original.mixingMatrix);
+    expect(decoded.channelMeans, original.channelMeans);
+    expect(decoded.algorithm, 'FastICA');
+    expect(decoded.converged, isTrue);
+    expect(decoded.iterationCount, 12);
+  });
+
+  test('ICA validates multichannel input', () async {
+    final Dataset dataset = Dataset('single-channel');
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.generate(128, (int index) => index.toDouble()),
+      sampleRate: 128,
+    );
+    await expectLater(
+      ICANodeType().run(dataset, ICANodeType().defaultParams),
+      throwsArgumentError,
+    );
+  });
+
+  test('ICA is visible in the node registry', () {
+    final NodeRegistryEntry entry = NodeRegistry.entries.firstWhere(
+      (NodeRegistryEntry candidate) => candidate.create() is ICANodeType,
+    );
+    expect(entry.visible, isTrue);
+  });
+}

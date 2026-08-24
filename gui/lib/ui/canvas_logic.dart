@@ -1588,12 +1588,19 @@ class CanvasLogic {
       case 'Edit Channels and Markers':
         return 'Manual channel edits and marker edits were incorporated together into the analysis graph.';
       case 'PCA':
-      case 'ICA':
       case 'Eigenvalue Decomposition':
       case 'Microstates':
       case 'K-Means':
       case 'CNN':
         return '${node.title} was included as a configured processing stage in the workflow.';
+      case 'ICA':
+        final int componentCount =
+            (params['componentCount'] as num?)?.toInt() ?? 0;
+        final double tolerance =
+            (params['tolerance'] as num?)?.toDouble() ?? 1.0e-4;
+        final int maxIterations =
+            (params['maxIterations'] as num?)?.toInt() ?? 200;
+        return 'Symmetric FastICA with tanh nonlinearity, automatic centering and whitening was applied to the continuous multichannel recording, requesting ${componentCount == 0 ? 'the numerical-rank component count' : '$componentCount components'}, a tolerance of $tolerance, and at most $maxIterations iterations.';
       case 'EEG Visualization':
         return 'A dedicated visualization node was used for explicit comparison of outputs across branches of the pipeline.';
       case 'Debug Output':
