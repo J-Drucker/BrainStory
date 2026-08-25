@@ -6,7 +6,7 @@ import 'node_type.dart';
 
 class IcaComponentRejectionNodeType extends NodeType {
   @override
-  String get title => 'ICA Component Rejection';
+  String get title => 'Apply ICA';
 
   @override
   NodeCategory get category => NodeCategory.transform;
@@ -21,7 +21,8 @@ class IcaComponentRejectionNodeType extends NodeType {
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-    PortSpec(name: 'ICA activations', type: PortType.signal),
+    PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'ICA transform', type: PortType.matrixTransformation),
   ];
 
   @override
@@ -59,7 +60,7 @@ class IcaComponentRejectionNodeType extends NodeType {
     final Set<int> excluded = excludedComponents(params);
     if (transform == null || componentCount == 0) {
       return const Text(
-        'Connect this node downstream of a completed ICA node.',
+        'Connect compatible signal data and a completed ICA transform.',
       );
     }
     return Column(
@@ -93,10 +94,10 @@ class IcaComponentRejectionNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
-    final TimeSeriesData? activations = dataset.timeSeries;
+    final TimeSeriesData? input = dataset.timeSeries;
     final MatrixTransformationData? transform = dataset.matrixTransformation;
-    if (activations == null || activations.channels.isEmpty) {
-      throw StateError('ICA component activations are unavailable.');
+    if (input == null || input.channels.isEmpty) {
+      throw StateError('Signal data for ICA application is unavailable.');
     }
     if (transform == null || transform.mixingMatrix.isEmpty) {
       throw StateError('ICA reconstruction metadata is unavailable.');
@@ -105,19 +106,17 @@ class IcaComponentRejectionNodeType extends NodeType {
     if (excluded.any((int index) => index >= transform.componentCount)) {
       throw RangeError('An excluded ICA component is out of range.');
     }
+    final bool inputIsActivations = transform.matchesComponentActivations(
+      input,
+    );
+    final List<List<double>> activations = inputIsActivations
+        ? input.channels
+        : transform.transformSensorChannels(input);
     final List<List<double>> cleanChannels = transform
-        .reconstructSensorChannels(
-          activations.channels,
-          excludedComponents: excluded,
-        );
-    final List<String> labels =
-        transform.originalChannelLabels.length == cleanChannels.length
+        .reconstructSensorChannels(activations, excludedComponents: excluded);
+    final List<String> labels = inputIsActivations
         ? transform.originalChannelLabels
-        : List<String>.generate(
-            cleanChannels.length,
-            (int index) => 'Channel ${index + 1}',
-            growable: false,
-          );
+        : input.channelLabels;
     final List<int> sortedExcluded = excluded.toList()..sort();
     final String excludedLabels = sortedExcluded.isEmpty
         ? 'none'
@@ -130,13 +129,17 @@ class IcaComponentRejectionNodeType extends NodeType {
               .join(', ');
     dataset.timeSeries = TimeSeriesData(
       channelSamples: cleanChannels,
-      sampleRate: activations.sampleRate,
+      sampleRate: input.sampleRate,
       channelLabels: labels,
-      channelCoordinates: transform.originalChannelCoordinates,
-      impedanceData: transform.originalImpedanceData,
-      markers: activations.markers,
-      factors: activations.factors,
-      source: '${activations.source} -> ICA rejection ($excludedLabels)',
+      channelCoordinates: inputIsActivations
+          ? transform.originalChannelCoordinates
+          : input.channelCoordinates,
+      impedanceData: inputIsActivations
+          ? transform.originalImpedanceData
+          : input.impedanceData,
+      markers: input.markers,
+      factors: input.factors,
+      source: '${input.source} -> ICA rejection ($excludedLabels)',
     );
     dataset.segmentedTimeSeries = null;
   }

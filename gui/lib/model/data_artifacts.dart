@@ -1440,6 +1440,7 @@ class MatrixTransformationData {
     this.dewhiteningMatrix = const <List<double>>[],
     this.channelMeans = const <double>[],
     this.originalChannelLabels = const <String>[],
+    this.originalSampleRate = 0.0,
     this.originalChannelCoordinates = const <String, ChannelCoordinate>{},
     this.originalImpedanceData,
     this.componentLabels = const <String>[],
@@ -1462,6 +1463,7 @@ class MatrixTransformationData {
   final List<List<double>> dewhiteningMatrix;
   final List<double> channelMeans;
   final List<String> originalChannelLabels;
+  final double originalSampleRate;
   final Map<String, ChannelCoordinate> originalChannelCoordinates;
   final ImpedanceData? originalImpedanceData;
   final List<String> componentLabels;
@@ -1478,6 +1480,61 @@ class MatrixTransformationData {
   int get componentCount => componentLabels.isNotEmpty
       ? componentLabels.length
       : (unmixingMatrix.isNotEmpty ? unmixingMatrix.length : matrix.length);
+
+  bool matchesComponentActivations(TimeSeriesData timeSeries) {
+    if (timeSeries.channelCount != componentCount) {
+      return false;
+    }
+    return componentLabels.isEmpty ||
+        _labelsMatchExactly(timeSeries.channelLabels, componentLabels);
+  }
+
+  String? sensorCompatibilityError(TimeSeriesData timeSeries) {
+    final int expectedChannels = originalChannelLabels.length;
+    if (expectedChannels == 0 || unmixingMatrix.isEmpty) {
+      return 'The ICA transform does not identify its original sensor channels.';
+    }
+    if (timeSeries.channelCount != expectedChannels) {
+      return 'ICA expects $expectedChannels sensor channels, but the selected data has ${timeSeries.channelCount}.';
+    }
+    if (!_labelsMatchExactly(timeSeries.channelLabels, originalChannelLabels)) {
+      return 'ICA sensor labels and order must exactly match ${originalChannelLabels.join(', ')}.';
+    }
+    if (originalSampleRate > 0 &&
+        (timeSeries.sampleRate - originalSampleRate).abs() > 1.0e-9) {
+      return 'ICA expects ${originalSampleRate.toStringAsFixed(3)} Hz data, but the selected data is ${timeSeries.sampleRate.toStringAsFixed(3)} Hz.';
+    }
+    if (channelMeans.length != expectedChannels ||
+        unmixingMatrix.any(
+          (List<double> row) => row.length != expectedChannels,
+        )) {
+      return 'The ICA transform dimensions do not match its sensor metadata.';
+    }
+    return null;
+  }
+
+  List<List<double>> transformSensorChannels(TimeSeriesData timeSeries) {
+    final String? compatibilityError = sensorCompatibilityError(timeSeries);
+    if (compatibilityError != null) {
+      throw ArgumentError(compatibilityError);
+    }
+    final List<List<double>> channels = timeSeries.channels;
+    final int sampleCount = channels.first.length;
+    if (channels.any((List<double> channel) => channel.length != sampleCount)) {
+      throw ArgumentError('All ICA input channels must have equal lengths.');
+    }
+    return List<List<double>>.generate(unmixingMatrix.length, (int component) {
+      return List<double>.generate(sampleCount, (int sample) {
+        double activation = 0.0;
+        for (int channel = 0; channel < channels.length; channel++) {
+          activation +=
+              unmixingMatrix[component][channel] *
+              (channels[channel][sample] - channelMeans[channel]);
+        }
+        return activation;
+      }, growable: false);
+    }, growable: false);
+  }
 
   List<List<double>> reconstructSensorChannels(
     List<List<double>> componentActivations, {
@@ -1527,6 +1584,7 @@ class MatrixTransformationData {
       'dewhiteningMatrix': dewhiteningMatrix,
       'channelMeans': channelMeans,
       'originalChannelLabels': originalChannelLabels,
+      'originalSampleRate': originalSampleRate,
       'originalChannelCoordinates': originalChannelCoordinates.map(
         (String key, ChannelCoordinate value) =>
             MapEntry<String, dynamic>(key, value.toJson()),
@@ -1573,6 +1631,8 @@ class MatrixTransformationData {
           (json['originalChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
               .toList(growable: false),
+      originalSampleRate:
+          (json['originalSampleRate'] as num?)?.toDouble() ?? 0.0,
       originalChannelCoordinates:
           (json['originalChannelCoordinates'] as Map? ??
                   const <String, dynamic>{})
@@ -1607,4 +1667,16 @@ class MatrixTransformationData {
       source: json['source']?.toString() ?? '',
     );
   }
+}
+
+bool _labelsMatchExactly(List<String> left, List<String> right) {
+  if (left.length != right.length) {
+    return false;
+  }
+  for (int index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) {
+      return false;
+    }
+  }
+  return true;
 }

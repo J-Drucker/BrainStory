@@ -3,6 +3,7 @@ import 'package:brainstory_gui/model/dataset.dart';
 import 'package:brainstory_gui/model/dataset_state.dart';
 import 'package:brainstory_gui/model/node.dart';
 import 'package:brainstory_gui/nodes/ica_component_rejection_node.dart';
+import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/ica_viewer.dart';
@@ -108,14 +109,90 @@ void main() {
   );
 
   test(
+    'ICA rejection applies its transform to compatible sensor data',
+    () async {
+      final Dataset dataset = _icaDataset();
+      dataset.timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[11, 12, 13, 14],
+          <double>[23, 24, 25, 26],
+          <double>[35, 36, 37, 38],
+        ],
+        sampleRate: 128,
+        channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+        markers: const <TimeMarker>[
+          TimeMarker(onsetMicros: 1000, label: 'target event'),
+        ],
+        source: 'compatible branch',
+      );
+
+      await IcaComponentRejectionNodeType().run(dataset, <String, dynamic>{
+        'excludedComponents': <int>[1],
+      });
+
+      final TimeSeriesData clean = dataset.timeSeries!;
+      expect(clean.channels[0], <double>[11, 12, 13, 14]);
+      expect(clean.channels[1], <double>[20, 20, 20, 20]);
+      expect(clean.channels[2], <double>[35, 36, 37, 38]);
+      expect(clean.markers.single.label, 'target event');
+      expect(clean.source, contains('compatible branch'));
+    },
+  );
+
+  test('ICA rejection refuses incompatible sensor metadata', () async {
+    final Dataset dataset = _icaDataset();
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[1, 2],
+        <double>[3, 4],
+        <double>[5, 6],
+      ],
+      sampleRate: 256,
+      channelLabels: const <String>['Fz', 'Pz', 'Cz'],
+    );
+
+    await expectLater(
+      IcaComponentRejectionNodeType().run(dataset, <String, dynamic>{
+        'excludedComponents': <int>[],
+      }),
+      throwsArgumentError,
+    );
+
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[1, 2],
+        <double>[3, 4],
+        <double>[5, 6],
+      ],
+      sampleRate: 256,
+      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+    );
+    await expectLater(
+      IcaComponentRejectionNodeType().run(dataset, <String, dynamic>{
+        'excludedComponents': <int>[],
+      }),
+      throwsArgumentError,
+    );
+  });
+
+  test(
     'applying exclusions creates then updates one downstream graph node',
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = _icaDataset();
       logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
       logic.addNode(ICANodeType());
-      final NodeModel source = logic.nodes.single;
+      final NodeModel input = logic.nodes[0];
+      final NodeModel source = logic.nodes[1];
+      input.datasetStates[dataset.id] = DatasetState.done;
       source.datasetStates[dataset.id] = DatasetState.done;
+      logic.connections.add(<String, dynamic>{
+        'fromNode': input.id,
+        'fromPort': 0,
+        'toNode': source.id,
+        'toPort': 0,
+      });
 
       final String created = await logic.persistIcaComponentExclusions(
         viewerNodeId: source.id,
@@ -126,8 +203,32 @@ void main() {
       final NodeModel rejection = logic.nodes.firstWhere(
         (NodeModel node) => node.type is IcaComponentRejectionNodeType,
       );
-      expect(created, 'Created ICA Component Rejection.');
+      expect(created, 'Created Apply ICA.');
       expect(rejection.params['excludedComponents'], <int>[0]);
+      expect(
+        logic.connections,
+        contains(
+          predicate<Map<String, dynamic>>(
+            (Map<String, dynamic> connection) =>
+                connection['fromNode'] == input.id &&
+                connection['fromPort'] == 0 &&
+                connection['toNode'] == rejection.id &&
+                connection['toPort'] == 0,
+          ),
+        ),
+      );
+      expect(
+        logic.connections,
+        contains(
+          predicate<Map<String, dynamic>>(
+            (Map<String, dynamic> connection) =>
+                connection['fromNode'] == source.id &&
+                connection['fromPort'] == 1 &&
+                connection['toNode'] == rejection.id &&
+                connection['toPort'] == 1,
+          ),
+        ),
+      );
 
       final String updated = await logic.persistIcaComponentExclusions(
         viewerNodeId: source.id,
@@ -135,7 +236,7 @@ void main() {
         excludedComponents: <int>{1, 2},
         runAfterApply: false,
       );
-      expect(updated, 'Updated ICA Component Rejection.');
+      expect(updated, 'Updated Apply ICA.');
       expect(
         logic.nodes.where(
           (NodeModel node) => node.type is IcaComponentRejectionNodeType,
@@ -221,6 +322,7 @@ Dataset _icaDataset({bool includeCoordinates = true, bool converged = true}) {
     ],
     channelMeans: const <double>[10, 20, 30],
     originalChannelLabels: sensorLabels,
+    originalSampleRate: 128,
     originalChannelCoordinates: includeCoordinates
         ? coordinates
         : const <String, ChannelCoordinate>{},

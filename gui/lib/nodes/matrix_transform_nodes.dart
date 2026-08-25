@@ -297,6 +297,7 @@ class ICANodeType extends _MatrixTransformNodeType {
       dewhiteningMatrix: result.dewhiteningMatrix,
       channelMeans: result.channelMeans,
       originalChannelLabels: originalChannelLabels,
+      originalSampleRate: timeSeries.sampleRate,
       originalChannelCoordinates: timeSeries.channelCoordinates,
       originalImpedanceData: timeSeries.impedanceData,
       componentLabels: componentLabels,

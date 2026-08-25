@@ -75,6 +75,7 @@ void main() {
     expect(transform.unmixingMatrix, hasLength(3));
     expect(transform.mixingMatrix, hasLength(3));
     expect(transform.originalChannelLabels, <String>['Fz', 'Cz', 'Pz']);
+    expect(transform.originalSampleRate, sampleRate);
     expect(transform.originalChannelCoordinates, contains('Fz'));
     expect(transform.originalImpedanceData?.channelCount, 3);
     expect(
@@ -112,6 +113,7 @@ void main() {
       ],
       channelMeans: <double>[3, 4],
       originalChannelLabels: <String>['A', 'B'],
+      originalSampleRate: 256,
       componentLabels: <String>['IC 1', 'IC 2'],
       componentEnergies: <double>[0.7, 0.3],
       algorithm: 'FastICA',
@@ -128,6 +130,7 @@ void main() {
     );
     expect(decoded.mixingMatrix, original.mixingMatrix);
     expect(decoded.channelMeans, original.channelMeans);
+    expect(decoded.originalSampleRate, 256);
     expect(decoded.algorithm, 'FastICA');
     expect(decoded.converged, isTrue);
     expect(decoded.iterationCount, 12);

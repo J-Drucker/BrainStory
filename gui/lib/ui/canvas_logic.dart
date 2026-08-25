@@ -5423,8 +5423,10 @@ class CanvasLogic {
       datasetArtifactIds: <String>{dataset.id},
     );
     if (rejectionNode == null) {
+      final NodeModel signalSourceNode =
+          _icaDefaultSignalSourceNode(sourceNode) ?? sourceNode;
       rejectionNode = _spawnViewerEditNode(
-        sourceNode: sourceNode,
+        sourceNode: signalSourceNode,
         type: IcaComponentRejectionNodeType(),
         datasetId: dataset.id,
         params: <String, dynamic>{
@@ -5433,6 +5435,11 @@ class CanvasLogic {
           'icaSourceNodeId': sourceNode.id,
         },
       );
+      rejectionNode.position = _viewerEditSpawnPosition(
+        sourceNode: sourceNode,
+        insertBeforeNode: null,
+      );
+      _connectIcaTransform(sourceNode, rejectionNode);
     } else {
       rejectionNode.params['excludedComponents'] = sortedExcluded;
       final DatasetState state =
@@ -5454,6 +5461,46 @@ class CanvasLogic {
       successDetail: () =>
           '${created ? 'Created' : 'Updated'} and ran ${nodeToRun.title}.',
     );
+  }
+
+  NodeModel? _icaDefaultSignalSourceNode(NodeModel icaNode) {
+    final int signalInputIndex = icaNode.inputPorts.indexWhere(
+      (PortSpec port) => port.type == PortType.signal,
+    );
+    if (signalInputIndex < 0) {
+      return null;
+    }
+    for (final Map<String, dynamic> connection in connections) {
+      if (connection['toNode'] != icaNode.id ||
+          (connection['toPort'] as num?)?.toInt() != signalInputIndex) {
+        continue;
+      }
+      final NodeModel? parent = _findNode(
+        connection['fromNode']?.toString() ?? '',
+      );
+      if (parent != null) {
+        return parent;
+      }
+    }
+    return null;
+  }
+
+  void _connectIcaTransform(NodeModel icaNode, NodeModel applyNode) {
+    final int transformOutputIndex = icaNode.outputPorts.indexWhere(
+      (PortSpec port) => port.type == PortType.matrixTransformation,
+    );
+    final int transformInputIndex = applyNode.inputPorts.indexWhere(
+      (PortSpec port) => port.type == PortType.matrixTransformation,
+    );
+    if (transformOutputIndex < 0 || transformInputIndex < 0) {
+      return;
+    }
+    connections.add(<String, dynamic>{
+      'fromNode': icaNode.id,
+      'fromPort': transformOutputIndex,
+      'toNode': applyNode.id,
+      'toPort': transformInputIndex,
+    });
   }
 
   String _viewerEditSaveMessage({
@@ -6497,6 +6544,10 @@ class CanvasLogic {
     if (node.type is ImportNodeType || node.type is VisualizationNodeType) {
       return;
     }
+    if (node.type is IcaComponentRejectionNodeType) {
+      await _restoreIcaApplicationInputs(node, dataset);
+      return;
+    }
 
     final List<NodeModel> parents = _immediateParents(node.id);
     if (parents.isEmpty) {
@@ -6530,6 +6581,104 @@ class CanvasLogic {
       }
     }
     if (appliedAnySnapshot || view.timeSeries != null) {
+      _replaceDatasetRam(dataset, view);
+    }
+  }
+
+  Future<void> _restoreIcaApplicationInputs(
+    NodeModel node,
+    Dataset dataset,
+  ) async {
+    final Dataset view = _datasetShell(dataset);
+    bool appliedAnySnapshot = false;
+    bool appliedTransform = false;
+    for (final Map<String, dynamic> connection in connections.where(
+      (Map<String, dynamic> value) => value['toNode'] == node.id,
+    )) {
+      final int toPortIndex = (connection['toPort'] as num?)?.toInt() ?? -1;
+      if (toPortIndex < 0 || toPortIndex >= node.inputPorts.length) {
+        continue;
+      }
+      final NodeModel? parent = _findNode(
+        connection['fromNode']?.toString() ?? '',
+      );
+      if (parent == null ||
+          parent.datasetStates[dataset.id] != DatasetState.done) {
+        continue;
+      }
+      final DatasetArtifactSnapshot? snapshot =
+          await _loadSnapshotForNodeDataset(parent.id, dataset.id);
+      if (snapshot == null || snapshot.isEmpty) {
+        continue;
+      }
+      final PortType inputType = node.inputPorts[toPortIndex].type;
+      switch (inputType) {
+        case PortType.signal:
+          if (snapshot.timeSeries != null) {
+            DatasetArtifactSnapshot(
+              datasetLabel: snapshot.datasetLabel,
+              timeSeries: snapshot.timeSeries,
+              artifactIdentities: <BrainStoryArtifactKind, ArtifactIdentity>{
+                if (snapshot.artifactIdentities[BrainStoryArtifactKind
+                        .timeSeries] !=
+                    null)
+                  BrainStoryArtifactKind.timeSeries: snapshot
+                      .artifactIdentities[BrainStoryArtifactKind.timeSeries]!,
+              },
+              includedKinds: const <BrainStoryArtifactKind>{
+                BrainStoryArtifactKind.timeSeries,
+              },
+            ).applyToDataset(view);
+            appliedAnySnapshot = true;
+          }
+          break;
+        case PortType.matrixTransformation:
+          if (snapshot.matrixTransformation != null) {
+            DatasetArtifactSnapshot(
+              datasetLabel: snapshot.datasetLabel,
+              matrixTransformation: snapshot.matrixTransformation,
+              artifactIdentities: <BrainStoryArtifactKind, ArtifactIdentity>{
+                if (snapshot.artifactIdentities[BrainStoryArtifactKind
+                        .matrixTransformation] !=
+                    null)
+                  BrainStoryArtifactKind.matrixTransformation:
+                      snapshot.artifactIdentities[BrainStoryArtifactKind
+                          .matrixTransformation]!,
+              },
+              includedKinds: const <BrainStoryArtifactKind>{
+                BrainStoryArtifactKind.matrixTransformation,
+              },
+            ).applyToDataset(view);
+            appliedAnySnapshot = true;
+            appliedTransform = true;
+          }
+          break;
+        case PortType.markers:
+        case PortType.metadata:
+          break;
+      }
+    }
+    if (!appliedTransform) {
+      final String icaSourceNodeId =
+          node.params['icaSourceNodeId']?.toString() ?? '';
+      final NodeModel? icaSourceNode = _findNode(icaSourceNodeId);
+      if (icaSourceNode != null &&
+          icaSourceNode.datasetStates[dataset.id] == DatasetState.done) {
+        final DatasetArtifactSnapshot? snapshot =
+            await _loadSnapshotForNodeDataset(icaSourceNode.id, dataset.id);
+        if (snapshot?.matrixTransformation != null) {
+          DatasetArtifactSnapshot(
+            datasetLabel: snapshot!.datasetLabel,
+            matrixTransformation: snapshot.matrixTransformation,
+            includedKinds: const <BrainStoryArtifactKind>{
+              BrainStoryArtifactKind.matrixTransformation,
+            },
+          ).applyToDataset(view);
+          appliedAnySnapshot = true;
+        }
+      }
+    }
+    if (appliedAnySnapshot) {
       _replaceDatasetRam(dataset, view);
     }
   }
