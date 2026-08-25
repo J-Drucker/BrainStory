@@ -804,6 +804,20 @@ class _SegmentedChartState extends State<_SegmentedChart> {
       return KeyEventResult.handled;
     }
 
+    if (key == LogicalKeyboardKey.pageUp ||
+        key == LogicalKeyboardKey.pageDown) {
+      _nudgeHorizontalWindow(
+        key == LogicalKeyboardKey.pageDown ? 1 : -1,
+        viewportFraction: 0.8,
+      );
+      return KeyEventResult.handled;
+    }
+
+    if (key == LogicalKeyboardKey.home || key == LogicalKeyboardKey.end) {
+      _moveHorizontalWindowToEnd(key == LogicalKeyboardKey.end);
+      return KeyEventResult.handled;
+    }
+
     return KeyEventResult.ignored;
   }
 
@@ -840,7 +854,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     });
   }
 
-  void _nudgeHorizontalWindow(int direction) {
+  void _nudgeHorizontalWindow(int direction, {double viewportFraction = 0.12}) {
     ScrollController? controller;
     for (final ScrollController candidate
         in _plotHorizontalControllers.values) {
@@ -853,13 +867,28 @@ class _SegmentedChartState extends State<_SegmentedChart> {
       return;
     }
     final double viewportWidth = controller.position.viewportDimension;
-    final double step = math.max(24.0, viewportWidth * 0.12);
+    final double step = math.max(24.0, viewportWidth * viewportFraction);
     controller.jumpTo(
       (controller.offset + (direction * step)).clamp(
         0.0,
         controller.position.maxScrollExtent,
       ),
     );
+  }
+
+  void _moveHorizontalWindowToEnd(bool end) {
+    for (final ScrollController controller
+        in _plotHorizontalControllers.values) {
+      if (!controller.hasClients) {
+        continue;
+      }
+      controller.jumpTo(
+        end
+            ? controller.position.maxScrollExtent
+            : controller.position.minScrollExtent,
+      );
+      return;
+    }
   }
 
   Future<void> _showChannelEditor() async {
@@ -1467,6 +1496,7 @@ class _SegmentPlotTile extends StatelessWidget {
         onRangeUvChanged((rangeUv * factor).clamp(10.0, 1000.0));
         return;
       case ViewerScrollIntent.verticalPan:
+        scrollControllerBy(horizontalController, gesture.primaryDelta);
         return;
     }
   }
@@ -1502,6 +1532,13 @@ class _SegmentPlotTile extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onHorizontalDragUpdate: (DragUpdateDetails details) {
                     scrollControllerBy(horizontalController, -details.delta.dx);
+                  },
+                  onDoubleTap: () {
+                    if (horizontalController.hasClients) {
+                      horizontalController.jumpTo(
+                        horizontalController.position.minScrollExtent,
+                      );
+                    }
                   },
                   child: Listener(
                     onPointerSignal: _handlePointerSignal,
@@ -1550,6 +1587,7 @@ class _SegmentPlotTile extends StatelessWidget {
                                   child: _segmentLineChart(
                                     plotData,
                                     rangeUv: rangeUv,
+                                    visibleWindowMs: visibleWindowMs,
                                   ),
                                 ),
                               ),
@@ -1557,6 +1595,18 @@ class _SegmentPlotTile extends StatelessWidget {
                           },
                     ),
                   ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            const Center(
+              child: Tooltip(
+                message:
+                    'Drag or scroll to pan. Ctrl-scroll changes voltage; '
+                    'Ctrl-Shift-scroll changes time.',
+                child: Text(
+                  'time (ms)',
+                  style: TextStyle(color: Colors.white70, fontSize: 11),
                 ),
               ),
             ),
@@ -3330,6 +3380,8 @@ class _SegmentSequencePlotData {
     this.stitchedSegments = false,
     this.fitYToData = false,
     this.yAxisLabels = const <_SegmentYAxisLabel>[],
+    this.traceLabels = const <String>[],
+    this.traceValueOffsets = const <double>[],
   });
 
   final List<LineChartBarData> lineBars;
@@ -3342,6 +3394,8 @@ class _SegmentSequencePlotData {
   final bool stitchedSegments;
   final bool fitYToData;
   final List<_SegmentYAxisLabel> yAxisLabels;
+  final List<String> traceLabels;
+  final List<double> traceValueOffsets;
 }
 
 class _SegmentYAxisLabel {
@@ -3856,6 +3910,8 @@ _SegmentSequencePlotData _mergeSegmentPlotData(
   List<_SegmentSequencePlotData> plots,
 ) {
   final List<LineChartBarData> lineBars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
+  final List<double> traceValueOffsets = <double>[];
   final List<BetweenBarsData> betweenBars = <BetweenBarsData>[];
   final List<VerticalRangeAnnotation> dividers = plots.isEmpty
       ? <VerticalRangeAnnotation>[]
@@ -3866,6 +3922,18 @@ _SegmentSequencePlotData _mergeSegmentPlotData(
   double? maxY;
   for (final _SegmentSequencePlotData plot in plots) {
     final int lineIndexOffset = lineBars.length;
+    for (int index = 0; index < plot.lineBars.length; index++) {
+      traceLabels.add(
+        index < plot.traceLabels.length
+            ? plot.traceLabels[index]
+            : 'Trace ${lineIndexOffset + index + 1}',
+      );
+      traceValueOffsets.add(
+        index < plot.traceValueOffsets.length
+            ? plot.traceValueOffsets[index]
+            : 0,
+      );
+    }
     lineBars.addAll(plot.lineBars);
     betweenBars.addAll(
       plot.betweenBars.map(
@@ -3893,6 +3961,8 @@ _SegmentSequencePlotData _mergeSegmentPlotData(
       (_SegmentSequencePlotData plot) => plot.stitchedSegments,
     ),
     fitYToData: plots.any((_SegmentSequencePlotData plot) => plot.fitYToData),
+    traceLabels: traceLabels,
+    traceValueOffsets: traceValueOffsets,
   );
 }
 
@@ -4039,6 +4109,8 @@ _SegmentSequencePlotData _stackSegmentChannelPlotData({
   final List<BetweenBarsData> shiftedBetweenBars = <BetweenBarsData>[];
   final List<VerticalRangeAnnotation> dividers = <VerticalRangeAnnotation>[];
   final List<_SegmentYAxisLabel> yAxisLabels = <_SegmentYAxisLabel>[];
+  final List<String> traceLabels = <String>[];
+  final List<double> traceValueOffsets = <double>[];
   final double channelSpacing =
       math.max(1.0, rangeUv) * spacingFactor.clamp(0.5, 2.0);
   double? minXValue;
@@ -4069,6 +4141,9 @@ _SegmentSequencePlotData _stackSegmentChannelPlotData({
       ),
     );
     final int lineIndexOffset = shiftedBars.length;
+    final String channelLabel = channelIndex < channelLabels.length
+        ? channelLabels[channelIndex]
+        : 'Ch ${channelIndex + 1}';
     for (final LineChartBarData bar in plot.lineBars) {
       final List<FlSpot> shiftedSpots = bar.spots
           .map((FlSpot spot) => FlSpot(spot.x, spot.y + channelOffset))
@@ -4080,6 +4155,8 @@ _SegmentSequencePlotData _stackSegmentChannelPlotData({
         maxYValue = maxYValue == null ? spot.y : math.max(maxYValue, spot.y);
       }
       shiftedBars.add(bar.copyWith(spots: shiftedSpots));
+      traceLabels.add(channelLabel);
+      traceValueOffsets.add(channelOffset);
     }
     for (final BetweenBarsData betweenBar in plot.betweenBars) {
       shiftedBetweenBars.add(
@@ -4120,6 +4197,8 @@ _SegmentSequencePlotData _stackSegmentChannelPlotData({
     stitchedSegments: stitchedSegments,
     fitYToData: true,
     yAxisLabels: yAxisLabels,
+    traceLabels: traceLabels,
+    traceValueOffsets: traceValueOffsets,
   );
 }
 
@@ -4134,6 +4213,7 @@ _SegmentSequencePlotData _buildSegmentSequencePlotData({
   required double baselineStopMs,
 }) {
   final List<LineChartBarData> bars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
   final List<VerticalRangeAnnotation> dividers = <VerticalRangeAnnotation>[];
   double? minYValue;
   double? maxYValue;
@@ -4196,6 +4276,7 @@ _SegmentSequencePlotData _buildSegmentSequencePlotData({
           dotData: const FlDotData(show: false),
         ),
       );
+      traceLabels.add(_segmentChannelLabel(segmented, localChannelIndex));
     }
 
     final double segmentWidthMs = math.max(stepMs, longestSampleCount * stepMs);
@@ -4223,6 +4304,7 @@ _SegmentSequencePlotData _buildSegmentSequencePlotData({
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
     stitchedSegments: true,
+    traceLabels: traceLabels,
   );
 }
 
@@ -4236,6 +4318,7 @@ _SegmentSequencePlotData _buildSegmentButterflySegmentsPlotData({
   required double baselineStopMs,
 }) {
   final List<LineChartBarData> bars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
   double? minXValue;
   double? maxXValue;
   double? minYValue;
@@ -4285,6 +4368,7 @@ _SegmentSequencePlotData _buildSegmentButterflySegmentsPlotData({
         dotData: const FlDotData(show: false),
       ),
     );
+    traceLabels.add(_segmentChannelLabel(segmented, channelIndex));
   }
   final double minX = minXValue ?? 0;
   final double maxX = maxXValue ?? 1;
@@ -4298,6 +4382,7 @@ _SegmentSequencePlotData _buildSegmentButterflySegmentsPlotData({
     maxX: minX == maxX ? maxX + 1 : maxX,
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
+    traceLabels: traceLabels,
   );
 }
 
@@ -4388,6 +4473,7 @@ _SegmentSequencePlotData _buildSegmentAveragePlotData({
     maxX: spots.last.x,
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
+    traceLabels: <String>[_segmentChannelLabel(segmented, channelIndex)],
   );
 }
 
@@ -4556,6 +4642,7 @@ _SegmentSequencePlotData _buildSegmentButterflyChannelsAndSegmentsPlotData({
   required double baselineStopMs,
 }) {
   final List<LineChartBarData> bars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
   double? minXValue;
   double? maxXValue;
   double? minYValue;
@@ -4606,6 +4693,7 @@ _SegmentSequencePlotData _buildSegmentButterflyChannelsAndSegmentsPlotData({
           dotData: const FlDotData(show: false),
         ),
       );
+      traceLabels.add(_segmentChannelLabel(segmented, channelIndex));
     }
   }
   final double minY = minYValue ?? -1;
@@ -4618,6 +4706,7 @@ _SegmentSequencePlotData _buildSegmentButterflyChannelsAndSegmentsPlotData({
     maxX: maxXValue ?? 1,
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
+    traceLabels: traceLabels,
   );
 }
 
@@ -4630,6 +4719,7 @@ _SegmentSequencePlotData _buildAverageChannelsStitchedPlotData({
   required double baselineStopMs,
 }) {
   final List<LineChartBarData> bars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
   final List<VerticalRangeAnnotation> dividers = <VerticalRangeAnnotation>[];
   double? minYValue;
   double? maxYValue;
@@ -4670,6 +4760,7 @@ _SegmentSequencePlotData _buildAverageChannelsStitchedPlotData({
         dotData: const FlDotData(show: false),
       ),
     );
+    traceLabels.add('Average');
     final double segmentWidthMs = math.max(stepMs, values.length * stepMs);
     cursorMs += segmentWidthMs;
     if (segmentIndex < segments.length - 1) {
@@ -4695,6 +4786,7 @@ _SegmentSequencePlotData _buildAverageChannelsStitchedPlotData({
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
     stitchedSegments: true,
+    traceLabels: traceLabels,
   );
 }
 
@@ -4707,6 +4799,7 @@ _SegmentSequencePlotData _buildAverageChannelsButterflySegmentsPlotData({
   required double baselineStopMs,
 }) {
   final List<LineChartBarData> bars = <LineChartBarData>[];
+  final List<String> traceLabels = <String>[];
   double? minXValue;
   double? maxXValue;
   double? minYValue;
@@ -4755,6 +4848,7 @@ _SegmentSequencePlotData _buildAverageChannelsButterflySegmentsPlotData({
         dotData: const FlDotData(show: false),
       ),
     );
+    traceLabels.add('Average');
   }
   final double minY = minYValue ?? -1;
   final double maxY = maxYValue ?? 1;
@@ -4766,12 +4860,14 @@ _SegmentSequencePlotData _buildAverageChannelsButterflySegmentsPlotData({
     maxX: maxXValue ?? 1,
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
+    traceLabels: traceLabels,
   );
 }
 
 Widget _segmentLineChart(
   _SegmentSequencePlotData plotData, {
   required double rangeUv,
+  required double visibleWindowMs,
 }) {
   if (plotData.lineBars.isEmpty) {
     return const _ChartMessage(
@@ -4789,7 +4885,7 @@ Widget _segmentLineChart(
   final double yInterval = _niceAxisStep(rawMaxY - rawMinY);
   final double minY = _floorToStep(rawMinY, yInterval);
   final double maxY = _ceilToStep(rawMaxY, yInterval);
-  final double xInterval = _niceAxisStep(plotData.maxX - plotData.minX);
+  final double xInterval = _niceAxisStep(visibleWindowMs);
   final double minX = plotData.stitchedSegments
       ? _floorToStep(plotData.minX, xInterval)
       : plotData.minX;
@@ -4819,14 +4915,41 @@ Widget _segmentLineChart(
         ],
       ),
       borderData: FlBorderData(show: false),
-      lineTouchData: const LineTouchData(enabled: false),
+      lineTouchData: LineTouchData(
+        enabled: true,
+        touchTooltipData: LineTouchTooltipData(
+          getTooltipItems: (List<LineBarSpot> touchedSpots) {
+            return touchedSpots
+                .map((LineBarSpot spot) {
+                  final int index = spot.barIndex;
+                  final String label = index < plotData.traceLabels.length
+                      ? plotData.traceLabels[index]
+                      : 'Trace ${index + 1}';
+                  final double offset =
+                      index < plotData.traceValueOffsets.length
+                      ? plotData.traceValueOffsets[index]
+                      : 0;
+                  return LineTooltipItem(
+                    '$label\n${(spot.y - offset).toStringAsFixed(1)} μV',
+                    const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                })
+                .toList(growable: false);
+          },
+        ),
+      ),
       betweenBarsData: plotData.betweenBars,
       titlesData: _chartTitles(
         minX: minX,
         maxX: maxX,
         minY: minY,
         maxY: maxY,
-        xAxisLabel: 'time (ms)',
+        xAxisLabel: '',
+        xIntervalOverride: xInterval,
         yAxisLabel: plotData.yAxisLabels.isEmpty ? 'μV' : '',
         showYValues: plotData.yAxisLabels.isEmpty,
         yAxisReservedSize: plotData.yAxisLabels.isEmpty ? 56 : 78,
@@ -6062,60 +6185,31 @@ class _SegmentViewerScaleControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    void step(
-      List<double> options,
-      double current,
-      int direction,
-      ValueChanged<double> onSelected,
-    ) {
-      final int currentIndex = _closestViewerOptionIndex(options, current);
-      final int nextIndex = (currentIndex + direction).clamp(
-        0,
-        options.length - 1,
-      );
-      if (nextIndex != currentIndex) {
-        onSelected(options[nextIndex]);
-      }
-    }
-
     return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+      spacing: 12,
+      runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
         const Text('Scale:', style: TextStyle(color: Colors.white70)),
-        _SegmentScaleZoomControl(
-          zoomOutTooltip: 'Show more time',
-          zoomInTooltip: 'Show less time',
-          onZoomOut: () =>
-              step(timeOptionsSeconds, timeSeconds, 1, onTimeSelected),
-          onZoomIn: () =>
-              step(timeOptionsSeconds, timeSeconds, -1, onTimeSelected),
-          child: _SegmentScalePillMenu<double>(
-            label: 'Time',
-            currentValue: timeSeconds,
-            valueText: _formatSegmentSeconds(timeSeconds),
-            tooltip: 'Time span',
-            options: timeOptionsSeconds,
-            itemLabelBuilder: _formatSegmentSeconds,
-            onSelected: onTimeSelected,
-          ),
+        _SegmentScaleFieldSlider(
+          key: const ValueKey<String>('segment-time-scale'),
+          label: 'Time',
+          value: timeSeconds,
+          minimum: timeOptionsSeconds.first,
+          maximum: timeOptionsSeconds.last,
+          unit: 's',
+          decimals: timeSeconds < 1 ? 2 : 1,
+          onChanged: onTimeSelected,
         ),
-        _SegmentScaleZoomControl(
-          zoomOutTooltip: 'Show more amplitude',
-          zoomInTooltip: 'Show less amplitude',
-          onZoomOut: () => step(rangeOptionsUv, rangeUv, 1, onRangeSelected),
-          onZoomIn: () => step(rangeOptionsUv, rangeUv, -1, onRangeSelected),
-          child: _SegmentScalePillMenu<double>(
-            label: 'Range',
-            currentValue: rangeUv,
-            valueText: '${rangeUv.toStringAsFixed(0)} μV',
-            tooltip: 'Signal range',
-            options: rangeOptionsUv,
-            itemLabelBuilder: (double option) =>
-                '${option.toStringAsFixed(0)} μV',
-            onSelected: onRangeSelected,
-          ),
+        _SegmentScaleFieldSlider(
+          key: const ValueKey<String>('segment-voltage-scale'),
+          label: 'Range',
+          value: rangeUv,
+          minimum: rangeOptionsUv.first,
+          maximum: rangeOptionsUv.last,
+          unit: 'μV',
+          decimals: 0,
+          onChanged: onRangeSelected,
         ),
         _SegmentScalePillMenu<double>(
           label: 'Spacing',
@@ -6560,32 +6654,124 @@ class _SegmentChannelsModeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return _SegmentModeTile(
       title: 'Channels',
+      child: Column(
+        children: <Widget>[
+          const SizedBox(height: 38),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: _SegmentModeOptionButton(
+                  label: 'Stack',
+                  selected: channelMode == 'natural',
+                  previewKind: _SegmentModePreviewKind.channelStack,
+                  onPressed: () => onModeChanged('natural'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _SegmentModeOptionButton(
+                  label: 'Butterfly',
+                  selected: channelMode == 'butterfly',
+                  previewKind: _SegmentModePreviewKind.channelButterfly,
+                  onPressed: () => onModeChanged('butterfly'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _SegmentModeOptionButton(
+                  label: 'Average',
+                  selected: channelMode == 'average',
+                  previewKind: _SegmentModePreviewKind.channelAverage,
+                  onPressed: () => onModeChanged('average'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SegmentScaleFieldSlider extends StatelessWidget {
+  const _SegmentScaleFieldSlider({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.minimum,
+    required this.maximum,
+    required this.unit,
+    required this.decimals,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double minimum;
+  final double maximum;
+  final String unit;
+  final int decimals;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final double safeMinimum = math.max(0.0001, minimum);
+    final double safeMaximum = math.max(safeMinimum, maximum);
+    final double clampedValue = value.clamp(safeMinimum, safeMaximum);
+    final double logMinimum = math.log(safeMinimum);
+    final double logSpan = math.max(0.0001, math.log(safeMaximum) - logMinimum);
+    final double sliderValue = ((math.log(clampedValue) - logMinimum) / logSpan)
+        .clamp(0.0, 1.0);
+
+    void submit(String rawValue) {
+      final double? parsed = double.tryParse(rawValue.trim());
+      if (parsed != null && parsed.isFinite) {
+        onChanged(parsed.clamp(safeMinimum, safeMaximum));
+      }
+    }
+
+    return SizedBox(
+      width: 250,
       child: Row(
         children: <Widget>[
-          Expanded(
-            child: _SegmentModeOptionButton(
-              label: 'Stack',
-              selected: channelMode == 'natural',
-              previewKind: _SegmentModePreviewKind.channelStack,
-              onPressed: () => onModeChanged('natural'),
+          SizedBox(
+            width: 48,
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: _SegmentModeOptionButton(
-              label: 'Butterfly',
-              selected: channelMode == 'butterfly',
-              previewKind: _SegmentModePreviewKind.channelButterfly,
-              onPressed: () => onModeChanged('butterfly'),
+          SizedBox(
+            width: 78,
+            child: TextFormField(
+              key: ValueKey<String>(
+                '$label-${clampedValue.toStringAsFixed(decimals)}',
+              ),
+              initialValue: clampedValue.toStringAsFixed(decimals),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textInputAction: TextInputAction.done,
+              decoration: InputDecoration(
+                isDense: true,
+                suffixText: unit,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+                border: const OutlineInputBorder(),
+              ),
+              onFieldSubmitted: submit,
             ),
           ),
-          const SizedBox(width: 8),
           Expanded(
-            child: _SegmentModeOptionButton(
-              label: 'Average',
-              selected: channelMode == 'average',
-              previewKind: _SegmentModePreviewKind.channelAverage,
-              onPressed: () => onModeChanged('average'),
+            child: Slider(
+              value: sliderValue,
+              onChanged: safeMaximum <= safeMinimum
+                  ? null
+                  : (double position) {
+                      onChanged(math.exp(logMinimum + position * logSpan));
+                    },
             ),
           ),
         ],
@@ -7130,60 +7316,6 @@ class _SegmentModePreviewPainter extends CustomPainter {
   }
 }
 
-String _formatSegmentSeconds(double seconds) {
-  final String value = seconds < 1
-      ? seconds
-            .toStringAsFixed(2)
-            .replaceFirst(RegExp(r'0+$'), '')
-            .replaceFirst(RegExp(r'\.$'), '')
-      : seconds.toStringAsFixed(0);
-  return '$value s';
-}
-
-class _SegmentScaleZoomControl extends StatelessWidget {
-  const _SegmentScaleZoomControl({
-    required this.child,
-    required this.onZoomOut,
-    required this.onZoomIn,
-    required this.zoomOutTooltip,
-    required this.zoomInTooltip,
-  });
-
-  final Widget child;
-  final VoidCallback onZoomOut;
-  final VoidCallback onZoomIn;
-  final String zoomOutTooltip;
-  final String zoomInTooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        child,
-        IconButton(
-          tooltip: zoomOutTooltip,
-          onPressed: onZoomOut,
-          icon: const Icon(Icons.zoom_out, size: 18),
-          color: Colors.white70,
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-          padding: EdgeInsets.zero,
-        ),
-        IconButton(
-          tooltip: zoomInTooltip,
-          onPressed: onZoomIn,
-          icon: const Icon(Icons.zoom_in, size: 18),
-          color: Colors.white70,
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-          padding: EdgeInsets.zero,
-        ),
-      ],
-    );
-  }
-}
-
 class _SegmentScalePillMenu<T> extends StatelessWidget {
   const _SegmentScalePillMenu({
     required this.label,
@@ -7474,8 +7606,9 @@ FlTitlesData _chartTitles({
   double xAxisNameSize = 16,
   double yAxisNameSize = 16,
   bool wholeNumberYLabels = false,
+  double? xIntervalOverride,
 }) {
-  final double xInterval = _niceAxisStep(maxX - minX);
+  final double xInterval = xIntervalOverride ?? _niceAxisStep(maxX - minX);
   final double yInterval = _niceAxisStep(maxY - minY);
   final String resolvedYAxisLabel =
       yAxisLabel ?? (logY ? 'log10(uV^2/Hz)' : 'uV^2/Hz');
