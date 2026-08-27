@@ -1,0 +1,61 @@
+viewer,context,input,control,modifiers,action,status,source
+All viewers,Viewer window,Mouse,Close button,None,Close the viewer,implemented,gui/lib/ui/visualization_panel.dart
+All viewers,Dataset selector,Mouse,Dataset chip or menu,None,Select the dataset shown in the viewer,implemented,gui/lib/ui/visualization_panel.dart
+Raw time series,Plot,Keyboard,Left Arrow,None,Pan the time window left,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Keyboard,Right Arrow,None,Pan the time window right,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Keyboard,Left Arrow,Ctrl,Show a shorter time span,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Keyboard,Right Arrow,Ctrl,Show a longer time span,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Keyboard,Up Arrow,Ctrl,Increase the voltage range,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Keyboard,Down Arrow,Ctrl,Decrease the voltage range,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Viewer,Keyboard,D,Alt,Toggle signal traces,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Viewer,Keyboard,M,Alt,Toggle markers,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Viewer,Keyboard,C,Alt,Toggle DC removal preview,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Viewer,Keyboard,V,Alt,Switch to view mode,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Viewer,Keyboard,E or I,Alt,Switch to edit mode,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Channel list,Mouse,Click channel label,None,Open the channel editor when editing is enabled,implemented,gui/lib/ui/raw_signal_browser.dart::_ChannelLabelColumn
+Raw time series,Channel list,Mouse,Click channel color,None,Cycle the channel trace color,implemented,gui/lib/ui/raw_signal_browser.dart::_ChannelLabelColumn
+Raw time series,Channel list divider,Mouse,Horizontal drag,None,Resize the channel-label panel,implemented,gui/lib/ui/raw_signal_browser.dart::_PanelResizeHandle
+Raw time series,Channel list divider,Mouse,Double-click,None,Reset the channel-label panel width,implemented,gui/lib/ui/raw_signal_browser.dart::_PanelResizeHandle
+Raw time series,Overview timeline,Mouse,Click,None,Center the time window at the clicked position,implemented,gui/lib/ui/raw_signal_browser.dart
+Raw time series,Overview timeline,Mouse,Horizontal drag,None,Scrub the time window,implemented,gui/lib/ui/raw_signal_browser.dart
+Raw time series,Plot in edit mode,Mouse,Drag,None,Create a blink artifact exemplar when interactive matching is enabled,implemented,gui/lib/ui/raw_signal_browser.dart::_handleArtifactDragEnd
+Raw time series,Plot in edit mode,Mouse,Drag,Alt,Choose an artifact label and create an exemplar,implemented,gui/lib/ui/raw_signal_browser.dart::_handleArtifactDragEnd
+Raw time series,Plot in edit mode,Mouse,Drag,Shift,Create or edit a marker interval instead of an artifact exemplar,implemented,gui/lib/ui/raw_signal_browser.dart
+Raw time series,Plot in edit mode,Mouse,Click marker,None,Select or rename the marker,implemented,gui/lib/ui/raw_signal_browser.dart::_handleMarkerTapOrRename
+Raw time series,Marker list,Mouse,Click marker or candidate,None,Jump the plot to that event,implemented,gui/lib/ui/raw_signal_browser.dart
+Raw time series,Collapsible side sections,Mouse,Click chevron,None,Expand or collapse the section,implemented,gui/lib/ui/raw_signal_browser.dart
+Segmentation,Plot,Keyboard,Left Arrow,None,Pan the time window left by a small step,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Right Arrow,None,Pan the time window right by a small step,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Page Up,None,Pan the time window left by most of one viewport,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Page Down,None,Pan the time window right by most of one viewport,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Home,None,Jump to the beginning,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,End,None,Jump to the end,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Left Arrow,Ctrl,Show a shorter time span,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Right Arrow,Ctrl,Show a longer time span,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Up Arrow,Ctrl,Increase the voltage range,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Keyboard,Down Arrow,Ctrl,Decrease the voltage range,implemented,gui/lib/ui/visualization_panel.dart::_SegmentedChartState._handleKeyEvent
+Segmentation,Plot,Mouse,Horizontal drag,None,Pan the time window,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile
+Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,None,Pan the time window horizontally,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
+Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Shift,Pan the time window horizontally,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
+Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Change the voltage range,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
+Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl+Shift,Change the visible time span,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
+Segmentation,Plot,Mouse,Double-click,None,Jump to the beginning,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile
+Segmentation,Trace,Mouse,Hover,None,Show channel label and voltage,implemented,gui/lib/ui/visualization_panel.dart::_segmentLineChart
+Segmentation,Horizontal scrollbar,Mouse,Drag,None,Pan the time window,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile
+PSD and hypnogram,Plot,Keyboard,Left Arrow,None,Pan the horizontal window left,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD and hypnogram,Plot,Keyboard,Right Arrow,None,Pan the horizontal window right,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD and hypnogram,Plot,Keyboard,Left Arrow,Ctrl,Show a smaller horizontal span,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD and hypnogram,Plot,Keyboard,Right Arrow,Ctrl,Show a larger horizontal span,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD,Plot,Keyboard,Up Arrow,Ctrl,Increase the fixed power range,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD,Plot,Keyboard,Down Arrow,Ctrl,Decrease the fixed power range,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
+PSD and hypnogram,Plot,Mouse,Scroll wheel or trackpad scroll,Shift,Pan the horizontal window,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
+PSD and hypnogram,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl+Shift,Change the visible horizontal span,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
+PSD,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Change the fixed power range,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
+PSD and hypnogram,Horizontal scrollbar,Mouse,Drag,None,Pan the horizontal window,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState
+ICA,Component grid,Mouse,Click component tile or checkbox,None,Toggle component exclusion selection,implemented,gui/lib/ui/ica_viewer.dart::_buildComponentTile
+ICA,Selection controls,Mouse,Click Select all,None,Mark every component for exclusion,implemented,gui/lib/ui/ica_viewer.dart
+ICA,Selection controls,Mouse,Click Clear,None,Clear all component exclusions,implemented,gui/lib/ui/ica_viewer.dart
+ICA,Selection controls,Mouse,Click Reset,None,Restore the saved exclusion selection and source preview,implemented,gui/lib/ui/ica_viewer.dart
+ICA,Selection controls,Mouse,Click Preview,None,Preview reconstructed sensor-space signals with selected components excluded,implemented,gui/lib/ui/ica_viewer.dart
+ICA,Selection controls,Mouse,Click Apply,None,Create or update the downstream component-rejection operation,implemented,gui/lib/ui/ica_viewer.dart
+Channel positions,Axis selector,Mouse,Click X Y or Z,None,Choose the coordinate axis used for topomap color,implemented,gui/lib/ui/channel_positions_dialog.dart::_AxisToggleBar
