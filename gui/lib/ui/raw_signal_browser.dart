@@ -2695,26 +2695,39 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   double _defaultRightPanelWidth(List<TimeMarker> markers) {
-    double maxWidth = 188;
-    for (final String text in <String>[
-      'Current template',
-      'Candidate matches',
-      'Accepted',
-      'Markers',
-      'Save and Quit',
-      ...markers.take(16).map((TimeMarker marker) => marker.label),
-    ]) {
+    double measure(
+      String text, {
+      double fontSize = 12,
+      FontWeight fontWeight = FontWeight.w600,
+    }) {
       final TextPainter painter = TextPainter(
         text: TextSpan(
           text: text,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          style: TextStyle(fontSize: fontSize, fontWeight: fontWeight),
         ),
         maxLines: 1,
         textDirection: TextDirection.ltr,
       )..layout();
-      maxWidth = math.max(maxWidth, painter.width + 44);
+      return painter.width;
     }
-    return maxWidth.clamp(188.0, 360.0);
+
+    // Includes panel padding, the section chevron, and the Edit markers action.
+    double maxWidth =
+        measure('Markers (${markers.length})') + measure('Edit markers') + 78;
+    for (final String text in <String>[
+      'Current template',
+      'Candidate matches',
+      'Accepted',
+      'Save and Quit',
+    ]) {
+      maxWidth = math.max(maxWidth, measure(text) + 56);
+    }
+    for (final String label
+        in markers.map((TimeMarker marker) => marker.label).toSet().take(32)) {
+      // A marker-label row also contains a chevron, swatch, count, and delete.
+      maxWidth = math.max(maxWidth, measure(label) + 132);
+    }
+    return maxWidth.clamp(248.0, 360.0);
   }
 
   double _resolvedLeftPanelWidth(double defaultWidth) {
