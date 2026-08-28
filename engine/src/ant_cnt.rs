@@ -57,7 +57,8 @@ pub fn import(path: &str) -> Result<Value, String> {
     if handle < 0 {
         unsafe { libeep_exit() };
         return Err(format!(
-            "LIBEEP rejected the readable ANT CNT file {source_path:?} ({file_size} bytes). The CNT header or internal structure may be unsupported, incomplete, or damaged"
+            "LIBEEP rejected the ANT CNT file {source_path:?} ({file_size} bytes). The file may be a cloud-storage placeholder, incomplete, damaged, or use an unsupported CNT structure{}",
+            cloud_storage_hint(&source_path)
         ));
     }
 
@@ -75,9 +76,10 @@ fn inspect_source_file(path: &str) -> Result<u64, String> {
         std::io::ErrorKind::NotFound => {
             format!("ANT CNT file was not found at {path:?}")
         }
-        std::io::ErrorKind::PermissionDenied => {
-            format!("BrainStory does not have permission to access ANT CNT file {path:?}")
-        }
+        std::io::ErrorKind::PermissionDenied => format!(
+            "BrainStory does not have permission to access ANT CNT file {path:?}{}",
+            cloud_storage_hint(path)
+        ),
         _ => format!("Could not inspect ANT CNT file {path:?}: {error}"),
     })?;
     if !metadata.is_file() {
@@ -87,12 +89,26 @@ fn inspect_source_file(path: &str) -> Result<u64, String> {
         return Err(format!("ANT CNT file is empty: {path:?} (0 bytes)"));
     }
     File::open(source).map_err(|error| match error.kind() {
-        std::io::ErrorKind::PermissionDenied => {
-            format!("BrainStory does not have permission to read ANT CNT file {path:?}")
-        }
+        std::io::ErrorKind::PermissionDenied => format!(
+            "BrainStory does not have permission to read ANT CNT file {path:?}{}",
+            cloud_storage_hint(path)
+        ),
         _ => format!("Could not read ANT CNT file {path:?}: {error}"),
     })?;
     Ok(metadata.len())
+}
+
+fn cloud_storage_hint(path: &str) -> &'static str {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    if normalized.contains("/library/cloudstorage/")
+        || normalized.contains("/dropbox/")
+        || normalized.contains("/onedrive")
+        || normalized.contains("/icloud drive/")
+    {
+        " This path is in cloud-synced storage. Confirm the file is fully downloaded first (for example, choose Make Available Offline in Finder), then retry."
+    } else {
+        ""
+    }
 }
 
 fn read_open_file(handle: c_int, source_path: &str) -> Result<Value, String> {
@@ -288,7 +304,7 @@ pub extern "C" fn brainstory_engine_free_string(pointer: *mut c_char) {
 
 #[cfg(test)]
 mod tests {
-    use super::inspect_source_file;
+    use super::{cloud_storage_hint, inspect_source_file};
     use std::fs;
 
     use uuid::Uuid;
@@ -318,5 +334,14 @@ mod tests {
         let size = inspect_source_file(path.to_string_lossy().as_ref()).unwrap();
         let _ = fs::remove_file(&path);
         assert_eq!(size, 4);
+    }
+
+    #[test]
+    fn suggests_downloading_cloud_storage_placeholders() {
+        let hint =
+            cloud_storage_hint("/Users/example/Library/CloudStorage/Dropbox/study/session.cnt");
+        assert!(hint.contains("fully downloaded"));
+        assert!(hint.contains("Make Available Offline"));
+        assert_eq!(cloud_storage_hint("/Users/example/study/session.cnt"), "");
     }
 }
