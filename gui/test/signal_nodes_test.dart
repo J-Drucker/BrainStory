@@ -58,6 +58,21 @@ void main() {
     expect(logic.nodes, isEmpty);
   });
 
+  test('processing responsiveness exposes a true no-yield mode', () {
+    expect(ProcessingResponsiveness.off.label, 'Off');
+    expect(ProcessingResponsiveness.off.workBudget, Duration.zero);
+    expect(ProcessingResponsiveness.off.yieldBudget, Duration.zero);
+    expect(ProcessingResponsiveness.off.intentionalPauseEnabled, isFalse);
+    expect(
+      ProcessingResponsiveness.balanced.description,
+      contains('roughly 2x'),
+    );
+    expect(
+      ProcessingResponsiveness.responsive.description,
+      contains('roughly 4x'),
+    );
+  });
+
   test('connection anchors use vertical flow by default', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImportNodeType());

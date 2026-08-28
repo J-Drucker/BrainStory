@@ -49,7 +49,7 @@ enum _OutputHandleKind {
 
 enum RunActivityPhase { initializing, running, finalizing }
 
-enum ProcessingResponsiveness { fast, balanced, responsive }
+enum ProcessingResponsiveness { off, fast, balanced, responsive }
 
 class CanvasNodeGroup {
   CanvasNodeGroup({
@@ -93,6 +93,8 @@ class CanvasNodeGroup {
 extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
   String get label {
     switch (this) {
+      case ProcessingResponsiveness.off:
+        return 'Off';
       case ProcessingResponsiveness.fast:
         return 'Fast';
       case ProcessingResponsiveness.balanced:
@@ -104,17 +106,21 @@ extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
 
   String get description {
     switch (this) {
+      case ProcessingResponsiveness.off:
+        return 'Do not yield between chunks; maximize throughput while processing.';
       case ProcessingResponsiveness.fast:
-        return 'Prioritize throughput; chunk-aware nodes yield minimally.';
+        return 'Hand control back to the UI between chunks without an intentional pause.';
       case ProcessingResponsiveness.balanced:
-        return 'Split time between processing and UI responsiveness.';
+        return 'About 50 ms processing, then 50 ms yielded; long chunked work can take roughly 2x as long.';
       case ProcessingResponsiveness.responsive:
-        return 'Yield frequently so the interface stays easy to use.';
+        return 'About 25 ms processing, then 75 ms yielded; long chunked work can take roughly 4x as long.';
     }
   }
 
   Duration get workBudget {
     switch (this) {
+      case ProcessingResponsiveness.off:
+        return Duration.zero;
       case ProcessingResponsiveness.fast:
         return const Duration(milliseconds: 250);
       case ProcessingResponsiveness.balanced:
@@ -126,6 +132,8 @@ extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
 
   Duration get yieldBudget {
     switch (this) {
+      case ProcessingResponsiveness.off:
+        return Duration.zero;
       case ProcessingResponsiveness.fast:
         return Duration.zero;
       case ProcessingResponsiveness.balanced:
@@ -135,7 +143,9 @@ extension ProcessingResponsivenessPresentation on ProcessingResponsiveness {
     }
   }
 
-  bool get chunkingEnabled => this != ProcessingResponsiveness.fast;
+  bool get intentionalPauseEnabled =>
+      this == ProcessingResponsiveness.balanced ||
+      this == ProcessingResponsiveness.responsive;
 }
 
 class RunActivity {
@@ -4257,10 +4267,16 @@ class CanvasLogic {
   Future<void> _executionChunkBoundary() async {
     await _waitForVisualizerPriorityDuringRun();
     final ProcessingResponsiveness policy = processingResponsiveness.value;
+    if (policy == ProcessingResponsiveness.off) {
+      _executionChunkStopwatch
+        ..reset()
+        ..stop();
+      return;
+    }
     if (!_executionChunkStopwatch.isRunning) {
       _executionChunkStopwatch.start();
     }
-    if (!policy.chunkingEnabled ||
+    if (!policy.intentionalPauseEnabled ||
         _executionChunkStopwatch.elapsed < policy.workBudget) {
       await Future<void>.delayed(Duration.zero);
       return;
