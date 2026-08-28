@@ -162,6 +162,12 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
     final NodeModel node = maybeNode;
     final List<VisualizationSourceRef> sourceRefs = logic
         .visualizationSourceRefsForNode(widget.nodeId);
+    final bool singleDatasetSelection = <String>{
+      'raw',
+      'ica',
+      'hypnogram',
+      'bridge',
+    }.contains(logic.visualizationViewForNode(node));
     _syncSelectedDatasets(sourceRefs);
     final bool comparisonNode = logic.isVisualizationNode(node);
     final List<VisualizationSourceRef> selectedSourceRefs = _selectedSources(
@@ -183,33 +189,93 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                         ? 'Connect this visualization node to an Import-backed path and choose datasets to compare.'
                         : 'Run an Import-backed path into this node so there is output available to inspect.')
                   : (comparisonNode
-                        ? 'Select one or more datasets to compare.'
+                        ? singleDatasetSelection
+                              ? 'Select a dataset to inspect.'
+                              : 'Select one or more datasets to compare.'
+                        : singleDatasetSelection
+                        ? 'Select a dataset to inspect.'
                         : 'Select one or more datasets to inspect.'),
               style: const TextStyle(color: Colors.white70, height: 1.2),
             ),
             if (sourceRefs.isNotEmpty)
-              ...sourceRefs.map((VisualizationSourceRef source) {
-                final bool selected = _selectedSourceKeys.contains(source.key);
-                return FilterChip(
-                  label: Text(source.displayLabel),
-                  selected: selected,
-                  onSelected: (bool nextValue) {
+              if (singleDatasetSelection)
+                RadioGroup<String>(
+                  key: const ValueKey<String>('viewer-dataset-radio-group'),
+                  groupValue: _activeSourceKey,
+                  onChanged: (String? value) {
+                    if (value == null) {
+                      return;
+                    }
                     setState(() {
-                      if (nextValue) {
-                        _selectedSourceKeys.add(source.key);
-                        _activeSourceKey ??= source.key;
-                      } else {
-                        _selectedSourceKeys.remove(source.key);
-                        if (_activeSourceKey == source.key) {
-                          _activeSourceKey = _selectedSourceKeys.isEmpty
-                              ? null
-                              : _selectedSourceKeys.first;
-                        }
-                      }
+                      _selectedSourceKeys
+                        ..clear()
+                        ..add(value);
+                      _activeSourceKey = value;
                     });
                   },
-                );
-              }),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: sourceRefs
+                        .map((VisualizationSourceRef source) {
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () {
+                              setState(() {
+                                _selectedSourceKeys
+                                  ..clear()
+                                  ..add(source.key);
+                                _activeSourceKey = source.key;
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Radio<String>(
+                                    key: ValueKey<String>(
+                                      'viewer-dataset-${source.key}',
+                                    ),
+                                    value: source.key,
+                                    materialTapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                  Text(source.displayLabel),
+                                ],
+                              ),
+                            ),
+                          );
+                        })
+                        .toList(growable: false),
+                  ),
+                )
+              else
+                ...sourceRefs.map((VisualizationSourceRef source) {
+                  final bool selected = _selectedSourceKeys.contains(
+                    source.key,
+                  );
+                  return FilterChip(
+                    label: Text(source.displayLabel),
+                    selected: selected,
+                    onSelected: (bool nextValue) {
+                      setState(() {
+                        if (nextValue) {
+                          _selectedSourceKeys.add(source.key);
+                          _activeSourceKey ??= source.key;
+                        } else {
+                          _selectedSourceKeys.remove(source.key);
+                          if (_activeSourceKey == source.key) {
+                            _activeSourceKey = _selectedSourceKeys.isEmpty
+                                ? null
+                                : _selectedSourceKeys.first;
+                          }
+                        }
+                      });
+                    },
+                  );
+                }),
           ],
         ),
         if (sourceRefs.isEmpty)

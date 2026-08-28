@@ -1,6 +1,7 @@
 viewer,context,input,control,modifiers,action,status,source
 All viewers,Viewer window,Mouse,Close button,None,Close the viewer,implemented,gui/lib/ui/visualization_panel.dart
-All viewers,Dataset selector,Mouse,Dataset chip or menu,None,Select the dataset shown in the viewer,implemented,gui/lib/ui/visualization_panel.dart
+Raw time series ICA hypnogram and bridge,Dataset selector,Mouse,Radio button or dataset label,None,Select the sole dataset shown in the viewer,implemented,gui/lib/ui/visualization_panel.dart::_VisualizationSurfaceState
+Segmentation PSD and other comparison viewers,Dataset selector,Mouse,Dataset filter chip,None,Add or remove a dataset from the comparison,implemented,gui/lib/ui/visualization_panel.dart::_VisualizationSurfaceState
 Raw time series,Plot,Keyboard,Left Arrow,None,Pan the time window left,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Plot,Keyboard,Right Arrow,None,Pan the time window right,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Plot,Keyboard,Left Arrow,Ctrl,Show a shorter time span,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent

@@ -628,11 +628,79 @@ void main() {
     expect(find.text('No dataset selected'), findsOneWidget);
     expect(
       tester
-          .widget<FilterChip>(
-            find.widgetWithText(FilterChip, sourceRef.displayLabel),
+          .widget<RadioGroup<String>>(
+            find.byKey(const ValueKey<String>('viewer-dataset-radio-group')),
           )
-          .selected,
-      isFalse,
+          .groupValue,
+      isNull,
+    );
+    expect(find.text(sourceRef.displayLabel), findsOneWidget);
+  });
+
+  testWidgets('time-series dataset selection is mutually exclusive', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(VisualizationNodeType());
+
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel visualizationNode = logic.nodes[1];
+    logic.connections.add(<String, dynamic>{
+      'fromNode': importNode.id,
+      'fromPort': 0,
+      'toNode': visualizationNode.id,
+      'toPort': 0,
+    });
+
+    for (final String id in <String>['dataset-a', 'dataset-b']) {
+      final Dataset dataset = Dataset(id, label: '$id.set');
+      dataset.timeSeries = TimeSeriesData(
+        samples: const <double>[0.0, 1.0, 0.5, -0.5],
+        sampleRate: 1000.0,
+        source: 'synthetic_signal',
+      );
+      logic.datasets[id] = dataset;
+      importNode.datasetStates[id] = DatasetState.done;
+    }
+
+    final List<VisualizationSourceRef> refs = logic
+        .visualizationSourceRefsForNode(visualizationNode.id);
+    expect(refs, hasLength(2));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VisualizationSurface(
+            logic: logic,
+            nodeId: visualizationNode.id,
+            onChanged: null,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(refs.first.displayLabel));
+    await tester.pump();
+    expect(
+      tester
+          .widget<RadioGroup<String>>(
+            find.byKey(const ValueKey<String>('viewer-dataset-radio-group')),
+          )
+          .groupValue,
+      refs.first.key,
+    );
+
+    await tester.tap(find.text(refs.last.displayLabel));
+    await tester.pump();
+    expect(
+      tester
+          .widget<RadioGroup<String>>(
+            find.byKey(const ValueKey<String>('viewer-dataset-radio-group')),
+          )
+          .groupValue,
+      refs.last.key,
     );
   });
 
