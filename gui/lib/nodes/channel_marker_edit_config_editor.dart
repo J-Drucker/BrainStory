@@ -118,6 +118,8 @@ class _MarkerLabelEditConfigEditorState
   late List<String> _labels;
   final Map<String, String> _renames = <String, String>{};
   final Set<String> _deletedLabels = <String>{};
+  final Map<String, _MarkerLogicRecodeDraft> _logicRecodeDrafts =
+      <String, _MarkerLogicRecodeDraft>{};
   final List<_BoundaryCombinationDraft> _boundaryDrafts =
       <_BoundaryCombinationDraft>[];
   int _nextBoundaryDraftId = 1;
@@ -143,6 +145,7 @@ class _MarkerLabelEditConfigEditorState
         _labels.map((String label) => MapEntry<String, String>(label, '')),
       );
     _deletedLabels.clear();
+    _logicRecodeDrafts.clear();
     _boundaryDrafts
       ..clear()
       ..add(_BoundaryCombinationDraft(id: _nextBoundaryDraftId++));
@@ -206,6 +209,26 @@ class _MarkerLabelEditConfigEditorState
 
   void _emit() {
     List<TimeMarker> result = _renamedAndFilteredMarkers();
+    for (final _MarkerLogicRecodeDraft draft in _logicRecodeDrafts.values) {
+      final Map<String, String> renamed = _effectiveRenames;
+      result = AddRemoveMarkersNodeType.recodeByMarkerLogic(
+        result,
+        timeLockLabels: draft.timeLockLabels
+            .map((String label) => renamed[label] ?? label)
+            .toSet(),
+        logicLabels: draft.logicLabels
+            .map((String label) => renamed[label] ?? label)
+            .toSet(),
+        recodeLabels: <String, String>{
+          for (final String label in draft.logicLabels)
+            renamed[label] ?? label: draft.recodeLabels[label] ?? '',
+        },
+        matchMode: draft.matchMode,
+        windowStartMs: draft.windowStartMs,
+        windowEndMs: draft.windowEndMs,
+        keepOriginalMarkers: draft.keepOriginalMarkers,
+      );
+    }
     for (final _BoundaryCombinationDraft draft in _boundaryDrafts) {
       if (_validationMessage(draft) != null ||
           draft.startLabel == null ||
@@ -274,6 +297,19 @@ class _MarkerLabelEditConfigEditorState
                   },
                 ),
                 const Text('Delete'),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  onPressed: _deletedLabels.contains(_labels[index])
+                      ? null
+                      : () => _showRecodeDialog(_labels[index]),
+                  icon: Icon(
+                    _logicRecodeDrafts.containsKey(_labels[index])
+                        ? Icons.check
+                        : Icons.rule,
+                    size: 18,
+                  ),
+                  label: const Text('Recode'),
+                ),
               ],
             ),
           ],
@@ -303,6 +339,37 @@ class _MarkerLabelEditConfigEditorState
         ],
       ),
     );
+  }
+
+  Future<void> _showRecodeDialog(String originLabel) async {
+    final _MarkerLogicRecodeDraft? existing = _logicRecodeDrafts[originLabel];
+    final _MarkerLogicRecodeDialogResult? result =
+        await showDialog<_MarkerLogicRecodeDialogResult>(
+          context: context,
+          builder: (BuildContext context) => _MarkerLogicRecodeDialog(
+            labels: _labels
+                .where((String label) => !_deletedLabels.contains(label))
+                .toList(growable: false),
+            initialDraft:
+                existing?.copy() ??
+                _MarkerLogicRecodeDraft(
+                  originLabel: originLabel,
+                  timeLockLabels: <String>{originLabel},
+                ),
+            canRemove: existing != null,
+          ),
+        );
+    if (result == null || !mounted) {
+      return;
+    }
+    setState(() {
+      if (result.remove) {
+        _logicRecodeDrafts.remove(originLabel);
+      } else if (result.draft != null) {
+        _logicRecodeDrafts[originLabel] = result.draft!;
+      }
+    });
+    _emit();
   }
 
   Widget _buildBoundaryEditor(_BoundaryCombinationDraft draft, int index) {
@@ -444,6 +511,334 @@ class _MarkerLabelEditConfigEditorState
         setState(() {});
         _emit();
       },
+    );
+  }
+}
+
+class _MarkerLogicRecodeDraft {
+  _MarkerLogicRecodeDraft({
+    required this.originLabel,
+    Set<String>? timeLockLabels,
+    Set<String>? logicLabels,
+    Map<String, String>? recodeLabels,
+    this.matchMode = MarkerLogicMatchMode.firstSubsequent,
+    this.windowStartMs = 0,
+    this.windowEndMs = 1000,
+    this.keepOriginalMarkers = false,
+  }) : timeLockLabels = timeLockLabels ?? <String>{},
+       logicLabels = logicLabels ?? <String>{},
+       recodeLabels = recodeLabels ?? <String, String>{};
+
+  final String originLabel;
+  final Set<String> timeLockLabels;
+  final Set<String> logicLabels;
+  final Map<String, String> recodeLabels;
+  MarkerLogicMatchMode matchMode;
+  double windowStartMs;
+  double windowEndMs;
+  bool keepOriginalMarkers;
+
+  _MarkerLogicRecodeDraft copy() => _MarkerLogicRecodeDraft(
+    originLabel: originLabel,
+    timeLockLabels: Set<String>.from(timeLockLabels),
+    logicLabels: Set<String>.from(logicLabels),
+    recodeLabels: Map<String, String>.from(recodeLabels),
+    matchMode: matchMode,
+    windowStartMs: windowStartMs,
+    windowEndMs: windowEndMs,
+    keepOriginalMarkers: keepOriginalMarkers,
+  );
+}
+
+class _MarkerLogicRecodeDialogResult {
+  const _MarkerLogicRecodeDialogResult.save(this.draft) : remove = false;
+  const _MarkerLogicRecodeDialogResult.remove() : draft = null, remove = true;
+
+  final _MarkerLogicRecodeDraft? draft;
+  final bool remove;
+}
+
+class _MarkerLogicRecodeDialog extends StatefulWidget {
+  const _MarkerLogicRecodeDialog({
+    required this.labels,
+    required this.initialDraft,
+    required this.canRemove,
+  });
+
+  final List<String> labels;
+  final _MarkerLogicRecodeDraft initialDraft;
+  final bool canRemove;
+
+  @override
+  State<_MarkerLogicRecodeDialog> createState() =>
+      _MarkerLogicRecodeDialogState();
+}
+
+class _MarkerLogicRecodeDialogState extends State<_MarkerLogicRecodeDialog> {
+  late final _MarkerLogicRecodeDraft _draft;
+
+  @override
+  void initState() {
+    super.initState();
+    _draft = widget.initialDraft.copy();
+  }
+
+  bool get _canSave {
+    if (_draft.timeLockLabels.isEmpty || _draft.logicLabels.isEmpty) {
+      return false;
+    }
+    if (_draft.logicLabels.any(
+      (String label) => (_draft.recodeLabels[label] ?? '').trim().isEmpty,
+    )) {
+      return false;
+    }
+    return _draft.matchMode != MarkerLogicMatchMode.withinWindow ||
+        (_draft.windowStartMs.isFinite &&
+            _draft.windowEndMs.isFinite &&
+            _draft.windowStartMs <= _draft.windowEndMs);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Recode markers using logic'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 10,
+                children: <Widget>[
+                  const Text('Time lock to'),
+                  _MarkerMultiSelectDropdown(
+                    key: const ValueKey<String>('time-lock-markers'),
+                    labels: widget.labels,
+                    selected: _draft.timeLockLabels,
+                    placeholder: 'Select time-lock markers',
+                    onChanged: (Set<String> value) => setState(() {
+                      _draft.timeLockLabels
+                        ..clear()
+                        ..addAll(value);
+                    }),
+                  ),
+                  const Text('and look for'),
+                  _MarkerMultiSelectDropdown(
+                    key: const ValueKey<String>('logic-markers'),
+                    labels: widget.labels,
+                    selected: _draft.logicLabels,
+                    placeholder: 'Select logic markers',
+                    onChanged: (Set<String> selectedLabels) => setState(() {
+                      _draft.logicLabels
+                        ..clear()
+                        ..addAll(selectedLabels);
+                      _draft.recodeLabels.removeWhere(
+                        (String label, String value) =>
+                            !selectedLabels.contains(label),
+                      );
+                    }),
+                  ),
+                  SizedBox(
+                    width: 190,
+                    child: DropdownButtonFormField<MarkerLogicMatchMode>(
+                      initialValue: _draft.matchMode,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: const <DropdownMenuItem<MarkerLogicMatchMode>>[
+                        DropdownMenuItem<MarkerLogicMatchMode>(
+                          value: MarkerLogicMatchMode.firstSubsequent,
+                          child: Text('The first subsequent'),
+                        ),
+                        DropdownMenuItem<MarkerLogicMatchMode>(
+                          value: MarkerLogicMatchMode.mostRecent,
+                          child: Text('The most recent'),
+                        ),
+                        DropdownMenuItem<MarkerLogicMatchMode>(
+                          value: MarkerLogicMatchMode.withinWindow,
+                          child: Text('Within a window'),
+                        ),
+                      ],
+                      onChanged: (MarkerLogicMatchMode? value) => setState(() {
+                        _draft.matchMode =
+                            value ?? MarkerLogicMatchMode.firstSubsequent;
+                      }),
+                    ),
+                  ),
+                ],
+              ),
+              if (_draft.matchMode ==
+                  MarkerLogicMatchMode.withinWindow) ...<Widget>[
+                const SizedBox(height: 14),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: _draft.windowStartMs.toString(),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          signed: true,
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Window start (ms)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (String value) => setState(() {
+                          _draft.windowStartMs =
+                              double.tryParse(value) ?? double.nan;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: _draft.windowEndMs.toString(),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          signed: true,
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Window end (ms)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (String value) => setState(() {
+                          _draft.windowEndMs =
+                              double.tryParse(value) ?? double.nan;
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 18),
+              for (final String label in widget.labels)
+                if (_draft.logicLabels.contains(label)) ...<Widget>[
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        flex: 2,
+                        child: Text('\u2022 If $label, recode original as'),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextFormField(
+                          key: ValueKey<String>('recode-$label'),
+                          initialValue: _draft.recodeLabels[label],
+                          decoration: const InputDecoration(
+                            hintText: 'New marker label',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          onChanged: (String value) => setState(() {
+                            _draft.recodeLabels[label] = value;
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: _draft.keepOriginalMarkers,
+                title: const Text(
+                  'Keep original time-lock markers (add recoded copies)',
+                ),
+                onChanged: (bool? value) => setState(() {
+                  _draft.keepOriginalMarkers = value ?? false;
+                }),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        if (widget.canRemove)
+          TextButton(
+            onPressed: () => Navigator.of(
+              context,
+            ).pop(const _MarkerLogicRecodeDialogResult.remove()),
+            child: const Text('Remove rule'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _canSave
+              ? () => Navigator.of(
+                  context,
+                ).pop(_MarkerLogicRecodeDialogResult.save(_draft.copy()))
+              : null,
+          child: const Text('Save recode'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MarkerMultiSelectDropdown extends StatelessWidget {
+  const _MarkerMultiSelectDropdown({
+    super.key,
+    required this.labels,
+    required this.selected,
+    required this.placeholder,
+    required this.onChanged,
+  });
+
+  final List<String> labels;
+  final Set<String> selected;
+  final String placeholder;
+  final ValueChanged<Set<String>> onChanged;
+
+  String get _summary {
+    if (selected.isEmpty) {
+      return placeholder;
+    }
+    final List<String> ordered = labels
+        .where(selected.contains)
+        .toList(growable: false);
+    return ordered.length <= 2
+        ? ordered.join(', ')
+        : '${ordered.length} markers';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuAnchor(
+      menuChildren: labels
+          .map(
+            (String label) => CheckboxMenuButton(
+              value: selected.contains(label),
+              onChanged: (bool? checked) {
+                final Set<String> next = Set<String>.from(selected);
+                checked == true ? next.add(label) : next.remove(label);
+                onChanged(next);
+              },
+              child: Text(label),
+            ),
+          )
+          .toList(growable: false),
+      builder:
+          (BuildContext context, MenuController controller, Widget? child) =>
+              OutlinedButton.icon(
+                onPressed: () =>
+                    controller.isOpen ? controller.close() : controller.open(),
+                icon: const Icon(Icons.arrow_drop_down, size: 20),
+                label: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 180),
+                  child: Text(_summary, overflow: TextOverflow.ellipsis),
+                ),
+              ),
     );
   }
 }

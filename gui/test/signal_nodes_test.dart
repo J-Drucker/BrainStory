@@ -2694,6 +2694,35 @@ time,Fz,Cz
     await tester.pumpAndSettle();
     expect(find.text('Rename or delete marker labels.'), findsOneWidget);
     expect(find.text('blink'), findsOneWidget);
+    expect(find.text('Recode'), findsOneWidget);
+    await tester.tap(find.text('Recode'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recode markers using logic'), findsOneWidget);
+    expect(find.text('Time lock to'), findsOneWidget);
+    expect(find.text('and look for'), findsOneWidget);
+    expect(find.text('The first subsequent'), findsOneWidget);
+    expect(
+      find.text('Keep original time-lock markers (add recoded copies)'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('logic-markers')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(CheckboxMenuButton));
+    await tester.pumpAndSettle();
+    expect(find.text('\u2022 If blink, recode original as'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('logic-markers')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey<String>('recode-blink')),
+      'Blink response',
+    );
+    await tester.pump();
+    final Finder saveRecode = find.widgetWithText(FilledButton, 'Save recode');
+    expect(tester.widget<FilledButton>(saveRecode).onPressed, isNotNull);
+    await tester.tap(saveRecode);
+    await tester.pumpAndSettle();
+    expect(find.text('Recode markers using logic'), findsNothing);
+    expect(find.byIcon(Icons.check), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -3519,6 +3548,78 @@ Mk2=Artifact,Bad Segment,11,5,0
       result.markers.any((TimeMarker marker) => marker.label == 'Note'),
       isTrue,
     );
+  });
+
+  test('marker logic recodes anchors using the first subsequent condition', () {
+    final List<TimeMarker> result =
+        AddRemoveMarkersNodeType.recodeByMarkerLogic(
+          const <TimeMarker>[
+            TimeMarker(onsetMicros: 0, label: 'Cue'),
+            TimeMarker(onsetMicros: 1000, label: 'Response'),
+            TimeMarker(onsetMicros: 1100, label: 'Correct'),
+            TimeMarker(onsetMicros: 2000, label: 'Response'),
+            TimeMarker(onsetMicros: 2100, label: 'Incorrect'),
+          ],
+          timeLockLabels: <String>{'Response'},
+          logicLabels: <String>{'Correct', 'Incorrect'},
+          recodeLabels: <String, String>{
+            'Correct': 'Correct response',
+            'Incorrect': 'Incorrect response',
+          },
+          matchMode: MarkerLogicMatchMode.firstSubsequent,
+        );
+
+    expect(result.map((TimeMarker marker) => marker.label), <String>[
+      'Cue',
+      'Correct response',
+      'Correct',
+      'Incorrect response',
+      'Incorrect',
+    ]);
+    expect(result[1].attributes['brainstory.logicMarkerLabel'], 'Correct');
+  });
+
+  test('marker logic supports recent, windowed, and keep-original matches', () {
+    const List<TimeMarker> markers = <TimeMarker>[
+      TimeMarker(onsetMicros: 0, label: 'Correct'),
+      TimeMarker(onsetMicros: 1000, label: 'Response'),
+      TimeMarker(onsetMicros: 1400, label: 'Incorrect'),
+      TimeMarker(onsetMicros: 2000, label: 'Correct'),
+    ];
+    final List<TimeMarker> recent =
+        AddRemoveMarkersNodeType.recodeByMarkerLogic(
+          markers,
+          timeLockLabels: <String>{'Response'},
+          logicLabels: <String>{'Correct', 'Incorrect'},
+          recodeLabels: <String, String>{
+            'Correct': 'Recent correct',
+            'Incorrect': 'Recent incorrect',
+          },
+          matchMode: MarkerLogicMatchMode.mostRecent,
+        );
+    expect(recent[1].label, 'Recent correct');
+
+    final List<TimeMarker> windowed =
+        AddRemoveMarkersNodeType.recodeByMarkerLogic(
+          markers,
+          timeLockLabels: <String>{'Response'},
+          logicLabels: <String>{'Correct', 'Incorrect'},
+          recodeLabels: <String, String>{
+            'Correct': 'Window correct',
+            'Incorrect': 'Window incorrect',
+          },
+          matchMode: MarkerLogicMatchMode.withinWindow,
+          windowStartMs: 0.2,
+          windowEndMs: 0.6,
+          keepOriginalMarkers: true,
+        );
+    expect(windowed.map((TimeMarker marker) => marker.label), <String>[
+      'Correct',
+      'Response',
+      'Window incorrect',
+      'Incorrect',
+      'Correct',
+    ]);
   });
 
   test(

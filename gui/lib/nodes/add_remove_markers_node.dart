@@ -19,6 +19,8 @@ class MarkerBoundaryCombinationResult {
   final int unmatchedStopCount;
 }
 
+enum MarkerLogicMatchMode { firstSubsequent, mostRecent, withinWindow }
+
 class AddRemoveMarkersNodeType extends NodeType {
   @override
   String get title => 'Edit Markers';
@@ -237,6 +239,109 @@ class AddRemoveMarkersNodeType extends NodeType {
       unmatchedStartCount: openStarts.length,
       unmatchedStopCount: unmatchedStops,
     );
+  }
+
+  static List<TimeMarker> recodeByMarkerLogic(
+    List<TimeMarker> markers, {
+    required Set<String> timeLockLabels,
+    required Set<String> logicLabels,
+    required Map<String, String> recodeLabels,
+    required MarkerLogicMatchMode matchMode,
+    double windowStartMs = 0,
+    double windowEndMs = 1000,
+    bool keepOriginalMarkers = false,
+  }) {
+    if (timeLockLabels.isEmpty || logicLabels.isEmpty || recodeLabels.isEmpty) {
+      return List<TimeMarker>.from(markers, growable: false);
+    }
+
+    final List<({int index, TimeMarker marker})> ordered =
+        markers.indexed
+            .map(
+              ((int, TimeMarker) entry) => (index: entry.$1, marker: entry.$2),
+            )
+            .toList(growable: false)
+          ..sort((a, b) {
+            final int byTime = a.marker.onsetMicros.compareTo(
+              b.marker.onsetMicros,
+            );
+            return byTime != 0 ? byTime : a.index.compareTo(b.index);
+          });
+    final int windowStartMicros = (windowStartMs * 1000).round();
+    final int windowEndMicros = (windowEndMs * 1000).round();
+    final Map<int, TimeMarker> replacements = <int, TimeMarker>{};
+    final List<TimeMarker> additions = <TimeMarker>[];
+
+    for (final ({int index, TimeMarker marker}) anchor in ordered) {
+      if (!timeLockLabels.contains(anchor.marker.label)) {
+        continue;
+      }
+      final List<({int index, TimeMarker marker})> candidates = ordered
+          .where((({int index, TimeMarker marker}) candidate) {
+            if (candidate.index == anchor.index ||
+                !logicLabels.contains(candidate.marker.label)) {
+              return false;
+            }
+            final int relativeMicros =
+                candidate.marker.onsetMicros - anchor.marker.onsetMicros;
+            return switch (matchMode) {
+              MarkerLogicMatchMode.firstSubsequent => relativeMicros > 0,
+              MarkerLogicMatchMode.mostRecent => relativeMicros < 0,
+              MarkerLogicMatchMode.withinWindow =>
+                relativeMicros >= windowStartMicros &&
+                    relativeMicros <= windowEndMicros,
+            };
+          })
+          .toList(growable: false);
+      if (candidates.isEmpty) {
+        continue;
+      }
+
+      final ({int index, TimeMarker marker}) match = switch (matchMode) {
+        MarkerLogicMatchMode.firstSubsequent => candidates.first,
+        MarkerLogicMatchMode.mostRecent => candidates.last,
+        MarkerLogicMatchMode.withinWindow => candidates.reduce((a, b) {
+          final int aDistance =
+              (a.marker.onsetMicros - anchor.marker.onsetMicros).abs();
+          final int bDistance =
+              (b.marker.onsetMicros - anchor.marker.onsetMicros).abs();
+          return bDistance < aDistance ? b : a;
+        }),
+      };
+      final String replacementLabel =
+          recodeLabels[match.marker.label]?.trim() ?? '';
+      if (replacementLabel.isEmpty) {
+        continue;
+      }
+      final TimeMarker recoded = anchor.marker.copyWith(
+        label: replacementLabel,
+        attributes: <String, dynamic>{
+          ...anchor.marker.attributes,
+          'brainstory.logicMarkerLabel': match.marker.label,
+          'brainstory.logicMarkerOnsetMicros': match.marker.onsetMicros,
+          'brainstory.logicMatchMode': matchMode.name,
+        },
+      );
+      if (keepOriginalMarkers) {
+        additions.add(recoded);
+      } else {
+        replacements[anchor.index] = recoded;
+      }
+    }
+
+    final List<({int index, TimeMarker marker})> result =
+        <({int index, TimeMarker marker})>[
+          for (final (int, TimeMarker) entry in markers.indexed)
+            (index: entry.$1, marker: replacements[entry.$1] ?? entry.$2),
+          for (int index = 0; index < additions.length; index++)
+            (index: markers.length + index, marker: additions[index]),
+        ]..sort((a, b) {
+          final int byTime = a.marker.onsetMicros.compareTo(
+            b.marker.onsetMicros,
+          );
+          return byTime != 0 ? byTime : a.index.compareTo(b.index);
+        });
+    return result.map((entry) => entry.marker).toList(growable: false);
   }
 
   static List<TimeMarker> markersForDataset(
