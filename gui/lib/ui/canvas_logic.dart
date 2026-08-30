@@ -5956,6 +5956,11 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) {
+    if (node.type is AddRemoveMarkersNodeType) {
+      return dataset.timeSeries == null
+          ? <BrainStoryArtifactKind>{}
+          : <BrainStoryArtifactKind>{BrainStoryArtifactKind.markers};
+    }
     final Set<BrainStoryArtifactKind> kinds = <BrainStoryArtifactKind>{};
     for (final PortSpec output in node.outputPorts) {
       final String outputName = output.name.toLowerCase();
@@ -6001,6 +6006,11 @@ class CanvasLogic {
     NodeModel node,
     DatasetArtifactSnapshot snapshot,
   ) {
+    if (node.type is AddRemoveMarkersNodeType) {
+      return snapshot.markers != null || snapshot.timeSeries != null
+          ? <BrainStoryArtifactKind>{BrainStoryArtifactKind.markers}
+          : <BrainStoryArtifactKind>{};
+    }
     final Set<BrainStoryArtifactKind> kinds = <BrainStoryArtifactKind>{};
     for (final PortSpec output in node.outputPorts) {
       final String outputName = output.name.toLowerCase();
@@ -6810,6 +6820,27 @@ class CanvasLogic {
     NodeModel node,
     DatasetArtifactSnapshot snapshot,
   ) {
+    if (node.type is AddRemoveMarkersNodeType) {
+      final List<TimeMarker>? markers =
+          snapshot.markers ??
+          snapshot.timeSeries?.markers
+              .map((TimeMarker marker) => TimeMarker.fromJson(marker.toJson()))
+              .toList(growable: false);
+      return DatasetArtifactSnapshot(
+        datasetLabel: snapshot.datasetLabel,
+        markers: markers,
+        artifactIdentities:
+            Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
+              snapshot.artifactIdentities.entries.where(
+                (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+                    entry.key == BrainStoryArtifactKind.markers,
+              ),
+            ),
+        includedKinds: const <BrainStoryArtifactKind>{
+          BrainStoryArtifactKind.markers,
+        },
+      );
+    }
     if (snapshot.includedKinds != null) {
       return snapshot;
     }

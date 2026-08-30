@@ -1211,9 +1211,169 @@ void main() {
       dataset
           .artifactIdentityFor(BrainStoryArtifactKind.timeSeries)!
           .producerNodeId,
+      'import-node',
+    );
+    expect(
+      dataset
+          .artifactIdentityFor(BrainStoryArtifactKind.markers)!
+          .producerNodeId,
       markerNode.id,
     );
   });
+
+  test(
+    'marker edits persist downstream while upstream markers stay original',
+    () async {
+      final Directory tempDir = await Directory.systemTemp.createTemp(
+        'brainstory_marker_persistence_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final File vhdrFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.vhdr',
+      );
+      final File eegFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.eeg',
+      );
+      final File vmrkFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.vmrk',
+      );
+      await vhdrFile.writeAsString('''
+Brain Vision Data Exchange Header File Version 1.0
+[Common Infos]
+DataFile=sample.eeg
+MarkerFile=sample.vmrk
+DataFormat=BINARY
+DataOrientation=MULTIPLEXED
+NumberOfChannels=1
+SamplingInterval=1000
+
+[Binary Infos]
+BinaryFormat=INT_16
+
+[Channel Infos]
+Ch1=Cz,,
+''');
+      await vmrkFile.writeAsString('''
+Brain Vision Data Exchange Marker File, Version 1.0
+[Marker Infos]
+Mk1=Stimulus,Cue,2,1,0
+Mk2=Response,Response,4,1,0
+''');
+      final ByteData eegData = ByteData(8 * 2);
+      for (int index = 0; index < 8; index++) {
+        eegData.setInt16(index * 2, index + 1, Endian.little);
+      }
+      await eegFile.writeAsBytes(eegData.buffer.asUint8List());
+
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset dataset = Dataset(
+        'marker-persistence-dataset',
+        label: 'sample.vhdr',
+        path: vhdrFile.path,
+      );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(AddRemoveMarkersNodeType());
+      logic.addNode(ResampleNodeType());
+
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel editNode = logic.nodes[1];
+      final NodeModel downstreamNode = logic.nodes[2];
+      importNode.params['selectedDatasetIds'] = <String>[dataset.id];
+      editNode.params['selectedDatasetIds'] = <String>[dataset.id];
+      downstreamNode.params['selectedDatasetIds'] = <String>[dataset.id];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': editNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': editNode.id,
+          'fromPort': 0,
+          'toNode': downstreamNode.id,
+          'toPort': 0,
+        },
+      ]);
+
+      await logic.runThisStep(importNode.id, datasetIds: <String>{dataset.id});
+      final List<TimeMarker> originalMarkers = dataset.timeSeries!.markers;
+      expect(originalMarkers, isNotEmpty);
+      final String originalLabel = originalMarkers.first.label;
+      final List<TimeMarker> editedMarkers = originalMarkers
+          .map(
+            (TimeMarker marker) => marker.label == originalLabel
+                ? marker.copyWith(label: 'Recoded marker')
+                : marker,
+          )
+          .toList(growable: false);
+      editNode.params['markers'] = editedMarkers
+          .map(
+            (TimeMarker marker) => <String, dynamic>{
+              ...marker.toJson(),
+              'datasetId': dataset.id,
+            },
+          )
+          .toList(growable: false);
+      editNode.params['applyEmptyMarkerSet'] = true;
+
+      await logic.runThisStep(editNode.id, datasetIds: <String>{dataset.id});
+      await logic.runThisStep(
+        downstreamNode.id,
+        datasetIds: <String>{dataset.id},
+      );
+
+      final Dataset upstreamView = await logic.materializedDatasetViewForNode(
+        importNode.id,
+        dataset,
+      );
+      final Dataset editView = await logic.materializedDatasetViewForNode(
+        editNode.id,
+        dataset,
+      );
+      final Dataset downstreamView = await logic.materializedDatasetViewForNode(
+        downstreamNode.id,
+        dataset,
+      );
+
+      expect(upstreamView.timeSeries!.markers.first.label, originalLabel);
+      expect(editView.timeSeries!.markers.first.label, 'Recoded marker');
+      expect(downstreamView.timeSeries!.markers.first.label, 'Recoded marker');
+      expect(
+        upstreamView.timeSeries!.channelSamples,
+        editView.timeSeries!.channelSamples,
+      );
+      expect(
+        editView
+            .artifactIdentityFor(BrainStoryArtifactKind.timeSeries)!
+            .producerNodeId,
+        importNode.id,
+      );
+      expect(
+        editView
+            .artifactIdentityFor(BrainStoryArtifactKind.markers)!
+            .producerNodeId,
+        editNode.id,
+      );
+
+      final CanvasLogic restored = CanvasLogic()
+        ..importProjectJson(logic.exportProjectJson());
+      final NodeModel restoredEditNode = restored.nodes.firstWhere(
+        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      );
+      final Dataset restoredInput = Dataset(dataset.id, label: dataset.label)
+        ..timeSeries = TimeSeriesData.fromJson(
+          upstreamView.timeSeries!.toJson(),
+        );
+      await restoredEditNode.type.run(restoredInput, restoredEditNode.params);
+      expect(restoredInput.timeSeries!.markers.first.label, 'Recoded marker');
+    },
+  );
 
   test(
     'import stores multiple datasets to disk while keeping only the first hot',
