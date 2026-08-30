@@ -112,11 +112,24 @@ class IcaComponentRejectionNodeType extends NodeType {
     final List<List<double>> activations = inputIsActivations
         ? input.channels
         : transform.transformSensorChannels(input);
-    final List<List<double>> cleanChannels = transform
+    final List<List<double>> reconstructedChannels = transform
         .reconstructSensorChannels(activations, excludedComponents: excluded);
-    final List<String> labels = inputIsActivations
-        ? transform.originalChannelLabels
-        : input.channelLabels;
+    final List<List<double>> cleanChannels;
+    final List<String> labels;
+    if (inputIsActivations) {
+      cleanChannels = reconstructedChannels;
+      labels = transform.originalChannelLabels;
+    } else {
+      cleanChannels = input.channels
+          .map((List<double> channel) => List<double>.from(channel))
+          .toList(growable: false);
+      final List<int> selectedIndices =
+          transform.resolvedSelectedChannelIndices;
+      for (int index = 0; index < selectedIndices.length; index++) {
+        cleanChannels[selectedIndices[index]] = reconstructedChannels[index];
+      }
+      labels = input.channelLabels;
+    }
     final List<int> sortedExcluded = excluded.toList()..sort();
     final String excludedLabels = sortedExcluded.isEmpty
         ? 'none'

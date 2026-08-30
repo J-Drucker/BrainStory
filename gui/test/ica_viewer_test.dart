@@ -139,6 +139,47 @@ void main() {
     },
   );
 
+  test('ICA rejection leaves channels outside the fit unchanged', () async {
+    final Dataset dataset = Dataset('subset-apply');
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: const <List<double>>[
+        <double>[11, 12, 13],
+        <double>[101, 102, 103],
+        <double>[31, 32, 33],
+      ],
+      sampleRate: 128,
+      channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+    );
+    dataset.matrixTransformation = const MatrixTransformationData(
+      matrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      unmixingMatrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      mixingMatrix: <List<double>>[
+        <double>[1, 0],
+        <double>[0, 1],
+      ],
+      channelMeans: <double>[10, 30],
+      originalChannelLabels: <String>['Fz', 'Pz'],
+      sourceChannelLabels: <String>['Fz', 'Cz', 'Pz'],
+      selectedChannelIndices: <int>[0, 2],
+      originalSampleRate: 128,
+      componentLabels: <String>['IC 1', 'IC 2'],
+    );
+
+    await IcaComponentRejectionNodeType().run(dataset, <String, dynamic>{
+      'excludedComponents': <int>[0],
+    });
+
+    expect(dataset.timeSeries!.channels[0], <double>[10, 10, 10]);
+    expect(dataset.timeSeries!.channels[1], <double>[101, 102, 103]);
+    expect(dataset.timeSeries!.channels[2], <double>[31, 32, 33]);
+  });
+
   test('ICA rejection refuses incompatible sensor metadata', () async {
     final Dataset dataset = _icaDataset();
     dataset.timeSeries = TimeSeriesData(

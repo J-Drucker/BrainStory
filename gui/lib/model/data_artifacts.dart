@@ -1440,6 +1440,8 @@ class MatrixTransformationData {
     this.dewhiteningMatrix = const <List<double>>[],
     this.channelMeans = const <double>[],
     this.originalChannelLabels = const <String>[],
+    this.sourceChannelLabels = const <String>[],
+    this.selectedChannelIndices = const <int>[],
     this.originalSampleRate = 0.0,
     this.originalChannelCoordinates = const <String, ChannelCoordinate>{},
     this.originalImpedanceData,
@@ -1452,6 +1454,9 @@ class MatrixTransformationData {
     this.tolerance = 0.0,
     this.maxIterations = 0,
     this.seed = 0,
+    this.fitScope = 'whole',
+    this.fitSampleCount = 0,
+    this.fitMarkerLabels = const <String>[],
     this.source = '',
   });
 
@@ -1462,7 +1467,13 @@ class MatrixTransformationData {
   final List<List<double>> whiteningMatrix;
   final List<List<double>> dewhiteningMatrix;
   final List<double> channelMeans;
+
+  /// Channels included in the learned transform, in matrix column order.
   final List<String> originalChannelLabels;
+
+  /// Full channel schema of the recording used to fit the transform.
+  final List<String> sourceChannelLabels;
+  final List<int> selectedChannelIndices;
   final double originalSampleRate;
   final Map<String, ChannelCoordinate> originalChannelCoordinates;
   final ImpedanceData? originalImpedanceData;
@@ -1475,6 +1486,9 @@ class MatrixTransformationData {
   final double tolerance;
   final int maxIterations;
   final int seed;
+  final String fitScope;
+  final int fitSampleCount;
+  final List<String> fitMarkerLabels;
   final String source;
 
   int get componentCount => componentLabels.isNotEmpty
@@ -1490,23 +1504,31 @@ class MatrixTransformationData {
   }
 
   String? sensorCompatibilityError(TimeSeriesData timeSeries) {
-    final int expectedChannels = originalChannelLabels.length;
-    if (expectedChannels == 0 || unmixingMatrix.isEmpty) {
+    final List<String> expectedSourceLabels = sourceChannelLabels.isNotEmpty
+        ? sourceChannelLabels
+        : originalChannelLabels;
+    final int fittedChannelCount = originalChannelLabels.length;
+    if (fittedChannelCount == 0 || unmixingMatrix.isEmpty) {
       return 'The ICA transform does not identify its original sensor channels.';
     }
-    if (timeSeries.channelCount != expectedChannels) {
-      return 'ICA expects $expectedChannels sensor channels, but the selected data has ${timeSeries.channelCount}.';
+    if (timeSeries.channelCount != expectedSourceLabels.length) {
+      return 'ICA expects ${expectedSourceLabels.length} sensor channels, but the selected data has ${timeSeries.channelCount}.';
     }
-    if (!_labelsMatchExactly(timeSeries.channelLabels, originalChannelLabels)) {
-      return 'ICA sensor labels and order must exactly match ${originalChannelLabels.join(', ')}.';
+    if (!_labelsMatchExactly(timeSeries.channelLabels, expectedSourceLabels)) {
+      return 'ICA sensor labels and order must exactly match ${expectedSourceLabels.join(', ')}.';
     }
     if (originalSampleRate > 0 &&
         (timeSeries.sampleRate - originalSampleRate).abs() > 1.0e-9) {
       return 'ICA expects ${originalSampleRate.toStringAsFixed(3)} Hz data, but the selected data is ${timeSeries.sampleRate.toStringAsFixed(3)} Hz.';
     }
-    if (channelMeans.length != expectedChannels ||
+    final List<int> channelIndices = resolvedSelectedChannelIndices;
+    if (channelIndices.length != fittedChannelCount ||
+        channelIndices.any(
+          (int index) => index < 0 || index >= expectedSourceLabels.length,
+        ) ||
+        channelMeans.length != fittedChannelCount ||
         unmixingMatrix.any(
-          (List<double> row) => row.length != expectedChannels,
+          (List<double> row) => row.length != fittedChannelCount,
         )) {
       return 'The ICA transform dimensions do not match its sensor metadata.';
     }
@@ -1518,7 +1540,10 @@ class MatrixTransformationData {
     if (compatibilityError != null) {
       throw ArgumentError(compatibilityError);
     }
-    final List<List<double>> channels = timeSeries.channels;
+    final List<int> channelIndices = resolvedSelectedChannelIndices;
+    final List<List<double>> channels = channelIndices
+        .map((int index) => timeSeries.channels[index])
+        .toList(growable: false);
     final int sampleCount = channels.first.length;
     if (channels.any((List<double> channel) => channel.length != sampleCount)) {
       throw ArgumentError('All ICA input channels must have equal lengths.');
@@ -1534,6 +1559,19 @@ class MatrixTransformationData {
         return activation;
       }, growable: false);
     }, growable: false);
+  }
+
+  List<int> get resolvedSelectedChannelIndices {
+    if (selectedChannelIndices.length == originalChannelLabels.length &&
+        selectedChannelIndices.every((int index) => index >= 0)) {
+      return selectedChannelIndices;
+    }
+    final List<String> sourceLabels = sourceChannelLabels.isNotEmpty
+        ? sourceChannelLabels
+        : originalChannelLabels;
+    return originalChannelLabels
+        .map(sourceLabels.indexOf)
+        .toList(growable: false);
   }
 
   List<List<double>> reconstructSensorChannels(
@@ -1584,6 +1622,8 @@ class MatrixTransformationData {
       'dewhiteningMatrix': dewhiteningMatrix,
       'channelMeans': channelMeans,
       'originalChannelLabels': originalChannelLabels,
+      'sourceChannelLabels': sourceChannelLabels,
+      'selectedChannelIndices': selectedChannelIndices,
       'originalSampleRate': originalSampleRate,
       'originalChannelCoordinates': originalChannelCoordinates.map(
         (String key, ChannelCoordinate value) =>
@@ -1600,6 +1640,9 @@ class MatrixTransformationData {
       'tolerance': tolerance,
       'maxIterations': maxIterations,
       'seed': seed,
+      'fitScope': fitScope,
+      'fitSampleCount': fitSampleCount,
+      'fitMarkerLabels': fitMarkerLabels,
       'source': source,
     };
   }
@@ -1630,6 +1673,16 @@ class MatrixTransformationData {
       originalChannelLabels:
           (json['originalChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      sourceChannelLabels:
+          (json['sourceChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      selectedChannelIndices:
+          (json['selectedChannelIndices'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .whereType<num>()
+              .map((num value) => value.toInt())
               .toList(growable: false),
       originalSampleRate:
           (json['originalSampleRate'] as num?)?.toDouble() ?? 0.0,
@@ -1664,6 +1717,12 @@ class MatrixTransformationData {
       tolerance: (json['tolerance'] as num?)?.toDouble() ?? 0.0,
       maxIterations: (json['maxIterations'] as num?)?.toInt() ?? 0,
       seed: (json['seed'] as num?)?.toInt() ?? 0,
+      fitScope: json['fitScope']?.toString() ?? 'whole',
+      fitSampleCount: (json['fitSampleCount'] as num?)?.toInt() ?? 0,
+      fitMarkerLabels:
+          (json['fitMarkerLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
       source: json['source']?.toString() ?? '',
     );
   }

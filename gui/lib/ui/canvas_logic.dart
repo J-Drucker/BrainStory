@@ -3127,6 +3127,12 @@ class CanvasLogic {
     if (node.type is PSDNodeType) {
       editorParams['_parentSegmentOptions'] = _psdParentSegmentOptions(node);
     }
+    if (node.type is ICANodeType) {
+      final ({List<String> channels, List<String> markers}) options =
+          _icaInputOptions(node);
+      editorParams['_icaChannelLabels'] = options.channels;
+      editorParams['_icaMarkerLabels'] = options.markers;
+    }
     showDialog<void>(
       context: context,
       builder: (_) => node.type.buildConfigWidget(
@@ -3165,6 +3171,29 @@ class CanvasLogic {
         portStatusSummary: _portStatusSummaryForNode(node),
         processingSteps: processingStepsForNode(node.id),
       ),
+    );
+  }
+
+  ({List<String> channels, List<String> markers}) _icaInputOptions(
+    NodeModel node,
+  ) {
+    final Set<String> channels = <String>{};
+    final Set<String> markers = <String>{};
+    for (final NodeModel parent in _immediateParents(node.id)) {
+      final TimeSeriesData? timeSeries = _primarySnapshotForNode(
+        parent,
+      )?.timeSeries;
+      if (timeSeries == null) {
+        continue;
+      }
+      channels.addAll(timeSeries.channelLabels);
+      markers.addAll(
+        timeSeries.markers.map((TimeMarker marker) => marker.label),
+      );
+    }
+    return (
+      channels: channels.toList()..sort(),
+      markers: markers.toList()..sort(),
     );
   }
 

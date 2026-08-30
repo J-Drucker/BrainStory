@@ -4,6 +4,7 @@ import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
 import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/node_registry.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -113,6 +114,8 @@ void main() {
       ],
       channelMeans: <double>[3, 4],
       originalChannelLabels: <String>['A', 'B'],
+      sourceChannelLabels: <String>['A', 'B', 'C'],
+      selectedChannelIndices: <int>[0, 1],
       originalSampleRate: 256,
       componentLabels: <String>['IC 1', 'IC 2'],
       componentEnergies: <double>[0.7, 0.3],
@@ -123,6 +126,9 @@ void main() {
       tolerance: 0.0001,
       maxIterations: 200,
       seed: 42,
+      fitScope: 'markers',
+      fitSampleCount: 512,
+      fitMarkerLabels: <String>['blink'],
     );
 
     final MatrixTransformationData decoded = MatrixTransformationData.fromJson(
@@ -131,9 +137,58 @@ void main() {
     expect(decoded.mixingMatrix, original.mixingMatrix);
     expect(decoded.channelMeans, original.channelMeans);
     expect(decoded.originalSampleRate, 256);
+    expect(decoded.sourceChannelLabels, <String>['A', 'B', 'C']);
+    expect(decoded.selectedChannelIndices, <int>[0, 1]);
+    expect(decoded.fitScope, 'markers');
+    expect(decoded.fitSampleCount, 512);
+    expect(decoded.fitMarkerLabels, <String>['blink']);
     expect(decoded.algorithm, 'FastICA');
     expect(decoded.converged, isTrue);
     expect(decoded.iterationCount, 12);
+  });
+
+  test('ICA fits a middle portion on selected channels', () async {
+    final Dataset dataset = _scopedIcaDataset();
+    await ICANodeType().run(dataset, <String, dynamic>{
+      ...ICANodeType().defaultParams,
+      'fitScope': 'portion',
+      'portionAnchor': 'middle',
+      'portionDurationSeconds': 2.0,
+      'channelMode': 'selected',
+      'selectedChannelLabels': <String>['Fz', 'Pz'],
+    });
+
+    final MatrixTransformationData transform = dataset.matrixTransformation!;
+    expect(transform.fitScope, 'portion');
+    expect(transform.fitSampleCount, 512);
+    expect(transform.sourceChannelLabels, <String>['Fz', 'Cz', 'Pz']);
+    expect(transform.originalChannelLabels, <String>['Fz', 'Pz']);
+    expect(transform.selectedChannelIndices, <int>[0, 2]);
+    expect(dataset.timeSeries!.channelCount, 2);
+    expect(dataset.timeSeries!.sampleCount, 2048);
+  });
+
+  test('ICA concatenates selected marker windows for fitting', () async {
+    final Dataset dataset = _scopedIcaDataset(
+      markers: const <TimeMarker>[
+        TimeMarker(onsetMicros: 1000000, label: 'blink'),
+        TimeMarker(onsetMicros: 2500000, label: 'blink'),
+        TimeMarker(onsetMicros: 3000000, label: 'other'),
+      ],
+    );
+    await ICANodeType().run(dataset, <String, dynamic>{
+      ...ICANodeType().defaultParams,
+      'fitScope': 'markers',
+      'markerLabels': <String>['blink'],
+      'markerPreSeconds': 0.25,
+      'markerPostSeconds': 0.25,
+    });
+
+    final MatrixTransformationData transform = dataset.matrixTransformation!;
+    expect(transform.fitScope, 'markers');
+    expect(transform.fitMarkerLabels, <String>['blink']);
+    expect(transform.fitSampleCount, 256);
+    expect(dataset.timeSeries!.sampleCount, 2048);
   });
 
   test('ICA validates multichannel input', () async {
@@ -153,5 +208,85 @@ void main() {
       (NodeRegistryEntry candidate) => candidate.create() is ICANodeType,
     );
     expect(entry.visible, isTrue);
+    expect(ICANodeType().defaultParams, containsPair('fitScope', 'whole'));
+    expect(ICANodeType().defaultParams, containsPair('channelMode', 'all'));
   });
+
+  testWidgets('ICA parameters expose fit scope and channel selection', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = _scopedIcaDataset(
+      markers: const <TimeMarker>[
+        TimeMarker(onsetMicros: 1000000, label: 'blink'),
+      ],
+    );
+    final Map<String, dynamic> params = ICANodeType().defaultParams;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setState) {
+                return ICANodeType().buildBody(
+                  params,
+                  datasets: <String, Dataset>{dataset.id: dataset},
+                  setState: setState,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Whole'), findsOneWidget);
+    expect(find.text('Portion'), findsOneWidget);
+    expect(find.text('Markers'), findsOneWidget);
+    expect(find.text('All'), findsOneWidget);
+    expect(find.text('Selected'), findsOneWidget);
+
+    await tester.tap(find.text('Markers'));
+    await tester.pump();
+    expect(find.text('blink'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Before (seconds)'), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'After (seconds)'), findsOneWidget);
+
+    await tester.tap(find.text('Selected'));
+    await tester.pump();
+    expect(find.text('Fz'), findsOneWidget);
+    expect(find.text('Cz'), findsOneWidget);
+    expect(find.text('Pz'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Dataset _scopedIcaDataset({List<TimeMarker> markers = const <TimeMarker>[]}) {
+  const int sampleCount = 2048;
+  const double sampleRate = 256.0;
+  final Dataset dataset = Dataset('scoped-ica');
+  dataset.timeSeries = TimeSeriesData(
+    channelSamples: <List<double>>[
+      List<double>.generate(
+        sampleCount,
+        (int index) => math.sin(2 * math.pi * 3 * index / sampleRate),
+      ),
+      List<double>.generate(
+        sampleCount,
+        (int index) =>
+            math.sin(2 * math.pi * 5 * index / sampleRate) +
+            0.2 * math.sin(2 * math.pi * 3 * index / sampleRate),
+      ),
+      List<double>.generate(
+        sampleCount,
+        (int index) =>
+            ((index * 37 % 101) - 50) / 50 +
+            0.1 * math.sin(2 * math.pi * 3 * index / sampleRate),
+      ),
+    ],
+    sampleRate: sampleRate,
+    channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+    markers: markers,
+    source: 'scoped synthetic',
+  );
+  return dataset;
 }
