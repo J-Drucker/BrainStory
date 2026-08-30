@@ -2983,6 +2983,29 @@ class CanvasLogic {
       );
       params['applyEmptyMarkerSet'] =
           downstream.params['applyEmptyMarkerSet'] == true;
+      for (final String key in <String>[
+        'markerEditOperations',
+        'markerEditScope',
+        'markerEditDatasetIds',
+        'markerEditSourceDatasetId',
+      ]) {
+        if (downstream.params.containsKey(key)) {
+          params[key] = _deepCloneJsonValue(downstream.params[key]);
+        }
+      }
+      for (final String key in <String>[
+        'channelEditSourceDatasetId',
+        'channelRenameScope',
+        'channelRenameDatasetIds',
+        'channelDeleteScope',
+        'channelDeleteDatasetIds',
+        'channelInterpolateScope',
+        'channelInterpolateDatasetIds',
+      ]) {
+        if (upstream.params.containsKey(key)) {
+          params[key] = _deepCloneJsonValue(upstream.params[key]);
+        }
+      }
       params['selectedDatasetIds'] = upstreamDatasets.toList(growable: false);
       return _NodeCombinationPlan(
         upstream: upstream,
@@ -4701,7 +4724,99 @@ class CanvasLogic {
       );
       datasetIds.addAll(importDatasetIds);
     }
-    return _selectedDatasetIdsForNode(node, datasetIds);
+    final Set<String> selected = _selectedDatasetIdsForNode(node, datasetIds);
+    final Set<String> required = _datasetIdsRequiredByEditScopes(
+      node,
+      datasetIds,
+    );
+    if (node.type is AddRemoveMarkersNodeType &&
+        Map<String, dynamic>.from(
+          node.params['markerEditOperations'] as Map? ??
+              const <String, dynamic>{},
+        ).isNotEmpty) {
+      return required.intersection(datasetIds);
+    }
+    selected.addAll(required);
+    return selected.intersection(datasetIds);
+  }
+
+  Set<String> _datasetIdsRequiredByEditScopes(
+    NodeModel node,
+    Set<String> availableDatasetIds,
+  ) {
+    final Set<String> required = <String>{};
+    final bool editsMarkers =
+        node.type is AddRemoveMarkersNodeType ||
+        node.type is EditChannelsAndMarkersNodeType;
+    final Map<String, dynamic> markerOperations = Map<String, dynamic>.from(
+      node.params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
+    );
+    if (editsMarkers && markerOperations.isNotEmpty) {
+      if ((node.params['markerEditScope'] ?? 'all').toString() == 'all') {
+        required.addAll(availableDatasetIds);
+      } else {
+        final List<dynamic> ids =
+            node.params['markerEditDatasetIds'] as List<dynamic>? ??
+            const <dynamic>[];
+        if (ids.isEmpty) {
+          final String sourceId =
+              node.params['markerEditSourceDatasetId']?.toString() ?? '';
+          if (sourceId.isNotEmpty) required.add(sourceId);
+        } else {
+          required.addAll(ids.map((dynamic value) => value.toString()));
+        }
+      }
+    }
+
+    final bool editsChannels =
+        node.type is EditChannelsNodeType ||
+        node.type is EditChannelsAndMarkersNodeType;
+    if (!editsChannels) {
+      return required;
+    }
+    final String sourceDatasetId =
+        node.params['channelEditSourceDatasetId']?.toString() ?? '';
+    final Map<String, dynamic> sourceConfig =
+        EditChannelsNodeType.configForDataset(node.params, sourceDatasetId);
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      sourceConfig['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    final Set<String> activeOperations = <String>{};
+    for (final dynamic rawEdit in edits.values) {
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        rawEdit as Map? ?? const <String, dynamic>{},
+      );
+      if ((edit['rename'] ?? '').toString().trim().isNotEmpty) {
+        activeOperations.add('Rename');
+      }
+      if (edit['remove'] == true) {
+        activeOperations.add(
+          (edit['removeMode'] ?? 'delete').toString() == 'interpolate'
+              ? 'Interpolate'
+              : 'Delete',
+        );
+      }
+    }
+    for (final String operation in activeOperations) {
+      final String defaultScope = operation == 'Interpolate'
+          ? 'selected'
+          : 'all';
+      final String scope =
+          (node.params['channel${operation}Scope'] ?? defaultScope).toString();
+      if (scope == 'all') {
+        required.addAll(availableDatasetIds);
+      } else {
+        final List<dynamic> ids =
+            node.params['channel${operation}DatasetIds'] as List<dynamic>? ??
+            const <dynamic>[];
+        if (ids.isEmpty && sourceDatasetId.isNotEmpty) {
+          required.add(sourceDatasetId);
+        } else {
+          required.addAll(ids.map((dynamic value) => value.toString()));
+        }
+      }
+    }
+    return required;
   }
 
   Map<String, Dataset> _datasetsById() {
@@ -5335,8 +5450,14 @@ class CanvasLogic {
           'channelEditsByDataset': <String, dynamic>{
             dataset.id: channelEditConfigValue,
           },
+          'channelEditSourceDatasetId': dataset.id,
           'markers': markerEditsValue,
           'applyEmptyMarkerSet': true,
+          'markerEditScope': hasInteractiveEdits ? 'selected' : 'all',
+          'markerEditDatasetIds': hasInteractiveEdits
+              ? <String>[dataset.id]
+              : <String>[],
+          'markerEditSourceDatasetId': dataset.id,
         },
       );
       anchorNode = lastCreatedNode;
@@ -5352,6 +5473,7 @@ class CanvasLogic {
           'channelEditsByDataset': <String, dynamic>{
             dataset.id: channelEditConfigValue,
           },
+          'channelEditSourceDatasetId': dataset.id,
         },
       );
       anchorNode = lastCreatedNode;
@@ -5367,6 +5489,11 @@ class CanvasLogic {
         params: <String, dynamic>{
           'markers': markerEditsValue,
           'applyEmptyMarkerSet': true,
+          'markerEditScope': hasInteractiveEdits ? 'selected' : 'all',
+          'markerEditDatasetIds': hasInteractiveEdits
+              ? <String>[dataset.id]
+              : <String>[],
+          'markerEditSourceDatasetId': dataset.id,
         },
       );
       anchorNode = lastCreatedNode;
@@ -5595,6 +5722,9 @@ class CanvasLogic {
     required Map<String, dynamic> params,
     NodeModel? insertBeforeNode,
   }) {
+    final List<String> availableDatasetIds = type is AddRemoveMarkersNodeType
+        ? <String>[datasetId]
+        : _datasetsForNode(sourceNode).toList(growable: false);
     final NodeModel node = _buildNode(
       type: type,
       position: _viewerEditSpawnPosition(
@@ -5604,7 +5734,9 @@ class CanvasLogic {
       params: <String, dynamic>{
         ...type.defaultParams,
         ...params,
-        'selectedDatasetIds': <String>[datasetId],
+        'selectedDatasetIds': availableDatasetIds.isEmpty
+            ? <String>[datasetId]
+            : availableDatasetIds,
       },
     );
     nodes.add(node);

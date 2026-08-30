@@ -32,6 +32,9 @@ class AddRemoveMarkersNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'markers': <Map<String, dynamic>>[],
     'applyEmptyMarkerSet': false,
+    'markerEditOperations': <String, dynamic>{},
+    'markerEditScope': 'all',
+    'markerEditDatasetIds': <String>[],
   };
 
   @override
@@ -84,28 +87,54 @@ class AddRemoveMarkersNodeType extends NodeType {
     }
     final List<dynamic> rawMarkers =
         params['markers'] as List<dynamic>? ?? const <dynamic>[];
-    final List<TimeMarker> markers =
-        ((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
-            rawMarkers.isNotEmpty
+    final Map<String, dynamic> operations = Map<String, dynamic>.from(
+      params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
+    );
+    final List<TimeMarker> markers = operations.isNotEmpty
+        ? dataset.timeSeries!.markers
+        : ((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
+              rawMarkers.isNotEmpty
         ? markersForDataset(dataset.id, rawMarkers)
         : dataset.timeSeries!.markers;
+    params.putIfAbsent('markerEditSourceDatasetId', () => dataset.id);
     return SizedBox(
-      height: 520,
-      child: MarkerLabelEditConfigEditor(
-        markers: markers,
-        onChanged: (List<TimeMarker> nextMarkers) {
-          setState(() {
-            params['markers'] = nextMarkers
-                .map(
-                  (TimeMarker marker) => <String, dynamic>{
-                    ...marker.toJson(),
-                    'datasetId': dataset.id,
-                  },
-                )
-                .toList(growable: false);
-            params['applyEmptyMarkerSet'] = true;
-          });
-        },
+      height: 590,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          MarkerDatasetScopeControl(
+            params: params,
+            datasets: datasets,
+            sourceDatasetId: dataset.id,
+            onChanged: (VoidCallback change) => setState(change),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: MarkerLabelEditConfigEditor(
+              markers: markers,
+              initialOperations: operations,
+              onOperationsChanged: (Map<String, dynamic> nextOperations) {
+                setState(() {
+                  params['markerEditOperations'] = nextOperations;
+                  params['markerEditSourceDatasetId'] = dataset.id;
+                });
+              },
+              onChanged: (List<TimeMarker> nextMarkers) {
+                setState(() {
+                  params['markers'] = nextMarkers
+                      .map(
+                        (TimeMarker marker) => <String, dynamic>{
+                          ...marker.toJson(),
+                          'datasetId': dataset.id,
+                        },
+                      )
+                      .toList(growable: false);
+                  params['applyEmptyMarkerSet'] = true;
+                });
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -139,16 +168,143 @@ class AddRemoveMarkersNodeType extends NodeType {
       return;
     }
 
-    final List<TimeMarker> editedMarkers = markersForDataset(
-      dataset.id,
-      params['markers'] as List<dynamic>? ?? const <dynamic>[],
+    final Map<String, dynamic> operations = Map<String, dynamic>.from(
+      params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
     );
+    final bool operationsApply = markerOperationsApplyToDataset(
+      params,
+      dataset.id,
+    );
+    final List<TimeMarker> editedMarkers = operations.isNotEmpty
+        ? operationsApply
+              ? applyMarkerEditOperations(timeSeries.markers, operations)
+              : timeSeries.markers
+        : markersForDataset(
+            dataset.id,
+            params['markers'] as List<dynamic>? ?? const <dynamic>[],
+          );
     final bool applyEmptyMarkerSet =
         (params['applyEmptyMarkerSet'] as bool?) ?? false;
-    if (!applyEmptyMarkerSet && editedMarkers.isEmpty) {
+    final String sourceDatasetId =
+        params['markerEditSourceDatasetId']?.toString() ?? dataset.id;
+    final bool hasStoredRowsForDataset =
+        (params['markers'] as List<dynamic>? ?? const <dynamic>[]).any(
+          (dynamic raw) =>
+              raw is Map && raw['datasetId']?.toString() == dataset.id,
+        );
+    if (operations.isEmpty &&
+        !hasStoredRowsForDataset &&
+        dataset.id != sourceDatasetId) {
+      return;
+    }
+    if (operations.isEmpty && !applyEmptyMarkerSet && editedMarkers.isEmpty) {
       return;
     }
     dataset.timeSeries = timeSeries.copyWith(markers: editedMarkers);
+  }
+
+  static bool markerOperationsApplyToDataset(
+    Map<String, dynamic> params,
+    String datasetId,
+  ) {
+    final String scope = (params['markerEditScope'] ?? 'all').toString();
+    if (scope == 'all') {
+      return true;
+    }
+    final Set<String> selected =
+        (params['markerEditDatasetIds'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
+    final String sourceId =
+        params['markerEditSourceDatasetId']?.toString() ?? '';
+    return selected.isEmpty
+        ? datasetId == sourceId
+        : selected.contains(datasetId);
+  }
+
+  static List<TimeMarker> applyMarkerEditOperations(
+    List<TimeMarker> markers,
+    Map<String, dynamic> operations,
+  ) {
+    final Map<String, String> renames =
+        Map<String, dynamic>.from(
+          operations['renames'] as Map? ?? const <String, dynamic>{},
+        ).map(
+          (String key, dynamic value) =>
+              MapEntry<String, String>(key, value.toString().trim()),
+        );
+    final Set<String> deleted =
+        (operations['deletedLabels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
+    List<TimeMarker> result = markers
+        .where((TimeMarker marker) => !deleted.contains(marker.label))
+        .map((TimeMarker marker) {
+          final String replacement = renames[marker.label] ?? '';
+          return replacement.isEmpty
+              ? marker
+              : marker.copyWith(label: replacement);
+        })
+        .toList(growable: false);
+
+    for (final Map<dynamic, dynamic> rawRule
+        in (operations['logicRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()) {
+      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+      final Set<String> timeLockLabels =
+          (rule['timeLockLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic value) =>
+                    renames[value.toString()] ?? value.toString(),
+              )
+              .toSet();
+      final Set<String> logicLabels =
+          (rule['logicLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic value) =>
+                    renames[value.toString()] ?? value.toString(),
+              )
+              .toSet();
+      final Map<String, String> rawRecode =
+          Map<String, dynamic>.from(
+            rule['recodeLabels'] as Map? ?? const <String, dynamic>{},
+          ).map(
+            (String key, dynamic value) =>
+                MapEntry<String, String>(renames[key] ?? key, value.toString()),
+          );
+      final MarkerLogicMatchMode matchMode = MarkerLogicMatchMode.values
+          .firstWhere(
+            (MarkerLogicMatchMode mode) =>
+                mode.name == rule['matchMode']?.toString(),
+            orElse: () => MarkerLogicMatchMode.firstSubsequent,
+          );
+      result = recodeByMarkerLogic(
+        result,
+        timeLockLabels: timeLockLabels,
+        logicLabels: logicLabels,
+        recodeLabels: rawRecode,
+        matchMode: matchMode,
+        windowStartMs: (rule['windowStartMs'] as num?)?.toDouble() ?? 0,
+        windowEndMs: (rule['windowEndMs'] as num?)?.toDouble() ?? 1000,
+        keepOriginalMarkers: rule['keepOriginalMarkers'] == true,
+      );
+    }
+
+    for (final Map<dynamic, dynamic> rawRule
+        in (operations['boundaryRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()) {
+      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+      final String originalStart = rule['startLabel']?.toString() ?? '';
+      final String originalStop = rule['stopLabel']?.toString() ?? '';
+      result = combineBoundaryMarkers(
+        result,
+        startLabel: renames[originalStart] ?? originalStart,
+        stopLabel: renames[originalStop] ?? originalStop,
+        blockLabel: rule['blockLabel']?.toString() ?? '',
+        replaceBoundaries: rule['replaceBoundaries'] != false,
+      ).markers;
+    }
+    return result;
   }
 
   static MarkerBoundaryCombinationResult combineBoundaryMarkers(

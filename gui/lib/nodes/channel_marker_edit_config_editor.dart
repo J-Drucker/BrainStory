@@ -7,6 +7,108 @@ import 'edit_channels_node.dart';
 
 enum ChannelMarkerEditTab { channels, markers }
 
+class MarkerDatasetScopeControl extends StatelessWidget {
+  const MarkerDatasetScopeControl({
+    super.key,
+    required this.params,
+    required this.datasets,
+    required this.sourceDatasetId,
+    required this.onChanged,
+  });
+
+  final Map<String, dynamic> params;
+  final Map<String, Dataset> datasets;
+  final String sourceDatasetId;
+  final ValueChanged<VoidCallback> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final String scope = (params['markerEditScope'] ?? 'all').toString();
+    final Set<String> selected =
+        (params['markerEditDatasetIds'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
+    final List<Dataset> ordered = datasets.values.toList(growable: false)
+      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Expanded(
+              child: Text(
+                'Marker changes apply to',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            SizedBox(
+              width: 230,
+              child: DropdownButtonFormField<String>(
+                initialValue: scope,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(
+                    value: 'all',
+                    child: Text('All datasets'),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: 'selected',
+                    child: Text('Chosen datasets'),
+                  ),
+                ],
+                onChanged: (String? value) {
+                  if (value == null) return;
+                  onChanged(() {
+                    params['markerEditScope'] = value;
+                    params['markerEditSourceDatasetId'] = sourceDatasetId;
+                    if (value == 'selected' && selected.isEmpty) {
+                      params['markerEditDatasetIds'] = <String>[
+                        sourceDatasetId,
+                      ];
+                    }
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+        if (scope == 'selected') ...<Widget>[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: ordered
+                .map(
+                  (Dataset dataset) => FilterChip(
+                    label: Text(dataset.label),
+                    selected:
+                        selected.contains(dataset.id) ||
+                        (selected.isEmpty && dataset.id == sourceDatasetId),
+                    onSelected: (bool checked) {
+                      onChanged(() {
+                        final Set<String> next = Set<String>.from(selected);
+                        checked
+                            ? next.add(dataset.id)
+                            : next.remove(dataset.id);
+                        params['markerEditDatasetIds'] = next.toList(
+                          growable: false,
+                        );
+                      });
+                    },
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class ChannelMarkerEditConfigEditor extends StatelessWidget {
   const ChannelMarkerEditConfigEditor({
     super.key,
@@ -15,6 +117,8 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
     required this.markers,
     required this.onChannelConfigChanged,
     required this.onMarkersChanged,
+    this.initialMarkerOperations = const <String, dynamic>{},
+    this.onMarkerOperationsChanged,
     this.initialTab = ChannelMarkerEditTab.channels,
     this.initialVisibleChannelIndices,
     this.channelHeaderAction,
@@ -25,6 +129,8 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
   final List<TimeMarker> markers;
   final ValueChanged<Map<String, dynamic>> onChannelConfigChanged;
   final ValueChanged<List<TimeMarker>> onMarkersChanged;
+  final Map<String, dynamic> initialMarkerOperations;
+  final ValueChanged<Map<String, dynamic>>? onMarkerOperationsChanged;
   final ChannelMarkerEditTab initialTab;
   final List<int>? initialVisibleChannelIndices;
   final Widget? channelHeaderAction;
@@ -87,6 +193,8 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
                 MarkerLabelEditConfigEditor(
                   markers: markers,
                   onChanged: onMarkersChanged,
+                  initialOperations: initialMarkerOperations,
+                  onOperationsChanged: onMarkerOperationsChanged,
                 ),
               ],
             ),
@@ -102,10 +210,14 @@ class MarkerLabelEditConfigEditor extends StatefulWidget {
     super.key,
     required this.markers,
     required this.onChanged,
+    this.initialOperations = const <String, dynamic>{},
+    this.onOperationsChanged,
   });
 
   final List<TimeMarker> markers;
   final ValueChanged<List<TimeMarker>> onChanged;
+  final Map<String, dynamic> initialOperations;
+  final ValueChanged<Map<String, dynamic>>? onOperationsChanged;
 
   @override
   State<MarkerLabelEditConfigEditor> createState() =>
@@ -149,6 +261,77 @@ class _MarkerLabelEditConfigEditorState
     _boundaryDrafts
       ..clear()
       ..add(_BoundaryCombinationDraft(id: _nextBoundaryDraftId++));
+    _restoreOperations(widget.initialOperations);
+  }
+
+  void _restoreOperations(Map<String, dynamic> operations) {
+    final Map<String, dynamic> savedRenames = Map<String, dynamic>.from(
+      operations['renames'] as Map? ?? const <String, dynamic>{},
+    );
+    for (final String label in _labels) {
+      if (savedRenames.containsKey(label)) {
+        _renames[label] = savedRenames[label]?.toString() ?? '';
+      }
+    }
+    _deletedLabels.addAll(
+      (operations['deletedLabels'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .where(_labels.contains),
+    );
+    for (final Map<dynamic, dynamic> rawRule
+        in (operations['logicRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()) {
+      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+      final String originLabel = rule['originLabel']?.toString() ?? '';
+      if (!_labels.contains(originLabel)) {
+        continue;
+      }
+      _logicRecodeDrafts[originLabel] = _MarkerLogicRecodeDraft(
+        originLabel: originLabel,
+        timeLockLabels:
+            (rule['timeLockLabels'] as List<dynamic>? ?? const <dynamic>[])
+                .map((dynamic value) => value.toString())
+                .where(_labels.contains)
+                .toSet(),
+        logicLabels:
+            (rule['logicLabels'] as List<dynamic>? ?? const <dynamic>[])
+                .map((dynamic value) => value.toString())
+                .where(_labels.contains)
+                .toSet(),
+        recodeLabels:
+            Map<String, dynamic>.from(
+              rule['recodeLabels'] as Map? ?? const <String, dynamic>{},
+            ).map(
+              (String key, dynamic value) =>
+                  MapEntry<String, String>(key, value.toString()),
+            ),
+        matchMode: MarkerLogicMatchMode.values.firstWhere(
+          (MarkerLogicMatchMode mode) =>
+              mode.name == rule['matchMode']?.toString(),
+          orElse: () => MarkerLogicMatchMode.firstSubsequent,
+        ),
+        windowStartMs: (rule['windowStartMs'] as num?)?.toDouble() ?? 0,
+        windowEndMs: (rule['windowEndMs'] as num?)?.toDouble() ?? 1000,
+        keepOriginalMarkers: rule['keepOriginalMarkers'] == true,
+      );
+    }
+    final List<Map<dynamic, dynamic>> boundaryRules =
+        (operations['boundaryRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .toList(growable: false);
+    if (boundaryRules.isNotEmpty) {
+      _boundaryDrafts.clear();
+      for (final Map<dynamic, dynamic> rawRule in boundaryRules) {
+        final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+        _boundaryDrafts.add(
+          _BoundaryCombinationDraft(id: _nextBoundaryDraftId++)
+            ..startLabel = rule['startLabel']?.toString()
+            ..stopLabel = rule['stopLabel']?.toString()
+            ..blockLabel = rule['blockLabel']?.toString() ?? ''
+            ..replaceBoundaries = rule['replaceBoundaries'] != false,
+        );
+      }
+    }
   }
 
   Map<String, String> get _effectiveRenames => <String, String>{
@@ -208,42 +391,51 @@ class _MarkerLabelEditConfigEditorState
   }
 
   void _emit() {
-    List<TimeMarker> result = _renamedAndFilteredMarkers();
-    for (final _MarkerLogicRecodeDraft draft in _logicRecodeDrafts.values) {
-      final Map<String, String> renamed = _effectiveRenames;
-      result = AddRemoveMarkersNodeType.recodeByMarkerLogic(
-        result,
-        timeLockLabels: draft.timeLockLabels
-            .map((String label) => renamed[label] ?? label)
-            .toSet(),
-        logicLabels: draft.logicLabels
-            .map((String label) => renamed[label] ?? label)
-            .toSet(),
-        recodeLabels: <String, String>{
-          for (final String label in draft.logicLabels)
-            renamed[label] ?? label: draft.recodeLabels[label] ?? '',
-        },
-        matchMode: draft.matchMode,
-        windowStartMs: draft.windowStartMs,
-        windowEndMs: draft.windowEndMs,
-        keepOriginalMarkers: draft.keepOriginalMarkers,
-      );
-    }
-    for (final _BoundaryCombinationDraft draft in _boundaryDrafts) {
-      if (_validationMessage(draft) != null ||
-          draft.startLabel == null ||
-          draft.stopLabel == null) {
-        continue;
-      }
-      result = AddRemoveMarkersNodeType.combineBoundaryMarkers(
-        result,
-        startLabel: _effectiveRenames[draft.startLabel] ?? draft.startLabel!,
-        stopLabel: _effectiveRenames[draft.stopLabel] ?? draft.stopLabel!,
-        blockLabel: draft.blockLabel,
-        replaceBoundaries: draft.replaceBoundaries,
-      ).markers;
-    }
+    final Map<String, dynamic> operations = _serializedOperations();
+    final List<TimeMarker> result =
+        AddRemoveMarkersNodeType.applyMarkerEditOperations(
+          _baseMarkers,
+          operations,
+        );
+    widget.onOperationsChanged?.call(operations);
     widget.onChanged(result);
+  }
+
+  Map<String, dynamic> _serializedOperations() {
+    return <String, dynamic>{
+      'renames': _effectiveRenames,
+      'deletedLabels': _deletedLabels.toList(growable: false),
+      'logicRules': _logicRecodeDrafts.values
+          .map(
+            (_MarkerLogicRecodeDraft draft) => <String, dynamic>{
+              'originLabel': draft.originLabel,
+              'timeLockLabels': draft.timeLockLabels.toList(growable: false),
+              'logicLabels': draft.logicLabels.toList(growable: false),
+              'recodeLabels': Map<String, String>.from(draft.recodeLabels),
+              'matchMode': draft.matchMode.name,
+              'windowStartMs': draft.windowStartMs,
+              'windowEndMs': draft.windowEndMs,
+              'keepOriginalMarkers': draft.keepOriginalMarkers,
+            },
+          )
+          .toList(growable: false),
+      'boundaryRules': _boundaryDrafts
+          .where(
+            (_BoundaryCombinationDraft draft) =>
+                _validationMessage(draft) == null &&
+                draft.startLabel != null &&
+                draft.stopLabel != null,
+          )
+          .map(
+            (_BoundaryCombinationDraft draft) => <String, dynamic>{
+              'startLabel': draft.startLabel,
+              'stopLabel': draft.stopLabel,
+              'blockLabel': draft.blockLabel.trim(),
+              'replaceBoundaries': draft.replaceBoundaries,
+            },
+          )
+          .toList(growable: false),
+    };
   }
 
   @override

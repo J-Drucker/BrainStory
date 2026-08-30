@@ -8,6 +8,169 @@ import '../model/dataset.dart';
 import 'channel_coordinates_node.dart';
 import 'node_type.dart';
 
+class ChannelDatasetScopeControl extends StatelessWidget {
+  const ChannelDatasetScopeControl({
+    super.key,
+    required this.params,
+    required this.datasets,
+    required this.sourceDatasetId,
+    required this.onChanged,
+  });
+
+  final Map<String, dynamic> params;
+  final Map<String, Dataset> datasets;
+  final String sourceDatasetId;
+  final ValueChanged<VoidCallback> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Dataset> ordered = datasets.values.toList(growable: false)
+      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text(
+          'Dataset scope for channel changes',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        _ChannelScopeRow(
+          label: 'Renaming',
+          operation: 'Rename',
+          defaultScope: 'all',
+          params: params,
+          datasets: ordered,
+          sourceDatasetId: sourceDatasetId,
+          onChanged: onChanged,
+        ),
+        _ChannelScopeRow(
+          label: 'Deleting',
+          operation: 'Delete',
+          defaultScope: 'all',
+          params: params,
+          datasets: ordered,
+          sourceDatasetId: sourceDatasetId,
+          onChanged: onChanged,
+        ),
+        _ChannelScopeRow(
+          label: 'Interpolating',
+          operation: 'Interpolate',
+          defaultScope: 'selected',
+          params: params,
+          datasets: ordered,
+          sourceDatasetId: sourceDatasetId,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _ChannelScopeRow extends StatelessWidget {
+  const _ChannelScopeRow({
+    required this.label,
+    required this.operation,
+    required this.defaultScope,
+    required this.params,
+    required this.datasets,
+    required this.sourceDatasetId,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String operation;
+  final String defaultScope;
+  final Map<String, dynamic> params;
+  final List<Dataset> datasets;
+  final String sourceDatasetId;
+  final ValueChanged<VoidCallback> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final String scope = (params['channel${operation}Scope'] ?? defaultScope)
+        .toString();
+    final Set<String> selected =
+        (params['channel${operation}DatasetIds'] as List<dynamic>? ??
+                const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              SizedBox(width: 130, child: Text(label)),
+              SizedBox(
+                width: 230,
+                child: DropdownButtonFormField<String>(
+                  initialValue: scope,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const <DropdownMenuItem<String>>[
+                    DropdownMenuItem<String>(
+                      value: 'all',
+                      child: Text('All datasets'),
+                    ),
+                    DropdownMenuItem<String>(
+                      value: 'selected',
+                      child: Text('Chosen datasets'),
+                    ),
+                  ],
+                  onChanged: (String? value) {
+                    if (value == null) return;
+                    onChanged(() {
+                      params['channel${operation}Scope'] = value;
+                      params['channelEditSourceDatasetId'] = sourceDatasetId;
+                      if (value == 'selected' && selected.isEmpty) {
+                        params['channel${operation}DatasetIds'] = <String>[
+                          sourceDatasetId,
+                        ];
+                      }
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+          if (scope == 'selected') ...<Widget>[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: datasets
+                  .map(
+                    (Dataset dataset) => FilterChip(
+                      label: Text(dataset.label),
+                      selected:
+                          selected.contains(dataset.id) ||
+                          (selected.isEmpty && dataset.id == sourceDatasetId),
+                      onSelected: (bool checked) {
+                        onChanged(() {
+                          final Set<String> next = Set<String>.from(selected);
+                          checked
+                              ? next.add(dataset.id)
+                              : next.remove(dataset.id);
+                          params['channel${operation}DatasetIds'] = next.toList(
+                            growable: false,
+                          );
+                        });
+                      },
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class EditChannelsNodeType extends NodeType {
   @override
   String get title => 'Edit Channels';
@@ -21,6 +184,12 @@ class EditChannelsNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'channelEditsByDataset': <String, dynamic>{},
+    'channelRenameScope': 'all',
+    'channelRenameDatasetIds': <String>[],
+    'channelDeleteScope': 'all',
+    'channelDeleteDatasetIds': <String>[],
+    'channelInterpolateScope': 'selected',
+    'channelInterpolateDatasetIds': <String>[],
   };
 
   static const String coordinateImportNone = 'none';
@@ -63,9 +232,17 @@ class EditChannelsNodeType extends NodeType {
     }
 
     final TimeSeriesData timeSeries = visibleDataset.timeSeries!;
+    params.putIfAbsent('channelEditSourceDatasetId', () => visibleDataset.id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        ChannelDatasetScopeControl(
+          params: params,
+          datasets: datasets,
+          sourceDatasetId: visibleDataset.id,
+          onChanged: (VoidCallback change) => setState(change),
+        ),
+        const SizedBox(height: 12),
         Text(
           visibleDataset.label,
           style: const TextStyle(fontWeight: FontWeight.w600),
@@ -106,7 +283,7 @@ class EditChannelsNodeType extends NodeType {
     }
 
     final Map<String, dynamic> config = bindConfigToChannelLabels(
-      configForDataset(params, dataset.id),
+      executionConfigForDataset(params, dataset.id),
       _channelLabelsForSeries(configSeries),
     );
     setConfigForDataset(params, dataset.id, config);
@@ -217,6 +394,119 @@ class EditChannelsNodeType extends NodeType {
     );
     allConfigs[datasetId] = _normalizeDatasetConfig(config);
     params['channelEditsByDataset'] = allConfigs;
+    params.putIfAbsent('channelEditSourceDatasetId', () => datasetId);
+  }
+
+  static Map<String, dynamic> executionConfigForDataset(
+    Map<String, dynamic> params,
+    String datasetId,
+  ) {
+    final Map<String, dynamic> own = configForDataset(params, datasetId);
+    final String sourceDatasetId =
+        params['channelEditSourceDatasetId']?.toString() ??
+        (Map<String, dynamic>.from(
+              params['channelEditsByDataset'] as Map? ??
+                  const <String, dynamic>{},
+            ).keys.firstOrNull ??
+            datasetId);
+    final Map<String, dynamic> source = configForDataset(
+      params,
+      sourceDatasetId,
+    );
+    final Map<String, dynamic> mergedEdits = <String, dynamic>{};
+
+    void mergeScopedEdits(
+      Map<String, dynamic> config, {
+      required bool includeDatasetSpecific,
+    }) {
+      final Map<String, dynamic> edits = Map<String, dynamic>.from(
+        config['edits'] as Map? ?? const <String, dynamic>{},
+      );
+      for (final MapEntry<String, dynamic> entry in edits.entries) {
+        final Map<String, dynamic> edit = Map<String, dynamic>.from(
+          entry.value as Map? ?? const <String, dynamic>{},
+        );
+        final String rename = (edit['rename'] ?? '').toString().trim();
+        final bool remove = edit['remove'] == true;
+        final String removeMode = (edit['removeMode'] ?? 'delete')
+            .toString()
+            .trim()
+            .toLowerCase();
+        final bool includeRename =
+            rename.isNotEmpty &&
+            _channelScopeAllows(
+              params,
+              operation: 'Rename',
+              datasetId: datasetId,
+              sourceDatasetId: sourceDatasetId,
+              defaultScope: 'all',
+            );
+        final bool includeRemoval =
+            remove &&
+            _channelScopeAllows(
+              params,
+              operation: removeMode == 'interpolate' ? 'Interpolate' : 'Delete',
+              datasetId: datasetId,
+              sourceDatasetId: sourceDatasetId,
+              defaultScope: removeMode == 'interpolate' ? 'selected' : 'all',
+            );
+        final String poolName = includeDatasetSpecific
+            ? (edit['poolName'] ?? '').toString()
+            : '';
+        if (!includeRename && !includeRemoval && poolName.trim().isEmpty) {
+          continue;
+        }
+        final String sourceLabel = (edit['sourceLabel'] ?? '')
+            .toString()
+            .trim();
+        final String identity = sourceLabel.isEmpty
+            ? entry.key
+            : 'label:$sourceLabel';
+        final Map<String, dynamic> existing = Map<String, dynamic>.from(
+          mergedEdits[identity] as Map? ?? const <String, dynamic>{},
+        );
+        mergedEdits[identity] = <String, dynamic>{
+          ...existing,
+          ...edit,
+          'rename': includeRename
+              ? rename
+              : (existing['rename'] ?? '').toString(),
+          'remove': includeRemoval || existing['remove'] == true,
+          'removeMode': includeRemoval
+              ? removeMode
+              : (existing['removeMode'] ?? removeMode).toString(),
+          'poolName': poolName.trim().isNotEmpty
+              ? poolName
+              : (existing['poolName'] ?? '').toString(),
+        };
+      }
+    }
+
+    if (datasetId != sourceDatasetId) {
+      mergeScopedEdits(source, includeDatasetSpecific: false);
+    }
+    mergeScopedEdits(own, includeDatasetSpecific: true);
+    return <String, dynamic>{...own, 'edits': mergedEdits};
+  }
+
+  static bool _channelScopeAllows(
+    Map<String, dynamic> params, {
+    required String operation,
+    required String datasetId,
+    required String sourceDatasetId,
+    required String defaultScope,
+  }) {
+    final String scope = (params['channel${operation}Scope'] ?? defaultScope)
+        .toString();
+    if (scope == 'all') {
+      return true;
+    }
+    final Set<String> ids =
+        (params['channel${operation}DatasetIds'] as List<dynamic>? ??
+                const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
+    return ids.isEmpty ? datasetId == sourceDatasetId : ids.contains(datasetId);
   }
 
   static Map<String, dynamic> bindConfigToChannelLabels(

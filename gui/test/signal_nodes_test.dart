@@ -1831,6 +1831,8 @@ Mk2=Response,Response,4,1,0
       final NodeModel editNode = logic.nodes.firstWhere(
         (NodeModel node) => node.type is AddRemoveMarkersNodeType,
       );
+      expect(editNode.params['markerEditScope'], 'selected');
+      expect(editNode.params['markerEditDatasetIds'], <String>[dataset.id]);
       final List<Map<String, dynamic>> markers =
           (editNode.params['markers'] as List<dynamic>)
               .whereType<Map<String, dynamic>>()
@@ -2691,6 +2693,176 @@ time,Fz,Cz
         5.0 / 3.0,
         2.0,
       ]);
+    },
+  );
+
+  test(
+    'channel edit scopes default deletion global and interpolation local',
+    () async {
+      final EditChannelsNodeType node = EditChannelsNodeType();
+      final Map<String, dynamic> deleteParams = <String, dynamic>{
+        ...node.defaultParams,
+        'channelEditSourceDatasetId': 'a',
+        'channelEditsByDataset': <String, dynamic>{
+          'a': <String, dynamic>{
+            'edits': <String, dynamic>{
+              '0': <String, dynamic>{
+                'sourceLabel': 'Cz',
+                'remove': true,
+                'removeMode': 'delete',
+              },
+            },
+          },
+        },
+      };
+      final Dataset first = Dataset('a')
+        ..timeSeries = TimeSeriesData(
+          channelSamples: <List<double>>[
+            <double>[1, 2],
+            <double>[3, 4],
+          ],
+          sampleRate: 100,
+          channelLabels: <String>['Cz', 'Pz'],
+        );
+      final Dataset second = Dataset('b')
+        ..timeSeries = TimeSeriesData(
+          channelSamples: <List<double>>[
+            <double>[5, 6],
+            <double>[7, 8],
+          ],
+          sampleRate: 100,
+          channelLabels: <String>['Cz', 'Pz'],
+        );
+
+      await node.run(first, deleteParams);
+      await node.run(second, deleteParams);
+      expect(first.timeSeries!.channelLabels, <String>['Pz']);
+      expect(second.timeSeries!.channelLabels, <String>['Pz']);
+
+      final Map<String, dynamic> interpolateParams = <String, dynamic>{
+        ...node.defaultParams,
+        'channelEditSourceDatasetId': 'a',
+        'channelEditsByDataset': <String, dynamic>{
+          'a': <String, dynamic>{
+            'edits': <String, dynamic>{
+              '0': <String, dynamic>{
+                'sourceLabel': 'Cz',
+                'remove': true,
+                'removeMode': 'interpolate',
+              },
+            },
+          },
+        },
+      };
+      final TimeSeriesData scopeSeries = TimeSeriesData(
+        channelSamples: <List<double>>[
+          <double>[1, 2],
+          <double>[3, 4],
+        ],
+        sampleRate: 100,
+        channelLabels: <String>['Cz', 'Pz'],
+      );
+      expect(
+        EditChannelsNodeType.resolvedEditsForSeries(
+          scopeSeries,
+          EditChannelsNodeType.executionConfigForDataset(
+            interpolateParams,
+            'a',
+          ),
+        ),
+        isNotEmpty,
+      );
+      expect(
+        EditChannelsNodeType.resolvedEditsForSeries(
+          scopeSeries,
+          EditChannelsNodeType.executionConfigForDataset(
+            interpolateParams,
+            'b',
+          ),
+        ),
+        isEmpty,
+      );
+      interpolateParams['channelInterpolateDatasetIds'] = <String>['b'];
+      expect(
+        EditChannelsNodeType.resolvedEditsForSeries(
+          scopeSeries,
+          EditChannelsNodeType.executionConfigForDataset(
+            interpolateParams,
+            'b',
+          ),
+        ),
+        isNotEmpty,
+      );
+    },
+  );
+
+  test(
+    'global channel changes expand beyond the node dataset checkbox',
+    () async {
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset first = Dataset(
+        'scope-a',
+        label: 'A.csv',
+        path: 'A.csv',
+        sourceBytes: Uint8List.fromList(
+          utf8.encode('time,Cz,Pz\n0,1,2\n0.01,3,4\n'),
+        ),
+      );
+      final Dataset second = Dataset(
+        'scope-b',
+        label: 'B.csv',
+        path: 'B.csv',
+        sourceBytes: Uint8List.fromList(
+          utf8.encode('time,Cz,Pz\n0,5,6\n0.01,7,8\n'),
+        ),
+      );
+      logic.datasets[first.id] = first;
+      logic.datasets[second.id] = second;
+      logic.addNode(ImportNodeType());
+      logic.addNode(EditChannelsNodeType());
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel editNode = logic.nodes[1];
+      importNode.params['selectedDatasetIds'] = <String>[first.id, second.id];
+      editNode.params['selectedDatasetIds'] = <String>[first.id];
+      editNode.params['channelEditSourceDatasetId'] = first.id;
+      EditChannelsNodeType.setConfigForDataset(
+        editNode.params,
+        first.id,
+        <String, dynamic>{
+          'edits': <String, dynamic>{
+            '0': <String, dynamic>{
+              'sourceLabel': 'Cz',
+              'remove': true,
+              'removeMode': 'delete',
+            },
+          },
+        },
+      );
+      logic.connections.add(<String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': editNode.id,
+        'toPort': 0,
+      });
+
+      await logic.runThisStep(
+        importNode.id,
+        datasetIds: <String>{first.id, second.id},
+      );
+      await logic.runThisStep(editNode.id);
+
+      expect(editNode.datasetStates[first.id], DatasetState.done);
+      expect(editNode.datasetStates[second.id], DatasetState.done);
+      final Dataset firstView = await logic.materializedDatasetViewForNode(
+        editNode.id,
+        first,
+      );
+      final Dataset secondView = await logic.materializedDatasetViewForNode(
+        editNode.id,
+        second,
+      );
+      expect(firstView.timeSeries!.channelLabels, <String>['Pz']);
+      expect(secondView.timeSeries!.channelLabels, <String>['Pz']);
     },
   );
 
@@ -3738,6 +3910,68 @@ Mk2=Artifact,Bad Segment,11,5,0
     ]);
     expect(result[1].attributes['brainstory.logicMarkerLabel'], 'Correct');
   });
+
+  test(
+    'marker operations apply across datasets without copying timelines',
+    () async {
+      final AddRemoveMarkersNodeType node = AddRemoveMarkersNodeType();
+      final Map<String, dynamic> params = <String, dynamic>{
+        ...node.defaultParams,
+        'markerEditSourceDatasetId': 'a',
+        'markerEditOperations': <String, dynamic>{
+          'renames': <String, dynamic>{'Response': 'Correct response'},
+          'deletedLabels': <String>['Noise'],
+          'logicRules': <dynamic>[],
+          'boundaryRules': <dynamic>[],
+        },
+      };
+      final Dataset first = Dataset('a')
+        ..timeSeries = TimeSeriesData(
+          samples: <double>[1, 2],
+          sampleRate: 100,
+          channelLabels: <String>['Cz'],
+          markers: <TimeMarker>[
+            TimeMarker(onsetMicros: 1000, label: 'Response'),
+            TimeMarker(onsetMicros: 2000, label: 'Noise'),
+          ],
+        );
+      final Dataset second = Dataset('b')
+        ..timeSeries = TimeSeriesData(
+          samples: <double>[3, 4],
+          sampleRate: 100,
+          channelLabels: <String>['Cz'],
+          markers: <TimeMarker>[
+            TimeMarker(onsetMicros: 9000, label: 'Response'),
+            TimeMarker(onsetMicros: 12000, label: 'Other'),
+          ],
+        );
+
+      await node.run(first, params);
+      await node.run(second, params);
+      expect(first.timeSeries!.markers, hasLength(1));
+      expect(first.timeSeries!.markers.single.label, 'Correct response');
+      expect(first.timeSeries!.markers.single.onsetMicros, 1000);
+      expect(
+        second.timeSeries!.markers.map((TimeMarker marker) => marker.label),
+        <String>['Correct response', 'Other'],
+      );
+      expect(second.timeSeries!.markers.first.onsetMicros, 9000);
+
+      final Dataset excluded = Dataset('b')
+        ..timeSeries = TimeSeriesData(
+          samples: <double>[3, 4],
+          sampleRate: 100,
+          channelLabels: <String>['Cz'],
+          markers: <TimeMarker>[
+            TimeMarker(onsetMicros: 9000, label: 'Response'),
+          ],
+        );
+      params['markerEditScope'] = 'selected';
+      params['markerEditDatasetIds'] = <String>['a'];
+      await node.run(excluded, params);
+      expect(excluded.timeSeries!.markers.single.label, 'Response');
+    },
+  );
 
   test('marker logic supports recent, windowed, and keep-original matches', () {
     const List<TimeMarker> markers = <TimeMarker>[

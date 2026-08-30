@@ -21,7 +21,16 @@ class EditChannelsAndMarkersNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'markers': <Map<String, dynamic>>[],
     'applyEmptyMarkerSet': false,
+    'markerEditOperations': <String, dynamic>{},
+    'markerEditScope': 'all',
+    'markerEditDatasetIds': <String>[],
     'channelEditsByDataset': <String, dynamic>{},
+    'channelRenameScope': 'all',
+    'channelRenameDatasetIds': <String>[],
+    'channelDeleteScope': 'all',
+    'channelDeleteDatasetIds': <String>[],
+    'channelInterpolateScope': 'selected',
+    'channelInterpolateDatasetIds': <String>[],
   };
 
   @override
@@ -59,40 +68,75 @@ class EditChannelsAndMarkersNodeType extends NodeType {
         params['markers'] as List<dynamic>? ?? const <dynamic>[];
     final bool hasStoredMarkerSet =
         (params['applyEmptyMarkerSet'] as bool?) ?? false;
-    final List<TimeMarker> markers = hasStoredMarkerSet || rawMarkers.isNotEmpty
+    final Map<String, dynamic> operations = Map<String, dynamic>.from(
+      params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
+    );
+    final List<TimeMarker> markers = operations.isNotEmpty
+        ? dataset.timeSeries!.markers
+        : hasStoredMarkerSet || rawMarkers.isNotEmpty
         ? AddRemoveMarkersNodeType.markersForDataset(dataset.id, rawMarkers)
         : dataset.timeSeries!.markers;
+    params.putIfAbsent('markerEditSourceDatasetId', () => dataset.id);
+    params.putIfAbsent('channelEditSourceDatasetId', () => dataset.id);
     return SizedBox(
-      height: 560,
-      child: ChannelMarkerEditConfigEditor(
-        dataset: dataset,
-        channelConfig: EditChannelsNodeType.configForDataset(
-          params,
-          dataset.id,
-        ),
-        markers: markers,
-        onChannelConfigChanged: (Map<String, dynamic> config) {
-          setState(() {
-            EditChannelsNodeType.setConfigForDataset(
-              params,
-              dataset.id,
-              config,
-            );
-          });
-        },
-        onMarkersChanged: (List<TimeMarker> nextMarkers) {
-          setState(() {
-            params['markers'] = nextMarkers
-                .map(
-                  (TimeMarker marker) => <String, dynamic>{
-                    ...marker.toJson(),
-                    'datasetId': dataset.id,
-                  },
-                )
-                .toList(growable: false);
-            params['applyEmptyMarkerSet'] = true;
-          });
-        },
+      height: 760,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          MarkerDatasetScopeControl(
+            params: params,
+            datasets: datasets,
+            sourceDatasetId: dataset.id,
+            onChanged: (VoidCallback change) => setState(change),
+          ),
+          const SizedBox(height: 10),
+          ChannelDatasetScopeControl(
+            params: params,
+            datasets: datasets,
+            sourceDatasetId: dataset.id,
+            onChanged: (VoidCallback change) => setState(change),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: ChannelMarkerEditConfigEditor(
+              dataset: dataset,
+              channelConfig: EditChannelsNodeType.configForDataset(
+                params,
+                dataset.id,
+              ),
+              markers: markers,
+              initialMarkerOperations: operations,
+              onMarkerOperationsChanged: (Map<String, dynamic> nextOperations) {
+                setState(() {
+                  params['markerEditOperations'] = nextOperations;
+                  params['markerEditSourceDatasetId'] = dataset.id;
+                });
+              },
+              onChannelConfigChanged: (Map<String, dynamic> config) {
+                setState(() {
+                  EditChannelsNodeType.setConfigForDataset(
+                    params,
+                    dataset.id,
+                    config,
+                  );
+                });
+              },
+              onMarkersChanged: (List<TimeMarker> nextMarkers) {
+                setState(() {
+                  params['markers'] = nextMarkers
+                      .map(
+                        (TimeMarker marker) => <String, dynamic>{
+                          ...marker.toJson(),
+                          'datasetId': dataset.id,
+                        },
+                      )
+                      .toList(growable: false);
+                  params['applyEmptyMarkerSet'] = true;
+                });
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -107,7 +151,7 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     TimeSeriesData nextSeries = timeSeries;
     final Map<String, dynamic> config =
         EditChannelsNodeType.bindConfigToChannelLabels(
-          EditChannelsNodeType.configForDataset(params, dataset.id),
+          EditChannelsNodeType.executionConfigForDataset(params, dataset.id),
           timeSeries.channelLabels,
         );
     EditChannelsNodeType.setConfigForDataset(params, dataset.id, config);
@@ -130,14 +174,37 @@ class EditChannelsAndMarkersNodeType extends NodeType {
       );
     }
 
-    final List<TimeMarker> editedMarkers =
-        AddRemoveMarkersNodeType.markersForDataset(
-          dataset.id,
-          params['markers'] as List<dynamic>? ?? const <dynamic>[],
+    final Map<String, dynamic> markerOperations = Map<String, dynamic>.from(
+      params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
+    );
+    final List<TimeMarker> editedMarkers = markerOperations.isNotEmpty
+        ? AddRemoveMarkersNodeType.markerOperationsApplyToDataset(
+                params,
+                dataset.id,
+              )
+              ? AddRemoveMarkersNodeType.applyMarkerEditOperations(
+                  nextSeries.markers,
+                  markerOperations,
+                )
+              : nextSeries.markers
+        : AddRemoveMarkersNodeType.markersForDataset(
+            dataset.id,
+            params['markers'] as List<dynamic>? ?? const <dynamic>[],
+          );
+    final String markerSourceDatasetId =
+        params['markerEditSourceDatasetId']?.toString() ?? dataset.id;
+    final bool hasStoredRowsForDataset =
+        (params['markers'] as List<dynamic>? ?? const <dynamic>[]).any(
+          (dynamic raw) =>
+              raw is Map && raw['datasetId']?.toString() == dataset.id,
         );
+    final bool staticMarkersApply =
+        hasStoredRowsForDataset || dataset.id == markerSourceDatasetId;
     final bool hasMarkerChanges =
-        ((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
-        editedMarkers.isNotEmpty;
+        markerOperations.isNotEmpty ||
+        (staticMarkersApply &&
+            (((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
+                editedMarkers.isNotEmpty));
     if (hasMarkerChanges) {
       nextSeries = nextSeries.copyWith(markers: editedMarkers);
     }
