@@ -294,93 +294,138 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                             ),
                             const SizedBox(height: 8),
                             Expanded(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(12),
+                              child: Listener(
+                                key: const ValueKey<String>(
+                                  'raw-trace-viewport',
                                 ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: Scrollbar(
-                                    controller: _verticalController,
-                                    thumbVisibility: true,
-                                    child: SingleChildScrollView(
+                                onPointerSignal: _handleTracePointerSignal,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(10),
+                                    child: Scrollbar(
                                       controller: _verticalController,
-                                      scrollDirection: Axis.vertical,
-                                      child: SizedBox(
-                                        width: leftContentWidth,
-                                        height: totalHeight,
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: <Widget>[
-                                            if (!hideSignals)
-                                              SizedBox(
-                                                width: labelWidth,
-                                                child: _ChannelLabelColumn(
-                                                  labels: labels,
-                                                  colors: channelColors,
-                                                  removed: removedRows,
-                                                  channelHeight: _channelHeight(
-                                                    traceAreaHeight,
-                                                    channelCount,
+                                      thumbVisibility: true,
+                                      child: SingleChildScrollView(
+                                        controller: _verticalController,
+                                        scrollDirection: Axis.vertical,
+                                        child: SizedBox(
+                                          width: leftContentWidth,
+                                          height: totalHeight,
+                                          child: Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: <Widget>[
+                                              if (!hideSignals)
+                                                SizedBox(
+                                                  width: labelWidth,
+                                                  child: _ChannelLabelColumn(
+                                                    labels: labels,
+                                                    colors: channelColors,
+                                                    removed: removedRows,
+                                                    channelHeight:
+                                                        _channelHeight(
+                                                          traceAreaHeight,
+                                                          channelCount,
+                                                        ),
+                                                    onCycleColor:
+                                                        _cycleChannelColor,
+                                                    channelEditEnabled:
+                                                        markerEditingEnabled,
+                                                    onEditChannel:
+                                                        (
+                                                          int rowIndex,
+                                                        ) => _showChannelEditPanel(
+                                                          channelRows[rowIndex]
+                                                              .sourceIndex,
+                                                        ),
                                                   ),
-                                                  onCycleColor:
-                                                      _cycleChannelColor,
-                                                  channelEditEnabled:
-                                                      markerEditingEnabled,
-                                                  onEditChannel:
-                                                      (int rowIndex) =>
-                                                          _showChannelEditPanel(
-                                                            channelRows[rowIndex]
-                                                                .sourceIndex,
-                                                          ),
                                                 ),
-                                              ),
-                                            if (!hideSignals)
-                                              const SizedBox(width: 4),
-                                            if (!hideSignals)
-                                              _PanelResizeHandle(
-                                                onDoubleTap: () => setState(() {
-                                                  widget.params.remove(
-                                                    'left_panel_width',
-                                                  );
-                                                }),
-                                                onDragUpdate: (double delta) {
-                                                  _updateParam(
-                                                    'left_panel_width',
-                                                    (_resolvedLeftPanelWidth(
-                                                              defaultLabelWidth,
-                                                            ) +
-                                                            delta)
-                                                        .clamp(88.0, 260.0),
-                                                  );
-                                                },
-                                              ),
-                                            if (!hideSignals)
-                                              const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Scrollbar(
-                                                controller:
-                                                    _horizontalController,
-                                                thumbVisibility: true,
-                                                notificationPredicate:
-                                                    (
-                                                      ScrollNotification
-                                                      notification,
-                                                    ) =>
-                                                        notification
-                                                            .metrics
-                                                            .axis ==
-                                                        Axis.horizontal,
-                                                child: SingleChildScrollView(
+                                              if (!hideSignals)
+                                                const SizedBox(width: 4),
+                                              if (!hideSignals)
+                                                _PanelResizeHandle(
+                                                  onDoubleTap: () =>
+                                                      setState(() {
+                                                        widget.params.remove(
+                                                          'left_panel_width',
+                                                        );
+                                                      }),
+                                                  onDragUpdate: (double delta) {
+                                                    _updateParam(
+                                                      'left_panel_width',
+                                                      (_resolvedLeftPanelWidth(
+                                                                defaultLabelWidth,
+                                                              ) +
+                                                              delta)
+                                                          .clamp(88.0, 260.0),
+                                                    );
+                                                  },
+                                                ),
+                                              if (!hideSignals)
+                                                const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Scrollbar(
                                                   controller:
                                                       _horizontalController,
-                                                  scrollDirection:
-                                                      Axis.horizontal,
-                                                  child: MouseRegion(
-                                                    onHover: (PointerHoverEvent details) {
-                                                      if (!markerEditingEnabled) {
+                                                  thumbVisibility: true,
+                                                  notificationPredicate:
+                                                      (
+                                                        ScrollNotification
+                                                        notification,
+                                                      ) =>
+                                                          notification
+                                                              .metrics
+                                                              .axis ==
+                                                          Axis.horizontal,
+                                                  child: SingleChildScrollView(
+                                                    controller:
+                                                        _horizontalController,
+                                                    scrollDirection:
+                                                        Axis.horizontal,
+                                                    child: MouseRegion(
+                                                      onHover:
+                                                          (
+                                                            PointerHoverEvent
+                                                            details,
+                                                          ) {
+                                                            if (!markerEditingEnabled) {
+                                                              if (_hoveredMarkerReferenceId !=
+                                                                  null) {
+                                                                setState(() {
+                                                                  _hoveredMarkerReferenceId =
+                                                                      null;
+                                                                });
+                                                              }
+                                                              return;
+                                                            }
+                                                            final TimeMarker?
+                                                            hoveredMarker =
+                                                                _markerAtLabelPosition(
+                                                                  details
+                                                                      .localPosition,
+                                                                  pixelsPerSecond,
+                                                                );
+                                                            final String?
+                                                            nextId =
+                                                                hoveredMarker ==
+                                                                    null
+                                                                ? null
+                                                                : _markerReferenceId(
+                                                                    hoveredMarker,
+                                                                  );
+                                                            if (nextId !=
+                                                                _hoveredMarkerReferenceId) {
+                                                              setState(() {
+                                                                _hoveredMarkerReferenceId =
+                                                                    nextId;
+                                                              });
+                                                            }
+                                                          },
+                                                      onExit: (_) {
                                                         if (_hoveredMarkerReferenceId !=
                                                             null) {
                                                           setState(() {
@@ -388,196 +433,162 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                                 null;
                                                           });
                                                         }
-                                                        return;
-                                                      }
-                                                      final TimeMarker?
-                                                      hoveredMarker =
-                                                          _markerAtLabelPosition(
-                                                            details
-                                                                .localPosition,
-                                                            pixelsPerSecond,
-                                                          );
-                                                      final String? nextId =
-                                                          hoveredMarker == null
-                                                          ? null
-                                                          : _markerReferenceId(
-                                                              hoveredMarker,
-                                                            );
-                                                      if (nextId !=
-                                                          _hoveredMarkerReferenceId) {
-                                                        setState(() {
-                                                          _hoveredMarkerReferenceId =
-                                                              nextId;
-                                                        });
-                                                      }
-                                                    },
-                                                    onExit: (_) {
-                                                      if (_hoveredMarkerReferenceId !=
-                                                          null) {
-                                                        setState(() {
-                                                          _hoveredMarkerReferenceId =
-                                                              null;
-                                                        });
-                                                      }
-                                                    },
-                                                    child: GestureDetector(
-                                                      behavior: HitTestBehavior
-                                                          .opaque,
-                                                      onTapDown: null,
-                                                      onPanStart:
-                                                          markerEditingEnabled
-                                                          ? (
-                                                              DragStartDetails
-                                                              details,
-                                                            ) {
-                                                              _artifactDragActive =
-                                                                  interactiveMatchingEnabled &&
-                                                                  !HardwareKeyboard
-                                                                      .instance
-                                                                      .isShiftPressed;
-                                                              if (_artifactDragActive) {
-                                                                _handleArtifactDragStart(
-                                                                  details
-                                                                      .localPosition,
-                                                                  details
-                                                                      .globalPosition,
-                                                                );
-                                                              } else {
-                                                                _handleMarkerDragStart(
-                                                                  details
-                                                                      .localPosition,
-                                                                );
-                                                              }
-                                                            }
-                                                          : null,
-                                                      onPanUpdate:
-                                                          markerEditingEnabled
-                                                          ? (
-                                                              DragUpdateDetails
-                                                              details,
-                                                            ) {
-                                                              if (_artifactDragActive) {
-                                                                _handleArtifactDragUpdate(
-                                                                  details
-                                                                      .localPosition,
-                                                                  details
-                                                                      .globalPosition,
-                                                                );
-                                                              } else {
-                                                                _handleMarkerDragUpdate(
-                                                                  details
-                                                                      .localPosition,
-                                                                );
-                                                              }
-                                                            }
-                                                          : null,
-                                                      onPanEnd:
-                                                          markerEditingEnabled
-                                                          ? (
-                                                              DragEndDetails
-                                                              details,
-                                                            ) {
-                                                              final bool
-                                                              artifactDrag =
-                                                                  _artifactDragActive;
-                                                              _artifactDragActive =
-                                                                  false;
-                                                              if (artifactDrag) {
-                                                                _handleArtifactDragEnd(
-                                                                  pixelsPerSecond,
-                                                                );
-                                                              } else {
-                                                                _handleMarkerDragEnd(
-                                                                  pixelsPerSecond,
-                                                                );
-                                                              }
-                                                            }
-                                                          : null,
-                                                      onTapUp:
-                                                          markerEditingEnabled
-                                                          ? (
-                                                              TapUpDetails
-                                                              details,
-                                                            ) {
-                                                              _handleMarkerTapOrRename(
-                                                                details
-                                                                    .localPosition,
-                                                                pixelsPerSecond,
-                                                              );
-                                                            }
-                                                          : null,
-                                                      child: SizedBox(
-                                                        width: totalWidth,
-                                                        height: totalHeight,
-                                                        child: RepaintBoundary(
-                                                          child: AnimatedBuilder(
-                                                            animation: Listenable.merge(<
-                                                              Listenable
-                                                            >[
-                                                              _horizontalController,
-                                                              _verticalController,
-                                                            ]),
-                                                            builder:
-                                                                (
-                                                                  BuildContext
-                                                                  context,
-                                                                  Widget? child,
-                                                                ) {
-                                                                  return CustomPaint(
-                                                                    painter: _RawSignalPainter(
-                                                                      channels:
-                                                                          channels,
-                                                                      channelLabels:
-                                                                          labels,
-                                                                      sampleCount:
-                                                                          timeSeries
-                                                                              .sampleCount,
-                                                                      sampleRate:
-                                                                          timeSeries
-                                                                              .sampleRate,
-                                                                      channelHeight: _channelHeight(
-                                                                        traceAreaHeight,
-                                                                        channelCount,
-                                                                      ),
-                                                                      pixelsPerSecond:
-                                                                          pixelsPerSecond,
-                                                                      yScaleUv:
-                                                                          _yScaleUv(),
-                                                                      showSignals:
-                                                                          showSignals,
-                                                                      removeDc:
-                                                                          removeDc,
-                                                                      colors:
-                                                                          channelColors,
-                                                                      removedRows:
-                                                                          removedRows,
-                                                                      markers:
-                                                                          markers,
-                                                                      selectionStartX:
-                                                                          _dragSelectionStart
-                                                                              ?.dx,
-                                                                      selectionEndX:
-                                                                          _dragSelectionCurrent
-                                                                              ?.dx,
-                                                                      hoveredMarkerReferenceId:
-                                                                          _hoveredMarkerReferenceId,
-                                                                      horizontalOffset:
-                                                                          _horizontalController
-                                                                              .hasClients
-                                                                          ? _horizontalController.offset
-                                                                          : 0.0,
-                                                                      verticalOffset:
-                                                                          _verticalController
-                                                                              .hasClients
-                                                                          ? _verticalController.offset
-                                                                          : 0.0,
-                                                                      viewportWidth:
-                                                                          effectiveViewportWidth,
-                                                                      viewportHeight:
-                                                                          traceAreaHeight,
-                                                                    ),
+                                                      },
+                                                      child: GestureDetector(
+                                                        behavior:
+                                                            HitTestBehavior
+                                                                .opaque,
+                                                        onTapDown: null,
+                                                        onPanStart:
+                                                            markerEditingEnabled
+                                                            ? (
+                                                                DragStartDetails
+                                                                details,
+                                                              ) {
+                                                                _artifactDragActive =
+                                                                    interactiveMatchingEnabled &&
+                                                                    !HardwareKeyboard
+                                                                        .instance
+                                                                        .isShiftPressed;
+                                                                if (_artifactDragActive) {
+                                                                  _handleArtifactDragStart(
+                                                                    details
+                                                                        .localPosition,
+                                                                    details
+                                                                        .globalPosition,
                                                                   );
-                                                                },
+                                                                } else {
+                                                                  _handleMarkerDragStart(
+                                                                    details
+                                                                        .localPosition,
+                                                                  );
+                                                                }
+                                                              }
+                                                            : null,
+                                                        onPanUpdate:
+                                                            markerEditingEnabled
+                                                            ? (
+                                                                DragUpdateDetails
+                                                                details,
+                                                              ) {
+                                                                if (_artifactDragActive) {
+                                                                  _handleArtifactDragUpdate(
+                                                                    details
+                                                                        .localPosition,
+                                                                    details
+                                                                        .globalPosition,
+                                                                  );
+                                                                } else {
+                                                                  _handleMarkerDragUpdate(
+                                                                    details
+                                                                        .localPosition,
+                                                                  );
+                                                                }
+                                                              }
+                                                            : null,
+                                                        onPanEnd:
+                                                            markerEditingEnabled
+                                                            ? (
+                                                                DragEndDetails
+                                                                details,
+                                                              ) {
+                                                                final bool
+                                                                artifactDrag =
+                                                                    _artifactDragActive;
+                                                                _artifactDragActive =
+                                                                    false;
+                                                                if (artifactDrag) {
+                                                                  _handleArtifactDragEnd(
+                                                                    pixelsPerSecond,
+                                                                  );
+                                                                } else {
+                                                                  _handleMarkerDragEnd(
+                                                                    pixelsPerSecond,
+                                                                  );
+                                                                }
+                                                              }
+                                                            : null,
+                                                        onTapUp:
+                                                            markerEditingEnabled
+                                                            ? (
+                                                                TapUpDetails
+                                                                details,
+                                                              ) {
+                                                                _handleMarkerTapOrRename(
+                                                                  details
+                                                                      .localPosition,
+                                                                  pixelsPerSecond,
+                                                                );
+                                                              }
+                                                            : null,
+                                                        child: SizedBox(
+                                                          width: totalWidth,
+                                                          height: totalHeight,
+                                                          child: RepaintBoundary(
+                                                            child: AnimatedBuilder(
+                                                              animation: Listenable.merge(<
+                                                                Listenable
+                                                              >[
+                                                                _horizontalController,
+                                                                _verticalController,
+                                                              ]),
+                                                              builder:
+                                                                  (
+                                                                    BuildContext
+                                                                    context,
+                                                                    Widget?
+                                                                    child,
+                                                                  ) {
+                                                                    return CustomPaint(
+                                                                      painter: _RawSignalPainter(
+                                                                        channels:
+                                                                            channels,
+                                                                        channelLabels:
+                                                                            labels,
+                                                                        sampleCount:
+                                                                            timeSeries.sampleCount,
+                                                                        sampleRate:
+                                                                            timeSeries.sampleRate,
+                                                                        channelHeight: _channelHeight(
+                                                                          traceAreaHeight,
+                                                                          channelCount,
+                                                                        ),
+                                                                        pixelsPerSecond:
+                                                                            pixelsPerSecond,
+                                                                        yScaleUv:
+                                                                            _yScaleUv(),
+                                                                        showSignals:
+                                                                            showSignals,
+                                                                        removeDc:
+                                                                            removeDc,
+                                                                        colors:
+                                                                            channelColors,
+                                                                        removedRows:
+                                                                            removedRows,
+                                                                        markers:
+                                                                            markers,
+                                                                        selectionStartX:
+                                                                            _dragSelectionStart?.dx,
+                                                                        selectionEndX:
+                                                                            _dragSelectionCurrent?.dx,
+                                                                        hoveredMarkerReferenceId:
+                                                                            _hoveredMarkerReferenceId,
+                                                                        horizontalOffset:
+                                                                            _horizontalController.hasClients
+                                                                            ? _horizontalController.offset
+                                                                            : 0.0,
+                                                                        verticalOffset:
+                                                                            _verticalController.hasClients
+                                                                            ? _verticalController.offset
+                                                                            : 0.0,
+                                                                        viewportWidth:
+                                                                            effectiveViewportWidth,
+                                                                        viewportHeight:
+                                                                            traceAreaHeight,
+                                                                      ),
+                                                                    );
+                                                                  },
+                                                            ),
                                                           ),
                                                         ),
                                                       ),
@@ -585,8 +596,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                   ),
                                                 ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -1103,6 +1114,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       _yScaleOptionsUv.length - 1,
     );
     _updateParam('y_scale_uv', _yScaleOptionsUv[nextIndex]);
+  }
+
+  void _handleTracePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent ||
+        !HardwareKeyboard.instance.isControlPressed ||
+        event.scrollDelta.dy == 0) {
+      return;
+    }
+    _stepYScale(event.scrollDelta.dy < 0 ? -1 : 1);
   }
 
   void _nudgeHorizontalWindow(int direction) {

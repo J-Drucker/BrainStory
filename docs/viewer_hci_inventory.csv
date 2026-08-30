@@ -8,6 +8,7 @@ Raw time series,Plot,Keyboard,Left Arrow,Ctrl,Show a shorter time span,implement
 Raw time series,Plot,Keyboard,Right Arrow,Ctrl,Show a longer time span,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Plot,Keyboard,Up Arrow,Ctrl,Increase the voltage range,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Plot,Keyboard,Down Arrow,Ctrl,Decrease the voltage range,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
+Raw time series,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Zoom the voltage axis,implemented,gui/lib/ui/raw_signal_browser.dart::_handleTracePointerSignal
 Raw time series,Viewer,Keyboard,D,Alt,Toggle signal traces,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Viewer,Keyboard,M,Alt,Toggle markers,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent
 Raw time series,Viewer,Keyboard,C,Alt,Toggle DC removal preview,implemented,gui/lib/ui/raw_signal_browser.dart::_handleKeyEvent

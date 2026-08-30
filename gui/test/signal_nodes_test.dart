@@ -39,9 +39,11 @@ import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/canvas_view.dart';
 import 'package:brainstory_gui/ui/connection_painter.dart';
 import 'package:brainstory_gui/ui/node_card.dart';
+import 'package:brainstory_gui/ui/raw_signal_browser.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -702,6 +704,50 @@ void main() {
           .groupValue,
       refs.last.key,
     );
+  });
+
+  testWidgets('raw viewer Control-scroll zooms the voltage axis', (
+    WidgetTester tester,
+  ) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1600, 900);
+    addTearDown(tester.view.reset);
+
+    final Dataset dataset = Dataset('scroll-zoom', label: 'scroll-zoom.set');
+    dataset.timeSeries = TimeSeriesData(
+      samples: List<double>.generate(1000, (int index) => index % 20 - 10),
+      sampleRate: 100.0,
+      source: 'synthetic_signal',
+    );
+    final Map<String, dynamic> params = <String, dynamic>{'y_scale_uv': 100.0};
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1200,
+            height: 700,
+            child: RawSignalBrowser(dataset: dataset, params: params),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final Offset traceCenter = tester.getCenter(
+      find.byKey(const ValueKey<String>('raw-trace-viewport')),
+    );
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: traceCenter,
+        scrollDelta: const Offset(0, -20),
+      ),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    expect(params['y_scale_uv'], 50.0);
   });
 
   test('impedance visualization selects imported impedance datasets', () {
