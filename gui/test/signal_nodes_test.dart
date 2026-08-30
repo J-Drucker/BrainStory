@@ -2782,7 +2782,16 @@ time,Fz,Cz
         ),
         isEmpty,
       );
-      interpolateParams['channelInterpolateDatasetIds'] = <String>['b'];
+      final Map<String, dynamic> interpolationEdit = Map<String, dynamic>.from(
+        Map<String, dynamic>.from(
+              Map<String, dynamic>.from(
+                    interpolateParams['channelEditsByDataset'] as Map,
+                  )['a']
+                  as Map,
+            )['edits']
+            as Map,
+      );
+      (interpolationEdit['0'] as Map<String, dynamic>)['datasetScope'] = 'all';
       expect(
         EditChannelsNodeType.resolvedEditsForSeries(
           scopeSeries,
@@ -3022,6 +3031,10 @@ time,Fz,Cz
 
     expect(find.text('Channels'), findsOneWidget);
     expect(find.text('Markers'), findsOneWidget);
+    expect(find.text('Apply to'), findsOneWidget);
+    expect(find.text('this dataset'), findsNWidgets(2));
+    expect(find.text('all datasets'), findsNWidgets(2));
+    expect(find.text('Other channels'), findsNothing);
     await tester.tap(find.text('Markers'));
     await tester.pumpAndSettle();
     expect(find.text('Rename or delete marker labels.'), findsOneWidget);

@@ -2993,15 +2993,7 @@ class CanvasLogic {
           params[key] = _deepCloneJsonValue(downstream.params[key]);
         }
       }
-      for (final String key in <String>[
-        'channelEditSourceDatasetId',
-        'channelRenameScope',
-        'channelRenameDatasetIds',
-        'channelDeleteScope',
-        'channelDeleteDatasetIds',
-        'channelInterpolateScope',
-        'channelInterpolateDatasetIds',
-      ]) {
+      for (final String key in <String>['channelEditSourceDatasetId']) {
         if (upstream.params.containsKey(key)) {
           params[key] = _deepCloneJsonValue(upstream.params[key]);
         }
@@ -4781,39 +4773,26 @@ class CanvasLogic {
     final Map<String, dynamic> edits = Map<String, dynamic>.from(
       sourceConfig['edits'] as Map? ?? const <String, dynamic>{},
     );
-    final Set<String> activeOperations = <String>{};
     for (final dynamic rawEdit in edits.values) {
       final Map<String, dynamic> edit = Map<String, dynamic>.from(
         rawEdit as Map? ?? const <String, dynamic>{},
       );
-      if ((edit['rename'] ?? '').toString().trim().isNotEmpty) {
-        activeOperations.add('Rename');
-      }
-      if (edit['remove'] == true) {
-        activeOperations.add(
-          (edit['removeMode'] ?? 'delete').toString() == 'interpolate'
-              ? 'Interpolate'
-              : 'Delete',
-        );
-      }
-    }
-    for (final String operation in activeOperations) {
-      final String defaultScope = operation == 'Interpolate'
-          ? 'selected'
-          : 'all';
+      final bool active =
+          (edit['rename'] ?? '').toString().trim().isNotEmpty ||
+          edit['remove'] == true;
+      if (!active) continue;
+      final String removeMode = (edit['removeMode'] ?? 'delete')
+          .toString()
+          .trim()
+          .toLowerCase();
       final String scope =
-          (node.params['channel${operation}Scope'] ?? defaultScope).toString();
+          (edit['datasetScope'] ??
+                  (removeMode == 'interpolate' ? 'dataset' : 'all'))
+              .toString();
       if (scope == 'all') {
         required.addAll(availableDatasetIds);
-      } else {
-        final List<dynamic> ids =
-            node.params['channel${operation}DatasetIds'] as List<dynamic>? ??
-            const <dynamic>[];
-        if (ids.isEmpty && sourceDatasetId.isNotEmpty) {
-          required.add(sourceDatasetId);
-        } else {
-          required.addAll(ids.map((dynamic value) => value.toString()));
-        }
+      } else if (sourceDatasetId.isNotEmpty) {
+        required.add(sourceDatasetId);
       }
     }
     return required;

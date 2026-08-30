@@ -25,12 +25,6 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     'markerEditScope': 'all',
     'markerEditDatasetIds': <String>[],
     'channelEditsByDataset': <String, dynamic>{},
-    'channelRenameScope': 'all',
-    'channelRenameDatasetIds': <String>[],
-    'channelDeleteScope': 'all',
-    'channelDeleteDatasetIds': <String>[],
-    'channelInterpolateScope': 'selected',
-    'channelInterpolateDatasetIds': <String>[],
   };
 
   @override
@@ -79,18 +73,11 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     params.putIfAbsent('markerEditSourceDatasetId', () => dataset.id);
     params.putIfAbsent('channelEditSourceDatasetId', () => dataset.id);
     return SizedBox(
-      height: 760,
+      height: 640,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           MarkerDatasetScopeControl(
-            params: params,
-            datasets: datasets,
-            sourceDatasetId: dataset.id,
-            onChanged: (VoidCallback change) => setState(change),
-          ),
-          const SizedBox(height: 10),
-          ChannelDatasetScopeControl(
             params: params,
             datasets: datasets,
             sourceDatasetId: dataset.id,

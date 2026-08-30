@@ -732,7 +732,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: <Widget>[
             TextButton.icon(
-              onPressed: () => _showChannelEditPanel(0, allowInView: true),
+              onPressed: () => _showChannelMarkerEditPanel(
+                initialTab: ChannelMarkerEditTab.channels,
+              ),
               icon: const Icon(Icons.edit_outlined, size: 16),
               label: const Text('Edit channels'),
               style: TextButton.styleFrom(

@@ -8,169 +8,6 @@ import '../model/dataset.dart';
 import 'channel_coordinates_node.dart';
 import 'node_type.dart';
 
-class ChannelDatasetScopeControl extends StatelessWidget {
-  const ChannelDatasetScopeControl({
-    super.key,
-    required this.params,
-    required this.datasets,
-    required this.sourceDatasetId,
-    required this.onChanged,
-  });
-
-  final Map<String, dynamic> params;
-  final Map<String, Dataset> datasets;
-  final String sourceDatasetId;
-  final ValueChanged<VoidCallback> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<Dataset> ordered = datasets.values.toList(growable: false)
-      ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        const Text(
-          'Dataset scope for channel changes',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        _ChannelScopeRow(
-          label: 'Renaming',
-          operation: 'Rename',
-          defaultScope: 'all',
-          params: params,
-          datasets: ordered,
-          sourceDatasetId: sourceDatasetId,
-          onChanged: onChanged,
-        ),
-        _ChannelScopeRow(
-          label: 'Deleting',
-          operation: 'Delete',
-          defaultScope: 'all',
-          params: params,
-          datasets: ordered,
-          sourceDatasetId: sourceDatasetId,
-          onChanged: onChanged,
-        ),
-        _ChannelScopeRow(
-          label: 'Interpolating',
-          operation: 'Interpolate',
-          defaultScope: 'selected',
-          params: params,
-          datasets: ordered,
-          sourceDatasetId: sourceDatasetId,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-}
-
-class _ChannelScopeRow extends StatelessWidget {
-  const _ChannelScopeRow({
-    required this.label,
-    required this.operation,
-    required this.defaultScope,
-    required this.params,
-    required this.datasets,
-    required this.sourceDatasetId,
-    required this.onChanged,
-  });
-
-  final String label;
-  final String operation;
-  final String defaultScope;
-  final Map<String, dynamic> params;
-  final List<Dataset> datasets;
-  final String sourceDatasetId;
-  final ValueChanged<VoidCallback> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final String scope = (params['channel${operation}Scope'] ?? defaultScope)
-        .toString();
-    final Set<String> selected =
-        (params['channel${operation}DatasetIds'] as List<dynamic>? ??
-                const <dynamic>[])
-            .map((dynamic value) => value.toString())
-            .toSet();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              SizedBox(width: 130, child: Text(label)),
-              SizedBox(
-                width: 230,
-                child: DropdownButtonFormField<String>(
-                  initialValue: scope,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const <DropdownMenuItem<String>>[
-                    DropdownMenuItem<String>(
-                      value: 'all',
-                      child: Text('All datasets'),
-                    ),
-                    DropdownMenuItem<String>(
-                      value: 'selected',
-                      child: Text('Chosen datasets'),
-                    ),
-                  ],
-                  onChanged: (String? value) {
-                    if (value == null) return;
-                    onChanged(() {
-                      params['channel${operation}Scope'] = value;
-                      params['channelEditSourceDatasetId'] = sourceDatasetId;
-                      if (value == 'selected' && selected.isEmpty) {
-                        params['channel${operation}DatasetIds'] = <String>[
-                          sourceDatasetId,
-                        ];
-                      }
-                    });
-                  },
-                ),
-              ),
-            ],
-          ),
-          if (scope == 'selected') ...<Widget>[
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: datasets
-                  .map(
-                    (Dataset dataset) => FilterChip(
-                      label: Text(dataset.label),
-                      selected:
-                          selected.contains(dataset.id) ||
-                          (selected.isEmpty && dataset.id == sourceDatasetId),
-                      onSelected: (bool checked) {
-                        onChanged(() {
-                          final Set<String> next = Set<String>.from(selected);
-                          checked
-                              ? next.add(dataset.id)
-                              : next.remove(dataset.id);
-                          params['channel${operation}DatasetIds'] = next.toList(
-                            growable: false,
-                          );
-                        });
-                      },
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class EditChannelsNodeType extends NodeType {
   @override
   String get title => 'Edit Channels';
@@ -184,12 +21,6 @@ class EditChannelsNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'channelEditsByDataset': <String, dynamic>{},
-    'channelRenameScope': 'all',
-    'channelRenameDatasetIds': <String>[],
-    'channelDeleteScope': 'all',
-    'channelDeleteDatasetIds': <String>[],
-    'channelInterpolateScope': 'selected',
-    'channelInterpolateDatasetIds': <String>[],
   };
 
   static const String coordinateImportNone = 'none';
@@ -225,9 +56,13 @@ class EditChannelsNodeType extends NodeType {
         .cast<Dataset?>()
         .firstWhere((Dataset? dataset) => dataset != null, orElse: () => null);
     if (visibleDataset == null || visibleDataset.timeSeries == null) {
-      return const Text(
-        'Select a dataset with time-domain signal to edit channels.',
-        style: TextStyle(color: Colors.black54),
+      return Builder(
+        builder: (BuildContext context) => Text(
+          'Select a dataset with time-domain signal to edit channels.',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
       );
     }
 
@@ -236,13 +71,6 @@ class EditChannelsNodeType extends NodeType {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        ChannelDatasetScopeControl(
-          params: params,
-          datasets: datasets,
-          sourceDatasetId: visibleDataset.id,
-          onChanged: (VoidCallback change) => setState(change),
-        ),
-        const SizedBox(height: 12),
         Text(
           visibleDataset.label,
           style: const TextStyle(fontWeight: FontWeight.w600),
@@ -432,24 +260,14 @@ class EditChannelsNodeType extends NodeType {
             .toString()
             .trim()
             .toLowerCase();
-        final bool includeRename =
-            rename.isNotEmpty &&
-            _channelScopeAllows(
-              params,
-              operation: 'Rename',
-              datasetId: datasetId,
-              sourceDatasetId: sourceDatasetId,
-              defaultScope: 'all',
-            );
-        final bool includeRemoval =
-            remove &&
-            _channelScopeAllows(
-              params,
-              operation: removeMode == 'interpolate' ? 'Interpolate' : 'Delete',
-              datasetId: datasetId,
-              sourceDatasetId: sourceDatasetId,
-              defaultScope: removeMode == 'interpolate' ? 'selected' : 'all',
-            );
+        final String rowScope =
+            (edit['datasetScope'] ??
+                    (removeMode == 'interpolate' ? 'dataset' : 'all'))
+                .toString();
+        final bool rowApplies =
+            rowScope == 'all' || datasetId == sourceDatasetId;
+        final bool includeRename = rename.isNotEmpty && rowApplies;
+        final bool includeRemoval = remove && rowApplies;
         final String poolName = includeDatasetSpecific
             ? (edit['poolName'] ?? '').toString()
             : '';
@@ -487,26 +305,6 @@ class EditChannelsNodeType extends NodeType {
     }
     mergeScopedEdits(own, includeDatasetSpecific: true);
     return <String, dynamic>{...own, 'edits': mergedEdits};
-  }
-
-  static bool _channelScopeAllows(
-    Map<String, dynamic> params, {
-    required String operation,
-    required String datasetId,
-    required String sourceDatasetId,
-    required String defaultScope,
-  }) {
-    final String scope = (params['channel${operation}Scope'] ?? defaultScope)
-        .toString();
-    if (scope == 'all') {
-      return true;
-    }
-    final Set<String> ids =
-        (params['channel${operation}DatasetIds'] as List<dynamic>? ??
-                const <dynamic>[])
-            .map((dynamic value) => value.toString())
-            .toSet();
-    return ids.isEmpty ? datasetId == sourceDatasetId : ids.contains(datasetId);
   }
 
   static Map<String, dynamic> bindConfigToChannelLabels(
@@ -872,6 +670,13 @@ class EditChannelsNodeType extends NodeType {
             'removeMode': (valueMap['removeMode'] ?? 'delete').toString(),
             'poolName': valueMap['poolName']?.toString() ?? '',
             'sourceLabel': valueMap['sourceLabel']?.toString() ?? '',
+            'datasetScope':
+                valueMap['datasetScope']?.toString() ??
+                ((valueMap['removeMode'] ?? 'delete').toString() ==
+                        'interpolate'
+                    ? 'dataset'
+                    : 'all'),
+            'datasetScopeExplicit': valueMap['datasetScopeExplicit'] == true,
           };
         }()),
       ),
@@ -1215,6 +1020,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     String? rename,
     bool? remove,
     String? removeMode,
+    String? datasetScope,
   }) {
     final Map<String, dynamic> edits = _edits;
     final String key = '$index';
@@ -1230,6 +1036,15 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     }
     if (removeMode != null) {
       existing['removeMode'] = removeMode;
+      if (existing['datasetScopeExplicit'] != true) {
+        existing['datasetScope'] = removeMode == 'interpolate'
+            ? 'dataset'
+            : 'all';
+      }
+    }
+    if (datasetScope != null) {
+      existing['datasetScope'] = datasetScope;
+      existing['datasetScopeExplicit'] = true;
     }
     edits[key] = existing;
     _config['edits'] = edits;
@@ -1349,7 +1164,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                 controller: _horizontalController,
                 scrollDirection: Axis.horizontal,
                 child: SizedBox(
-                  width: math.max(860, constraints.maxWidth),
+                  width: math.max(950, constraints.maxWidth),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
@@ -1362,13 +1177,15 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                         const SizedBox(height: 4),
                         Divider(
                           height: 1,
-                          color: Colors.black.withValues(alpha: 0.12),
+                          color: Theme.of(context).colorScheme.outlineVariant,
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Other channels',
                           style: TextStyle(
-                            color: Colors.black.withValues(alpha: 0.55),
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),
@@ -1397,7 +1214,9 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                               'Create derived channels from add/subtract formulas.',
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.black.withValues(alpha: 0.6),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -1428,87 +1247,94 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     final String coordinateSummary = widget.currentCoordinateCount == 0
         ? 'No coordinates currently attached.'
         : '${widget.currentCoordinateCount} coordinate${widget.currentCoordinateCount == 1 ? '' : 's'} currently attached.';
-    return Wrap(
-      spacing: 16,
-      runSpacing: 12,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: <Widget>[
-        SizedBox(
-          width: 280,
-          child: DropdownButtonFormField<String>(
-            initialValue: _coordinateImportMode,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: 'Import channel coordinates',
-              border: OutlineInputBorder(),
-              isDense: true,
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: <Widget>[
+          SizedBox(
+            width: 280,
+            child: DropdownButtonFormField<String>(
+              initialValue: _coordinateImportMode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Import channel coordinates',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem<String>(
+                  value: EditChannelsNodeType.coordinateImportNone,
+                  child: Text('No change'),
+                ),
+                DropdownMenuItem<String>(
+                  value: EditChannelsNodeType.coordinateImportStandard,
+                  child: Text('Assign standard coordinates'),
+                ),
+              ],
+              onChanged: (String? value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _setCoordinateImportMode(value);
+                });
+              },
             ),
-            items: const <DropdownMenuItem<String>>[
-              DropdownMenuItem<String>(
-                value: EditChannelsNodeType.coordinateImportNone,
-                child: Text('No change'),
-              ),
-              DropdownMenuItem<String>(
-                value: EditChannelsNodeType.coordinateImportStandard,
-                child: Text('Assign standard coordinates'),
-              ),
-            ],
-            onChanged: (String? value) {
-              if (value == null) {
-                return;
-              }
-              setState(() {
-                _setCoordinateImportMode(value);
-              });
-            },
           ),
-        ),
-        SizedBox(
-          width: 220,
-          child: DropdownButtonFormField<String>(
-            initialValue: _rereferenceMode,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              labelText: 'Rereference',
-              border: OutlineInputBorder(),
-              isDense: true,
+          SizedBox(
+            width: 220,
+            child: DropdownButtonFormField<String>(
+              initialValue: _rereferenceMode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Rereference',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem<String>(
+                  value: EditChannelsNodeType.rereferenceNone,
+                  child: Text('No change'),
+                ),
+                DropdownMenuItem<String>(
+                  value: EditChannelsNodeType.rereferenceAverage,
+                  child: Text('Average reference'),
+                ),
+              ],
+              onChanged: (String? value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _setRereferenceMode(value);
+                });
+              },
             ),
-            items: const <DropdownMenuItem<String>>[
-              DropdownMenuItem<String>(
-                value: EditChannelsNodeType.rereferenceNone,
-                child: Text('No change'),
-              ),
-              DropdownMenuItem<String>(
-                value: EditChannelsNodeType.rereferenceAverage,
-                child: Text('Average reference'),
-              ),
-            ],
-            onChanged: (String? value) {
-              if (value == null) {
-                return;
-              }
-              setState(() {
-                _setRereferenceMode(value);
-              });
-            },
           ),
-        ),
-        Text(
-          coordinateSummary,
-          style: TextStyle(color: Colors.black.withValues(alpha: 0.62)),
-        ),
-      ],
+          Text(
+            coordinateSummary,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildHeaderRow() {
     return const Row(
       children: <Widget>[
-        _HeaderCell(width: 180, text: 'Original channel'),
+        _HeaderCell(width: 170, text: 'Original channel'),
         SizedBox(width: 10),
         _HeaderCell(width: 180, text: 'Rename'),
         SizedBox(width: 10),
-        _HeaderCell(width: 400, text: 'Remove'),
+        _HeaderCell(width: 310, text: 'Remove'),
+        SizedBox(width: 10),
+        _HeaderCell(width: 210, text: 'Apply to'),
         SizedBox(width: 10),
         _HeaderCell(width: 40, text: ''),
       ],
@@ -1528,6 +1354,10 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         .toString()
         .trim()
         .toLowerCase();
+    final String datasetScope =
+        (edit['datasetScope'] ??
+                (removeMode == 'interpolate' ? 'dataset' : 'all'))
+            .toString();
     final TextEditingController controller =
         _renameControllers['$index'] ?? TextEditingController();
 
@@ -1537,7 +1367,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
           SizedBox(
-            width: 180,
+            width: 170,
             child: Text(
               widget.channelLabels[index],
               style: const TextStyle(fontWeight: FontWeight.w500),
@@ -1561,22 +1391,31 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           ),
           const SizedBox(width: 10),
           SizedBox(
-            width: 400,
+            width: 310,
             child: Row(
               children: <Widget>[
-                Checkbox(
-                  value: remove,
-                  onChanged: (bool? value) {
-                    setState(() {
-                      if (promoteOnEdit) {
-                        _promoteOriginalChannelRow(index);
-                      }
-                      _updateExistingEdit(index, remove: value == true);
-                    });
-                  },
+                SizedBox(
+                  width: 30,
+                  height: 30,
+                  child: Checkbox(
+                    value: remove,
+                    visualDensity: const VisualDensity(
+                      horizontal: -4,
+                      vertical: -4,
+                    ),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onChanged: (bool? value) {
+                      setState(() {
+                        if (promoteOnEdit) {
+                          _promoteOriginalChannelRow(index);
+                        }
+                        _updateExistingEdit(index, remove: value == true);
+                      });
+                    },
+                  ),
                 ),
                 const Text('remove'),
-                const SizedBox(width: 10),
+                const SizedBox(width: 4),
                 IgnorePointer(
                   ignoring: !remove,
                   child: Opacity(
@@ -1594,26 +1433,14 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                           _updateExistingEdit(index, removeMode: value);
                         });
                       },
-                      child: Row(
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: const <Widget>[
-                          Radio<String>(
-                            value: 'delete',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          Text('delete'),
-                          SizedBox(width: 8),
-                          Radio<String>(
+                          _CompactRadioChoice(value: 'delete', label: 'delete'),
+                          _CompactRadioChoice(
                             value: 'interpolate',
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          SizedBox(
-                            width: 74,
-                            child: Text(
-                              'interpolate',
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
+                            label: 'interpolate',
                           ),
                         ],
                       ),
@@ -1621,6 +1448,30 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                   ),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 210,
+            child: RadioGroup<String>(
+              groupValue: datasetScope,
+              onChanged: (String? value) {
+                if (value == null) return;
+                setState(() {
+                  if (promoteOnEdit) {
+                    _promoteOriginalChannelRow(index);
+                  }
+                  _updateExistingEdit(index, datasetScope: value);
+                });
+              },
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  _CompactRadioChoice(value: 'dataset', label: 'this dataset'),
+                  _CompactRadioChoice(value: 'all', label: 'all datasets'),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -1671,7 +1522,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
             child: Text(
               formula,
               style: TextStyle(
-                color: Colors.black.withValues(alpha: 0.72),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontStyle: FontStyle.italic,
               ),
             ),
@@ -2020,7 +1871,7 @@ class _FormulaColumn extends StatelessWidget {
                     child: Text(
                       'None',
                       style: TextStyle(
-                        color: Colors.black.withValues(alpha: 0.45),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                   )
@@ -2101,10 +1952,40 @@ class _HeaderCell extends StatelessWidget {
       width: width,
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.w700,
-          color: Colors.black87,
+          color: Theme.of(context).colorScheme.onSurface,
         ),
+      ),
+    );
+  }
+}
+
+class _CompactRadioChoice extends StatelessWidget {
+  const _CompactRadioChoice({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 27,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          SizedBox(
+            width: 22,
+            height: 22,
+            child: Radio<String>(
+              value: value,
+              visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(width: 3),
+          Text(label),
+        ],
       ),
     );
   }
