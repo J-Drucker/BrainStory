@@ -8,6 +8,20 @@ import '../model/dataset_state.dart';
 
 part 'node_type_dialog.dart';
 
+const String combinedExecutionStagesKey = 'combinedExecutionStages';
+
+List<Map<String, dynamic>>? combinedExecutionStages(
+  Map<String, dynamic> params,
+) {
+  final List<dynamic>? rawStages =
+      params[combinedExecutionStagesKey] as List<dynamic>?;
+  if (rawStages == null || rawStages.isEmpty) return null;
+  return rawStages
+      .whereType<Map>()
+      .map((Map<dynamic, dynamic> stage) => Map<String, dynamic>.from(stage))
+      .toList(growable: false);
+}
+
 enum PortType { signal, metadata, markers, matrixTransformation }
 
 enum NodeCategory {

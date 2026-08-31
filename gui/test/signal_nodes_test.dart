@@ -208,6 +208,84 @@ void main() {
     expect(logic.connections, hasLength(1));
   });
 
+  test('selected bandpass chain combines without losing filter stages', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    final NodeModel source = logic.nodes.last;
+    final List<NodeModel> filters = <NodeModel>[];
+    for (final double lowCut in <double>[1, 2, 3]) {
+      logic.addNode(BandpassNodeType());
+      final NodeModel filter = logic.nodes.last;
+      filter.params['low'] = lowCut;
+      filters.add(filter);
+    }
+    logic.addNode(ResampleNodeType());
+    final NodeModel downstream = logic.nodes.last;
+    final List<NodeModel> chain = <NodeModel>[source, ...filters, downstream];
+    for (int index = 0; index < chain.length - 1; index++) {
+      logic.connections.add(<String, dynamic>{
+        'fromNode': chain[index].id,
+        'fromPort': 0,
+        'toNode': chain[index + 1].id,
+        'toPort': 0,
+      });
+    }
+
+    expect(
+      logic.combineSelectedNodes(
+        filters.map((NodeModel node) => node.id).toSet(),
+      ),
+      'Bandpass Filter',
+    );
+
+    final NodeModel combined = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is BandpassNodeType,
+    );
+    final List<Map<String, dynamic>> stages = combinedExecutionStages(
+      combined.params,
+    )!;
+    expect(stages.map((Map<String, dynamic> stage) => stage['low']), <double>[
+      1,
+      2,
+      3,
+    ]);
+    expect(logic.nodes, hasLength(3));
+    expect(logic.connections, hasLength(2));
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> edge) =>
+            edge['fromNode'] == source.id && edge['toNode'] == combined.id,
+      ),
+      isTrue,
+    );
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> edge) =>
+            edge['fromNode'] == combined.id && edge['toNode'] == downstream.id,
+      ),
+      isTrue,
+    );
+    expect(logic.undoLast(), 'combine selected nodes');
+    expect(logic.nodes, hasLength(5));
+  });
+
+  test('selected unsupported nodes cannot combine', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ResampleNodeType());
+    final NodeModel first = logic.nodes.last;
+    logic.addNode(ResampleNodeType());
+    final NodeModel second = logic.nodes.last;
+    logic.connections.add(<String, dynamic>{
+      'fromNode': first.id,
+      'fromPort': 0,
+      'toNode': second.id,
+      'toPort': 0,
+    });
+
+    expect(logic.combineSelectedNodes(<String>{first.id, second.id}), isNull);
+    expect(logic.nodes, hasLength(2));
+  });
+
   test(
     'all graph nodes can open the visualizer without an interactive node',
     () {

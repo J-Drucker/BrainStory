@@ -13,6 +13,7 @@ import '../model/dataset.dart';
 import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/add_remove_markers_node.dart';
+import '../nodes/bandpass_node.dart';
 import '../nodes/bridge_detector_node.dart';
 import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
@@ -2638,6 +2639,13 @@ class CanvasLogic {
   }) async {
     final bool mutationLocked = isNodeMutationLocked(node.id);
     final bool queueRun = hasActiveRun;
+    final _SelectedNodeCombinationPlan? selectedCombination =
+        _selectedNodeCombinationPlan(node);
+    final bool selectedCombinationLocked =
+        selectedCombination?.nodes.any(
+          (NodeModel selected) => isNodeMutationLocked(selected.id),
+        ) ??
+        false;
     final _NodeCombinationPlan? previousCombination =
         _combinationPlanWithPrevious(node);
     final _NodeCombinationPlan? nextCombination = previousCombination == null
@@ -2691,6 +2699,12 @@ class CanvasLogic {
           value: 'memory',
           child: Text('Memory management'),
         ),
+        if (selectedCombination != null)
+          PopupMenuItem<String>(
+            value: 'combine_selected',
+            enabled: !selectedCombinationLocked,
+            child: const Text('Combine Selected Nodes'),
+          ),
         if (combination != null)
           PopupMenuItem<String>(
             value: 'combine',
@@ -2816,6 +2830,16 @@ class CanvasLogic {
         final String? combinedTitle = combineConsecutiveEditNodes(
           combination.upstream.id,
           combination.downstream.id,
+        );
+        update();
+        if (context.mounted && combinedTitle != null) {
+          _showStatusSnackBar(context, 'Combined into $combinedTitle.');
+        }
+        return;
+      case 'combine_selected':
+        if (selectedCombination == null) return;
+        final String? combinedTitle = combineSelectedNodes(
+          selectedCombination.nodes.map((NodeModel item) => item.id).toSet(),
         );
         update();
         if (context.mounted && combinedTitle != null) {
@@ -3110,6 +3134,193 @@ class CanvasLogic {
     _nodeRamSnapshots.remove(downstream.id);
     _nodeDiskSnapshotIds.remove(upstream.id);
     _nodeDiskSnapshotIds.remove(downstream.id);
+    _seedNodeDatasetStates(replacement);
+    for (final Dataset dataset in datasets.values) {
+      _markImmediateChildrenStale(replacement.id, dataset.id);
+    }
+    selectedNodeId = replacement.id;
+    selectedNodeIds
+      ..clear()
+      ..add(replacement.id);
+    selectedConnectionIndex = null;
+    keyboardFocusedNodeId = replacement.id;
+    _clearPendingConnection();
+    return replacement.title;
+  }
+
+  _SelectedNodeCombinationPlan? _selectedNodeCombinationPlan(
+    NodeModel contextNode,
+  ) {
+    if (selectedNodeIds.length < 2 ||
+        !selectedNodeIds.contains(contextNode.id)) {
+      return null;
+    }
+    final List<NodeModel> selected = nodes
+        .where((NodeModel node) => selectedNodeIds.contains(node.id))
+        .toList(growable: false);
+    if (selected.length != selectedNodeIds.length ||
+        selected.any(
+          (NodeModel node) =>
+              node.type.runtimeType != contextNode.type.runtimeType ||
+              node.params.containsKey('_runtimeGeneratedByNodeId'),
+        ) ||
+        !_supportsSelectedCombination(contextNode.type)) {
+      return null;
+    }
+    if (contextNode.type is AddRemoveMarkersNodeType &&
+        selected.any(
+          (NodeModel node) => node.params['markerGenerator'] != null,
+        )) {
+      return null;
+    }
+    final Set<String> datasetIds = _selectedDatasetIdsForCombination(
+      selected.first,
+    );
+    if (selected
+        .skip(1)
+        .any(
+          (NodeModel node) =>
+              !setEquals(datasetIds, _selectedDatasetIdsForCombination(node)),
+        )) {
+      return null;
+    }
+
+    final Set<String> ids = selectedNodeIds;
+    final List<NodeModel> roots = selected
+        .where((NodeModel node) {
+          return _immediateParents(
+            node.id,
+          ).every((NodeModel parent) => !ids.contains(parent.id));
+        })
+        .toList(growable: false);
+    if (roots.length != 1) return null;
+
+    final List<NodeModel> ordered = <NodeModel>[];
+    NodeModel current = roots.single;
+    while (true) {
+      ordered.add(current);
+      final List<NodeModel> internalChildren = _immediateChildren(
+        current.id,
+      ).where((NodeModel child) => ids.contains(child.id)).toList();
+      if (internalChildren.isEmpty) break;
+      if (internalChildren.length != 1 ||
+          _immediateChildren(current.id).length != 1) {
+        return null;
+      }
+      final NodeModel next = internalChildren.single;
+      if (_immediateParents(next.id).length != 1 || ordered.contains(next)) {
+        return null;
+      }
+      current = next;
+    }
+    if (ordered.length != selected.length) return null;
+
+    final List<Map<String, dynamic>> stages = <Map<String, dynamic>>[];
+    for (final NodeModel node in ordered) {
+      final List<Map<String, dynamic>>? existingStages =
+          combinedExecutionStages(node.params);
+      final Iterable<Map<String, dynamic>> nodeStages =
+          existingStages ?? <Map<String, dynamic>>[node.params];
+      for (final Map<String, dynamic> stage in nodeStages) {
+        final Map<String, dynamic> clone = _deepCloneJsonMap(stage)
+          ..remove(combinedExecutionStagesKey);
+        stages.add(clone);
+      }
+    }
+    final Map<String, dynamic> params = _deepCloneJsonMap(ordered.last.params);
+    params[combinedExecutionStagesKey] = stages;
+    params['selectedDatasetIds'] = datasetIds.toList(growable: false);
+    return _SelectedNodeCombinationPlan(
+      nodes: ordered,
+      type: ordered.first.type,
+      params: params,
+    );
+  }
+
+  bool _supportsSelectedCombination(NodeType type) {
+    return type is BandpassNodeType ||
+        type is EditChannelsNodeType ||
+        type is AddRemoveMarkersNodeType ||
+        type is EditChannelsAndMarkersNodeType;
+  }
+
+  String? combineSelectedNodes(Set<String> nodeIds) {
+    if (nodeIds.length < 2) return null;
+    final Set<String> previousSelection = Set<String>.from(selectedNodeIds);
+    selectedNodeIds
+      ..clear()
+      ..addAll(nodeIds);
+    final NodeModel? contextNode = nodes.cast<NodeModel?>().firstWhere(
+      (NodeModel? node) => node != null && nodeIds.contains(node.id),
+      orElse: () => null,
+    );
+    final _SelectedNodeCombinationPlan? plan = contextNode == null
+        ? null
+        : _selectedNodeCombinationPlan(contextNode);
+    if (plan == null ||
+        plan.nodes.any((NodeModel node) => isNodeMutationLocked(node.id))) {
+      selectedNodeIds
+        ..clear()
+        ..addAll(previousSelection);
+      return null;
+    }
+
+    _recordUndo('combine selected nodes');
+    final Set<String> replacedIds = plan.nodes
+        .map((NodeModel node) => node.id)
+        .toSet();
+    final NodeModel root = plan.nodes.first;
+    final NodeModel leaf = plan.nodes.last;
+    final List<Map<String, dynamic>> incomingConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['toNode'] == root.id &&
+              !replacedIds.contains(connection['fromNode']),
+        )
+        .map((Map<String, dynamic> value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    final List<Map<String, dynamic>> outgoingConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == leaf.id &&
+              !replacedIds.contains(connection['toNode']),
+        )
+        .map((Map<String, dynamic> value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    final NodeModel replacement = _buildNode(
+      type: plan.type,
+      position: leaf.position,
+      params: plan.params,
+    );
+
+    nodes.removeWhere((NodeModel node) => replacedIds.contains(node.id));
+    connections.removeWhere(
+      (Map<String, dynamic> connection) =>
+          replacedIds.contains(connection['fromNode']) ||
+          replacedIds.contains(connection['toNode']),
+    );
+    nodes.add(replacement);
+    for (final Map<String, dynamic> connection in incomingConnections) {
+      connection['toNode'] = replacement.id;
+      connection['toPort'] = 0;
+      connections.add(connection);
+    }
+    for (final Map<String, dynamic> connection in outgoingConnections) {
+      connection['fromNode'] = replacement.id;
+      if ((connection['fromPort'] as num?)?.toInt() != 0) {
+        connection['fromPort'] = 0;
+      }
+      connections.add(connection);
+    }
+    for (final String id in replacedIds) {
+      _nodeRamSnapshots.remove(id);
+      _nodeDiskSnapshotIds.remove(id);
+    }
+    _ungroupedAutomaticRootNodeIds.removeAll(replacedIds);
+    for (final CanvasNodeGroup group in nodeGroups) {
+      group.nodeIds.removeAll(replacedIds);
+    }
+    _pruneNodeGroups();
     _seedNodeDatasetStates(replacement);
     for (final Dataset dataset in datasets.values) {
       _markImmediateChildrenStale(replacement.id, dataset.id);
@@ -8462,6 +8673,18 @@ class _NodeCombinationPlan {
 
   final NodeModel upstream;
   final NodeModel downstream;
+  final NodeType type;
+  final Map<String, dynamic> params;
+}
+
+class _SelectedNodeCombinationPlan {
+  const _SelectedNodeCombinationPlan({
+    required this.nodes,
+    required this.type,
+    required this.params,
+  });
+
+  final List<NodeModel> nodes;
   final NodeType type;
   final Map<String, dynamic> params;
 }

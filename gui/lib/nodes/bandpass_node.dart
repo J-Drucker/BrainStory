@@ -37,6 +37,13 @@ class BandpassNodeType extends NodeType {
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    final List<Map<String, dynamic>>? stages = combinedExecutionStages(params);
+    if (stages != null) {
+      for (final Map<String, dynamic> stage in stages) {
+        await run(dataset, stage);
+      }
+      return;
+    }
     final TimeSeriesData? timeSeries = dataset.timeSeries;
     if (timeSeries == null || timeSeries.primaryChannel.isEmpty) {
       return;
