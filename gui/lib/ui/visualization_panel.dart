@@ -164,6 +164,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
         .visualizationSourceRefsForNode(widget.nodeId);
     final bool singleDatasetSelection = <String>{
       'raw',
+      'segments',
       'ica',
       'hypnogram',
       'bridge',
@@ -700,6 +701,10 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     1.25,
     1.5,
     2.0,
+    3.0,
+    5.0,
+    8.0,
+    12.0,
   ];
 
   late final FocusNode _focusNode;
@@ -1082,7 +1087,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     final Map<String, dynamic> params = widget.params;
     params.putIfAbsent('segmented_condition_mode', () => 'natural');
     params.putIfAbsent('segmented_channel_mode', () => 'natural');
-    params.putIfAbsent('segmented_segment_mode', () => 'natural');
+    params.putIfAbsent('segmented_segment_mode', () => 'average');
     params.putIfAbsent('segmented_exclude_bad', () => false);
     params.putIfAbsent('segmented_visible_marker_labels', () => <String>[]);
     params.putIfAbsent('segmented_marker_filter_initialized', () => false);
@@ -1124,7 +1129,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
         .toString();
     final String channelMode = (params['segmented_channel_mode'] ?? 'natural')
         .toString();
-    final String segmentMode = (params['segmented_segment_mode'] ?? 'natural')
+    final String segmentMode = (params['segmented_segment_mode'] ?? 'average')
         .toString();
     final bool displayBaseline = true;
     final bool baselineConfigured = _segmentationBaselineConfigured(params);
@@ -1167,10 +1172,26 @@ class _SegmentedChartState extends State<_SegmentedChart> {
           (_SegmentLabelGroup group) => selectedLabels.contains(group.label),
         )
         .toList(growable: false);
+    if (conditionMode == 'difference' && groups.length != 2) {
+      conditionMode = 'natural';
+      params['segmented_condition_mode'] = conditionMode;
+    }
     final bool stackConditionRows =
         channelMode == 'butterfly' && groups.length > 1;
-    final List<_SegmentPanelConfig> panels =
-        conditionMode == 'butterfly' || stackConditionRows
+    final List<_SegmentPanelConfig> panels = conditionMode == 'difference'
+        ? <_SegmentPanelConfig>[
+            _buildConditionDifferencePanelConfig(
+              segmented: segmented,
+              groups: groups,
+              channelMode: channelMode,
+              displayBaseline: displayBaseline,
+              baselineStartMs: baselineStartMs,
+              baselineStopMs: baselineStopMs,
+              rangeUv: rangeUv,
+              spacingFactor: spacingFactor,
+            ),
+          ]
+        : conditionMode == 'butterfly' || stackConditionRows
         ? <_SegmentPanelConfig>[
             _buildConditionOverlayPanelConfig(
               segmented: segmented,
@@ -3972,6 +3993,176 @@ _SegmentPanelConfig _buildConditionOverlayPanelConfig({
   );
 }
 
+_SegmentPanelConfig _buildConditionDifferencePanelConfig({
+  required SegmentedTimeSeriesData segmented,
+  required List<_SegmentLabelGroup> groups,
+  required String channelMode,
+  required bool displayBaseline,
+  required double baselineStartMs,
+  required double baselineStopMs,
+  required double rangeUv,
+  required double spacingFactor,
+}) {
+  final _SegmentLabelGroup first = groups[0];
+  final _SegmentLabelGroup second = groups[1];
+  final int channelCount = math.min(
+    _segmentGroupChannelCount(segmented, first.segments),
+    _segmentGroupChannelCount(segmented, second.segments),
+  );
+  List<_AlignedTrace> differenceForChannel(int channelIndex) {
+    return _conditionDifferenceTraces(
+      _alignedDisplayedSegmentTracesForChannel(
+        segmented: segmented,
+        segments: first.segments,
+        channelIndex: channelIndex,
+        displayBaseline: displayBaseline,
+        baselineStartMs: baselineStartMs,
+        baselineStopMs: baselineStopMs,
+      ),
+      _alignedDisplayedSegmentTracesForChannel(
+        segmented: segmented,
+        segments: second.segments,
+        channelIndex: channelIndex,
+        displayBaseline: displayBaseline,
+        baselineStartMs: baselineStartMs,
+        baselineStopMs: baselineStopMs,
+      ),
+    );
+  }
+
+  _SegmentSequencePlotData channelPlot(int channelIndex) {
+    return _buildSegmentAggregatePlotData(<_SegmentAggregateSeriesInput>[
+      _SegmentAggregateSeriesInput(
+        traces: differenceForChannel(channelIndex),
+        lineColor: first.color,
+        fillColor: Colors.transparent,
+        showSpread: false,
+      ),
+    ]);
+  }
+
+  late final _SegmentSequencePlotData plotData;
+  late final String rowTitle;
+  if (channelMode == 'natural') {
+    plotData = _stackSegmentChannelPlotData(
+      channelPlots: List<_SegmentSequencePlotData>.generate(
+        channelCount,
+        channelPlot,
+        growable: false,
+      ),
+      channelLabels: List<String>.generate(
+        channelCount,
+        (int index) => _segmentChannelLabel(segmented, index),
+        growable: false,
+      ),
+      rangeUv: rangeUv,
+      spacingFactor: spacingFactor,
+      stitchedSegments: false,
+    );
+    rowTitle = 'Difference by channel';
+  } else if (channelMode == 'butterfly') {
+    plotData = _mergeSegmentPlotData(
+      List<_SegmentSequencePlotData>.generate(
+        channelCount,
+        channelPlot,
+        growable: false,
+      ),
+    );
+    rowTitle = 'Difference across channels';
+  } else {
+    plotData = _buildSegmentAggregatePlotData(<_SegmentAggregateSeriesInput>[
+      _SegmentAggregateSeriesInput(
+        traces: _conditionDifferenceTraces(
+          _alignedAverageChannelsTracesForSegments(
+            segmented: segmented,
+            segments: first.segments,
+            displayBaseline: displayBaseline,
+            baselineStartMs: baselineStartMs,
+            baselineStopMs: baselineStopMs,
+          ),
+          _alignedAverageChannelsTracesForSegments(
+            segmented: segmented,
+            segments: second.segments,
+            displayBaseline: displayBaseline,
+            baselineStartMs: baselineStartMs,
+            baselineStopMs: baselineStopMs,
+          ),
+        ),
+        lineColor: first.color,
+        fillColor: Colors.transparent,
+        showSpread: false,
+      ),
+    ]);
+    rowTitle = 'Difference (mean across channels)';
+  }
+
+  return _SegmentPanelConfig(
+    key: 'condition-difference',
+    title: '${first.label} - ${second.label}',
+    subtitle: 'Difference wave',
+    accentColor: first.color,
+    rowSpecs: <_SegmentRowSpec>[
+      _SegmentRowSpec(
+        key: 'condition-difference:plot',
+        title: rowTitle,
+        plotData: plotData,
+        height: channelMode == 'natural'
+            ? _segmentStackedChannelsRowHeight(
+                channelCount: channelCount,
+                rangeUv: rangeUv,
+                spacingFactor: spacingFactor,
+              )
+            : _segmentRowHeight(
+                rangeUv: rangeUv,
+                spacingFactor: spacingFactor,
+                naturalChannels: false,
+              ),
+      ),
+    ],
+  );
+}
+
+List<_AlignedTrace> _conditionDifferenceTraces(
+  List<_AlignedTrace> first,
+  List<_AlignedTrace> second,
+) {
+  if (first.isEmpty || second.isEmpty) {
+    return const <_AlignedTrace>[];
+  }
+  final int length = <int>[
+    ...first.map((_AlignedTrace trace) => trace.values.length),
+    ...second.map((_AlignedTrace trace) => trace.values.length),
+  ].reduce(math.min);
+  if (length <= 0) {
+    return const <_AlignedTrace>[];
+  }
+  final AggregateSeriesStats? firstStats =
+      computeAggregateSeriesStatsWithFallback(
+        first
+            .map((_AlignedTrace trace) => trace.values.take(length).toList())
+            .toList(growable: false),
+      );
+  final AggregateSeriesStats? secondStats =
+      computeAggregateSeriesStatsWithFallback(
+        second
+            .map((_AlignedTrace trace) => trace.values.take(length).toList())
+            .toList(growable: false),
+      );
+  if (firstStats == null || secondStats == null) {
+    return const <_AlignedTrace>[];
+  }
+  return <_AlignedTrace>[
+    _AlignedTrace(
+      xValues: first.first.xValues.take(length).toList(growable: false),
+      values: List<double>.generate(
+        length,
+        (int index) => firstStats.mean[index] - secondStats.mean[index],
+        growable: false,
+      ),
+    ),
+  ];
+}
+
 _SegmentSequencePlotData _mergeSegmentPlotData(
   List<_SegmentSequencePlotData> plots,
 ) {
@@ -4039,7 +4230,7 @@ double _segmentRowHeight({
 }) {
   final double rangeFactor = (rangeUv / 100.0).clamp(0.75, 2.0);
   final double base = naturalChannels ? 116.0 : 168.0;
-  return base * spacingFactor.clamp(0.5, 2.0) * (0.88 + (rangeFactor * 0.12));
+  return base * spacingFactor.clamp(0.5, 12.0) * (0.88 + (rangeFactor * 0.12));
 }
 
 double _segmentStackedChannelsRowHeight({
@@ -4048,8 +4239,8 @@ double _segmentStackedChannelsRowHeight({
   required double spacingFactor,
 }) {
   final double rangeFactor = (rangeUv / 100.0).clamp(0.85, 1.5);
-  final double perChannel = 28.0 * spacingFactor.clamp(0.5, 2.0) * rangeFactor;
-  return math.max(180.0, math.min(900.0, 54.0 + channelCount * perChannel));
+  final double perChannel = 28.0 * spacingFactor.clamp(0.5, 12.0) * rangeFactor;
+  return math.max(180.0, math.min(6000.0, 54.0 + channelCount * perChannel));
 }
 
 _SegmentSequencePlotData _buildStackedChannelsSegmentPlotData({
@@ -4178,7 +4369,7 @@ _SegmentSequencePlotData _stackSegmentChannelPlotData({
   final List<String> traceLabels = <String>[];
   final List<double> traceValueOffsets = <double>[];
   final double channelSpacing =
-      math.max(1.0, rangeUv) * spacingFactor.clamp(0.5, 2.0);
+      math.max(1.0, rangeUv) * spacingFactor.clamp(0.5, 12.0);
   double? minXValue;
   double? maxXValue;
   double? minYValue;
@@ -6550,7 +6741,7 @@ class _SegmentConditionsModeTile extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           SizedBox(
-            width: 270,
+            width: 410,
             child: Row(
               children: <Widget>[
                 Expanded(
@@ -6559,6 +6750,16 @@ class _SegmentConditionsModeTile extends StatelessWidget {
                     selected: conditionMode == 'natural',
                     previewKind: _SegmentModePreviewKind.conditionSeparate,
                     onPressed: () => onModeChanged('natural'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SegmentModeOptionButton(
+                    label: 'Difference',
+                    selected: conditionMode == 'difference',
+                    enabled: overlayEnabled && selectedLabels.length == 2,
+                    previewKind: _SegmentModePreviewKind.conditionDifference,
+                    onPressed: () => onModeChanged('difference'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -6998,6 +7199,7 @@ class _SegmentModeOptionButton extends StatelessWidget {
 enum _SegmentModePreviewKind {
   conditionSeparate,
   conditionOverlay,
+  conditionDifference,
   channelStack,
   channelButterfly,
   channelAverage,
@@ -7082,6 +7284,9 @@ class _SegmentModePreviewPainter extends CustomPainter {
           secondaryColor,
           tertiaryColor,
         ], normalizeToSignalRange: true);
+        return;
+      case _SegmentModePreviewKind.conditionDifference:
+        _paintAverage(canvas, rect.deflate(5), foregroundColor);
         return;
       case _SegmentModePreviewKind.channelStack:
         _paintStacked(canvas, rect.deflate(5), <Color>[
