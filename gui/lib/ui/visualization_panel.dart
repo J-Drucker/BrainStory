@@ -2883,12 +2883,40 @@ class _PsdChart extends StatelessWidget {
             verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
           ),
           borderData: FlBorderData(show: false),
+          lineTouchData: LineTouchData(
+            enabled: true,
+            touchTooltipData: LineTouchTooltipData(
+              getTooltipItems: (List<LineBarSpot> touchedSpots) {
+                return touchedSpots
+                    .map((LineBarSpot spot) {
+                      final int index = spot.barIndex;
+                      final String label = index < visibleSeries.length
+                          ? visibleSeries[index].label
+                          : 'Spectrum ${index + 1}';
+                      final String power = logY
+                          ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
+                          : '${spot.y.toStringAsFixed(2)} μV²/Hz';
+                      return LineTooltipItem(
+                        '$label\n${spot.x.toStringAsFixed(1)} Hz · $power',
+                        const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      );
+                    })
+                    .toList(growable: false);
+              },
+            ),
+          ),
           titlesData: _chartTitles(
             minX: 0,
             maxX: maxX,
             minY: minY,
             maxY: maxY,
             logY: logY,
+            xAxisLabel: 'Frequency (Hz)',
+            yAxisLabel: logY ? 'log₁₀(μV²/Hz)' : 'μV²/Hz',
             yAxisReservedSize: 84,
           ),
           clipData: const FlClipData.all(),
@@ -2939,7 +2967,7 @@ class _PsdChart extends StatelessWidget {
           _PsdMenuChip<String>(
             label: 'Scale',
             valueLabel: scaleMode == 'fixed'
-                ? '${configuredMaxPower.toStringAsFixed(1)} uV^2/Hz'
+                ? '${configuredMaxPower.toStringAsFixed(1)} μV²/Hz'
                 : 'Auto',
             options: const <String>['auto', 'fixed'],
             itemLabel: (String value) => value == 'auto' ? 'Auto' : 'Fixed',
@@ -2951,10 +2979,10 @@ class _PsdChart extends StatelessWidget {
           if (scaleMode == 'fixed')
             _PsdMenuChip<double>(
               label: 'Max',
-              valueLabel: '${configuredMaxPower.toStringAsFixed(1)} uV^2/Hz',
+              valueLabel: '${configuredMaxPower.toStringAsFixed(1)} μV²/Hz',
               options: const <double>[0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200],
               itemLabel: (double value) =>
-                  '${value.toStringAsFixed(value < 1 ? 1 : 0)} uV^2/Hz',
+                  '${value.toStringAsFixed(value < 1 ? 1 : 0)} μV²/Hz',
               onSelected: (double value) {
                 params['psd_view_max_power'] = value;
                 onChanged();
@@ -7895,7 +7923,7 @@ FlTitlesData _chartTitles({
   final double xInterval = xIntervalOverride ?? _niceAxisStep(maxX - minX);
   final double yInterval = _niceAxisStep(maxY - minY);
   final String resolvedYAxisLabel =
-      yAxisLabel ?? (logY ? 'log10(uV^2/Hz)' : 'uV^2/Hz');
+      yAxisLabel ?? (logY ? 'log₁₀(μV²/Hz)' : 'μV²/Hz');
   return FlTitlesData(
     topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
     rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
