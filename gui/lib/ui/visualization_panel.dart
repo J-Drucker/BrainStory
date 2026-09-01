@@ -1260,20 +1260,6 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                 runSpacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
-                  TextButton.icon(
-                    onPressed: _showChannelEditor,
-                    icon: const Icon(Icons.edit_outlined, size: 16),
-                    label: const Text('Edit channels'),
-                    style: TextButton.styleFrom(
-                      minimumSize: Size.zero,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 4,
-                      ),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                  const _SegmentControlStripDivider(),
                   Tooltip(
                     message: badTooltip,
                     child: _SegmentInlineToggleButton(
@@ -1349,63 +1335,90 @@ class _SegmentedChartState extends State<_SegmentedChart> {
               ),
             ],
           ),
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              if (groups.isEmpty || panels.isEmpty) {
-                return const _ChartMessage(
-                  title: 'No selected markers',
-                  body:
-                      'Select one or more condition chips above to show segmented data.',
-                );
-              }
-              const double gapWidth = 12;
-              const double minPanelWidth = 360;
-              final double availableWidth = constraints.maxWidth.isFinite
-                  ? constraints.maxWidth
-                  : panels.length * minPanelWidth;
-              final double filledPanelWidth = panels.length == 1
-                  ? availableWidth
-                  : (availableWidth - (gapWidth * (panels.length - 1))) /
-                        panels.length;
-              final double panelWidth = math.max(
-                panels.length == 1 ? availableWidth : minPanelWidth,
-                filledPanelWidth,
-              );
-              return Scrollbar(
-                thumbVisibility: panels.length * panelWidth > availableWidth,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: panels.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: gapWidth),
-                  itemBuilder: (BuildContext context, int index) {
-                    final _SegmentPanelConfig panel = panels[index];
-                    return SizedBox(
-                      width: panelWidth,
-                      child: _SegmentPanelView(
-                        panel: panel,
-                        verticalController: _segmentScrollControllerFor(
-                          panel.key,
-                        ),
-                        horizontalControllerForRow: (String rowKey) =>
-                            _plotScrollControllerFor('${panel.key}|$rowKey'),
-                        windowSeconds: displayedWindowSeconds,
-                        rangeUv: rangeUv,
-                        onWindowSecondsChanged: (double value) {
-                          setState(() {
-                            params['window_sec'] = value;
-                          });
-                        },
-                        onRangeUvChanged: (double value) {
-                          setState(() {
-                            params['y_scale_uv'] = value;
-                          });
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.only(left: 10, bottom: 6),
+                child: TextButton.icon(
+                  onPressed: _showChannelEditor,
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('Edit channels'),
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (BuildContext context, BoxConstraints constraints) {
+                    if (groups.isEmpty || panels.isEmpty) {
+                      return const _ChartMessage(
+                        title: 'No selected markers',
+                        body:
+                            'Select one or more condition chips above to show segmented data.',
+                      );
+                    }
+                    const double gapWidth = 12;
+                    const double minPanelWidth = 360;
+                    final double availableWidth = constraints.maxWidth.isFinite
+                        ? constraints.maxWidth
+                        : panels.length * minPanelWidth;
+                    final double filledPanelWidth = panels.length == 1
+                        ? availableWidth
+                        : (availableWidth - (gapWidth * (panels.length - 1))) /
+                              panels.length;
+                    final double panelWidth = math.max(
+                      panels.length == 1 ? availableWidth : minPanelWidth,
+                      filledPanelWidth,
+                    );
+                    return Scrollbar(
+                      thumbVisibility:
+                          panels.length * panelWidth > availableWidth,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: panels.length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(width: gapWidth),
+                        itemBuilder: (BuildContext context, int index) {
+                          final _SegmentPanelConfig panel = panels[index];
+                          return SizedBox(
+                            width: panelWidth,
+                            child: _SegmentPanelView(
+                              panel: panel,
+                              verticalController: _segmentScrollControllerFor(
+                                panel.key,
+                              ),
+                              horizontalControllerForRow: (String rowKey) =>
+                                  _plotScrollControllerFor(
+                                    '${panel.key}|$rowKey',
+                                  ),
+                              windowSeconds: displayedWindowSeconds,
+                              rangeUv: rangeUv,
+                              onWindowSecondsChanged: (double value) {
+                                setState(() {
+                                  params['window_sec'] = value;
+                                });
+                              },
+                              onRangeUvChanged: (double value) {
+                                setState(() {
+                                  params['y_scale_uv'] = value;
+                                });
+                              },
+                            ),
+                          );
                         },
                       ),
                     );
                   },
                 ),
-              );
-            },
+              ),
+            ],
           ),
         ),
       ),
