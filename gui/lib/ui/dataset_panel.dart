@@ -5,8 +5,14 @@ import 'canvas_logic.dart';
 class DatasetPanel extends StatelessWidget {
   final CanvasLogic logic;
   final VoidCallback onChanged;
+  final VoidCallback onCollapse;
 
-  const DatasetPanel({super.key, required this.logic, required this.onChanged});
+  const DatasetPanel({
+    super.key,
+    required this.logic,
+    required this.onChanged,
+    required this.onCollapse,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -20,9 +26,20 @@ class DatasetPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Datasets',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text(
+                  'Datasets',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Hide datasets',
+                onPressed: onCollapse,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
           ),
 
           const SizedBox(height: 10),

@@ -351,6 +351,35 @@ void main() {
     );
   });
 
+  testWidgets('right rail hides datasets and keeps project below them', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CanvasView(logic: logic)),
+      ),
+    );
+
+    expect(find.text('Datasets'), findsOneWidget);
+    expect(find.text('Project'), findsOneWidget);
+    expect(
+      tester.getCenter(find.text('Project')).dy,
+      greaterThan(tester.getCenter(find.text('Datasets')).dy),
+    );
+
+    await tester.tap(find.byTooltip('Hide datasets'));
+    await tester.pumpAndSettle();
+    expect(find.text('Datasets'), findsNothing);
+    expect(find.byTooltip('Show datasets'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Show datasets'));
+    await tester.pumpAndSettle();
+    expect(find.text('Datasets'), findsOneWidget);
+    expect(find.text('Project'), findsOneWidget);
+  });
+
   testWidgets('canvas keeps active processing visible without modal lock', (
     WidgetTester tester,
   ) async {

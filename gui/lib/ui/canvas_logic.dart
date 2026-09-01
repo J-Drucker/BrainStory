@@ -2151,17 +2151,7 @@ class CanvasLogic {
     }
   }
 
-  Widget sidebar({
-    required double width,
-    required VoidCallback publish,
-    required VoidCallback memory,
-    required VoidCallback export,
-    required VoidCallback load,
-    required VoidCallback clear,
-    required bool projectActionsCollapsed,
-    required VoidCallback toggleProjectActionsCollapsed,
-    required VoidCallback update,
-  }) {
+  Widget sidebar({required double width, required VoidCallback update}) {
     final List<NodeCategory> categoryOrder = <NodeCategory>[
       NodeCategory.import,
       NodeCategory.transform,
@@ -2193,23 +2183,39 @@ class CanvasLogic {
               ],
             ),
           ),
-          _ProjectActionsMenu(
-            collapsed: projectActionsCollapsed,
-            onToggleCollapsed: toggleProjectActionsCollapsed,
-            publish: publish,
-            memory: memory,
-            export: export,
-            load: load,
-            clear: clear,
-            processingResponsiveness: processingResponsiveness.value,
-            onProcessingResponsivenessChanged:
-                (ProcessingResponsiveness value) {
-                  processingResponsiveness.value = value;
-                  update();
-                },
-          ),
-          const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+
+  Widget projectActions({
+    required VoidCallback publish,
+    required VoidCallback memory,
+    required VoidCallback export,
+    required VoidCallback load,
+    required VoidCallback clear,
+    required bool collapsed,
+    required VoidCallback onToggleCollapsed,
+    required VoidCallback update,
+  }) {
+    return ColoredBox(
+      color: Colors.grey.shade900,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: _ProjectActionsMenu(
+          collapsed: collapsed,
+          onToggleCollapsed: onToggleCollapsed,
+          publish: publish,
+          memory: memory,
+          export: export,
+          load: load,
+          clear: clear,
+          processingResponsiveness: processingResponsiveness.value,
+          onProcessingResponsivenessChanged: (ProcessingResponsiveness value) {
+            processingResponsiveness.value = value;
+            update();
+          },
+        ),
       ),
     );
   }

@@ -43,6 +43,7 @@ class _CanvasViewState extends State<CanvasView> {
   Timer? _recentJobsCollapseTimer;
   bool _recentJobsCollapsed = true;
   bool _projectActionsCollapsed = true;
+  bool _datasetPanelCollapsed = false;
 
   CanvasLogic get logic => widget.logic;
 
@@ -70,7 +71,10 @@ class _CanvasViewState extends State<CanvasView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final bool compactRail = constraints.maxWidth < 1200;
-        final double sideRailWidth = compactRail ? 300 : 360;
+        final double expandedSideRailWidth = compactRail ? 300 : 360;
+        final double sideRailWidth = _datasetPanelCollapsed
+            ? 48
+            : expandedSideRailWidth;
         final double leftRailWidth =
             ((constraints.maxWidth - sideRailWidth) * 0.28).clamp(260.0, 340.0);
         final double canvasViewportWidth =
@@ -158,44 +162,6 @@ class _CanvasViewState extends State<CanvasView> {
                         children: <Widget>[
                           logic.sidebar(
                             width: leftRailWidth,
-                            publish: () async {
-                              await logic.showPublishDialog(context);
-                            },
-                            memory: () async {
-                              await logic.showMemoryManagerDialog(
-                                context,
-                                update: () => setState(() {}),
-                              );
-                            },
-                            load: () async {
-                              await logic.loadBrainStory(context);
-                              if (mounted) {
-                                setState(() {});
-                              }
-                            },
-                            export: () async {
-                              await logic.exportBrainStory(context);
-                            },
-                            clear: () {
-                              if (logic.hasActiveRun) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Clear all is paused until the active job finishes.',
-                                    ),
-                                  ),
-                                );
-                                return;
-                              }
-                              setState(() => logic.clearAll());
-                            },
-                            projectActionsCollapsed: _projectActionsCollapsed,
-                            toggleProjectActionsCollapsed: () {
-                              setState(() {
-                                _projectActionsCollapsed =
-                                    !_projectActionsCollapsed;
-                              });
-                            },
                             update: () => setState(() {}),
                           ),
                           Expanded(
@@ -399,24 +365,96 @@ class _CanvasViewState extends State<CanvasView> {
                           ),
                           SizedBox(
                             width: sideRailWidth,
-                            child: Column(
-                              children: <Widget>[
-                                Expanded(
-                                  child: DatasetPanel(
-                                    logic: logic,
-                                    onChanged: () => setState(() {}),
-                                  ),
-                                ),
-                                if (_showEmbeddedVisualizationPreview)
-                                  Expanded(
-                                    flex: 2,
-                                    child: VisualizationPanel(
-                                      logic: logic,
-                                      onChanged: () => setState(() {}),
+                            child: _datasetPanelCollapsed
+                                ? ColoredBox(
+                                    color: Colors.grey.shade900,
+                                    child: Align(
+                                      alignment: Alignment.topCenter,
+                                      child: Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: IconButton(
+                                          tooltip: 'Show datasets',
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(
+                                            minWidth: 40,
+                                            minHeight: 40,
+                                          ),
+                                          onPressed: () {
+                                            setState(() {
+                                              _datasetPanelCollapsed = false;
+                                            });
+                                          },
+                                          icon: const Icon(Icons.chevron_left),
+                                        ),
+                                      ),
                                     ),
+                                  )
+                                : Column(
+                                    children: <Widget>[
+                                      Expanded(
+                                        child: DatasetPanel(
+                                          logic: logic,
+                                          onChanged: () => setState(() {}),
+                                          onCollapse: () {
+                                            setState(() {
+                                              _datasetPanelCollapsed = true;
+                                            });
+                                          },
+                                        ),
+                                      ),
+                                      if (_showEmbeddedVisualizationPreview)
+                                        Expanded(
+                                          flex: 2,
+                                          child: VisualizationPanel(
+                                            logic: logic,
+                                            onChanged: () => setState(() {}),
+                                          ),
+                                        ),
+                                      logic.projectActions(
+                                        publish: () async {
+                                          await logic.showPublishDialog(
+                                            context,
+                                          );
+                                        },
+                                        memory: () async {
+                                          await logic.showMemoryManagerDialog(
+                                            context,
+                                            update: () => setState(() {}),
+                                          );
+                                        },
+                                        load: () async {
+                                          await logic.loadBrainStory(context);
+                                          if (mounted) setState(() {});
+                                        },
+                                        export: () async {
+                                          await logic.exportBrainStory(context);
+                                        },
+                                        clear: () {
+                                          if (logic.hasActiveRun) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  'Clear all is paused until the active job finishes.',
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          setState(() => logic.clearAll());
+                                        },
+                                        collapsed: _projectActionsCollapsed,
+                                        onToggleCollapsed: () {
+                                          setState(() {
+                                            _projectActionsCollapsed =
+                                                !_projectActionsCollapsed;
+                                          });
+                                        },
+                                        update: () => setState(() {}),
+                                      ),
+                                    ],
                                   ),
-                              ],
-                            ),
                           ),
                         ],
                       ),
