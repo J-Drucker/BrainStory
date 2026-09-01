@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../platform/brainstory_engine.dart';
+import 'channel_coordinates_node.dart';
 import 'node_type.dart';
 
 abstract class _MatrixTransformNodeType extends NodeType {
@@ -530,6 +531,18 @@ class ICANodeType extends _MatrixTransformNodeType {
     final String inputSource = timeSeries.source.isEmpty
         ? 'ICA'
         : '${timeSeries.source} -> ICA';
+    final Map<String, ChannelCoordinate> originalChannelCoordinates =
+        <String, ChannelCoordinate>{};
+    for (final String label in originalChannelLabels) {
+      final ChannelCoordinate? coordinate =
+          ChannelCoordinatesNodeType.coordinateForChannelLabel(
+            timeSeries.channelCoordinates,
+            label,
+          );
+      if (coordinate != null) {
+        originalChannelCoordinates[label] = coordinate;
+      }
+    }
     dataset.timeSeries = TimeSeriesData(
       channelSamples: fullActivations,
       sampleRate: timeSeries.sampleRate,
@@ -550,11 +563,7 @@ class ICANodeType extends _MatrixTransformNodeType {
       sourceChannelLabels: sourceChannelLabels,
       selectedChannelIndices: selectedChannelIndices,
       originalSampleRate: timeSeries.sampleRate,
-      originalChannelCoordinates: <String, ChannelCoordinate>{
-        for (final String label in originalChannelLabels)
-          if (timeSeries.channelCoordinates[label] != null)
-            label: timeSeries.channelCoordinates[label]!,
-      },
+      originalChannelCoordinates: originalChannelCoordinates,
       originalImpedanceData: _subsetImpedanceData(
         timeSeries.impedanceData,
         originalChannelLabels,

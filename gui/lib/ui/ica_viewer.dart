@@ -1,9 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../nodes/channel_coordinates_node.dart';
 import 'topomap_view.dart';
 
 class IcaViewer extends StatefulWidget {
@@ -23,6 +26,7 @@ class _IcaViewerState extends State<IcaViewer> {
   bool _applying = false;
   double _windowSeconds = 10;
   double _startFraction = 0;
+  double _verticalScale = 1;
 
   MatrixTransformationData? get _transform =>
       widget.dataset.matrixTransformation;
@@ -148,6 +152,7 @@ class _IcaViewerState extends State<IcaViewer> {
             _excluded.clear();
             _previewing = false;
             _startFraction = 0;
+            _verticalScale = 1;
           }),
           icon: const Icon(Icons.restart_alt),
           label: const Text('Reset'),
@@ -252,12 +257,20 @@ class _IcaViewerState extends State<IcaViewer> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: CustomPaint(
-                key: ValueKey<String>(
-                  _previewing ? 'ica-preview-traces' : 'ica-component-traces',
+              child: Listener(
+                key: const ValueKey<String>('ica-trace-viewport'),
+                onPointerSignal: _handleTracePointerSignal,
+                child: CustomPaint(
+                  key: ValueKey<String>(
+                    _previewing ? 'ica-preview-traces' : 'ica-component-traces',
+                  ),
+                  painter: _StackedTracePainter(
+                    traces: traces,
+                    labels: labels,
+                    verticalScale: _verticalScale,
+                  ),
+                  child: const SizedBox.expand(),
                 ),
-                painter: _StackedTracePainter(traces: traces, labels: labels),
-                child: const SizedBox.expand(),
               ),
             ),
             if (maxStart > 0)
@@ -407,6 +420,21 @@ class _IcaViewerState extends State<IcaViewer> {
       if (mounted) setState(() => _applying = false);
     }
   }
+
+  void _handleTracePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent ||
+        !HardwareKeyboard.instance.isControlPressed ||
+        event.scrollDelta.dy == 0) {
+      return;
+    }
+    setState(() {
+      _verticalScale =
+          (_verticalScale * (event.scrollDelta.dy < 0 ? 1.25 : 0.8)).clamp(
+            0.125,
+            16.0,
+          );
+    });
+  }
 }
 
 List<TopomapPointValue> _componentTopomapPoints(
@@ -425,7 +453,10 @@ List<TopomapPointValue> _componentTopomapPoints(
     }
     final String label = transform.originalChannelLabels[channel];
     final ChannelCoordinate? coordinate =
-        transform.originalChannelCoordinates[label];
+        ChannelCoordinatesNodeType.coordinateForChannelLabel(
+          transform.originalChannelCoordinates,
+          label,
+        );
     if (coordinate == null) continue;
     points.add(
       TopomapPointValue(
@@ -448,10 +479,15 @@ TopomapValueBounds _symmetricBounds(List<TopomapPointValue> points) {
 }
 
 class _StackedTracePainter extends CustomPainter {
-  const _StackedTracePainter({required this.traces, required this.labels});
+  const _StackedTracePainter({
+    required this.traces,
+    required this.labels,
+    required this.verticalScale,
+  });
 
   final List<List<double>> traces;
   final List<String> labels;
+  final double verticalScale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -501,7 +537,9 @@ class _StackedTracePainter extends CustomPainter {
         final double x = labelWidth + (column / (columns - 1)) * plotWidth;
         final double y =
             centerY -
-            (values[sample] / maximum).clamp(-1.0, 1.0) * rowHeight * 0.38;
+            (values[sample] / maximum * verticalScale).clamp(-1.0, 1.0) *
+                rowHeight *
+                0.38;
         column == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
       }
       canvas.drawPath(path, tracePaint);
@@ -510,6 +548,8 @@ class _StackedTracePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StackedTracePainter oldDelegate) {
-    return oldDelegate.traces != traces || oldDelegate.labels != labels;
+    return oldDelegate.traces != traces ||
+        oldDelegate.labels != labels ||
+        oldDelegate.verticalScale != verticalScale;
   }
 }

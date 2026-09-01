@@ -55,6 +55,7 @@ PSD and hypnogram,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl+Shift,Change t
 PSD,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Change the fixed power range,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
 PSD and hypnogram,Horizontal scrollbar,Mouse,Drag,None,Pan the horizontal window,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState
 ICA,Component grid,Mouse,Click component tile or checkbox,None,Toggle component exclusion selection,implemented,gui/lib/ui/ica_viewer.dart::_buildComponentTile
+ICA,Trace plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Zoom the voltage axis,implemented,gui/lib/ui/ica_viewer.dart::_handleTracePointerSignal
 ICA,Selection controls,Mouse,Click Select all,None,Mark every component for exclusion,implemented,gui/lib/ui/ica_viewer.dart
 ICA,Selection controls,Mouse,Click Clear,None,Clear all component exclusions,implemented,gui/lib/ui/ica_viewer.dart
 ICA,Selection controls,Mouse,Click Reset,None,Restore the saved exclusion selection and source preview,implemented,gui/lib/ui/ica_viewer.dart

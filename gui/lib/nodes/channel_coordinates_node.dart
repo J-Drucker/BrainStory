@@ -189,10 +189,21 @@ class ChannelCoordinatesNodeType extends NodeType {
     Map<String, ChannelCoordinate> coordinates,
     String channelLabel,
   ) {
+    final ChannelCoordinate? exact = coordinates[channelLabel];
+    if (exact != null) {
+      return exact;
+    }
     for (final String key in _coordinateLookupKeys(channelLabel)) {
       final ChannelCoordinate? coordinate = coordinates[key];
       if (coordinate != null) {
         return coordinate;
+      }
+      for (final MapEntry<String, ChannelCoordinate> entry
+          in coordinates.entries) {
+        if (_normalizeChannelLabel(entry.key) == key ||
+            _normalizeChannelLabel(entry.value.label) == key) {
+          return entry.value;
+        }
       }
     }
     return null;

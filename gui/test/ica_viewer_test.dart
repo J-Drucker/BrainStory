@@ -8,7 +8,9 @@ import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/ica_viewer.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -66,6 +68,29 @@ void main() {
     await tester.pump();
     expect(find.text('1 excluded'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ICA Control-scroll zooms component traces vertically', (
+    WidgetTester tester,
+  ) async {
+    await _pumpViewer(tester, dataset: _icaDataset(), onApply: (_) async {});
+    final Finder traces = find.byKey(
+      const ValueKey<String>('ica-component-traces'),
+    );
+    final CustomPainter before = tester.widget<CustomPaint>(traces).painter!;
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendEventToBinding(
+      const PointerScrollEvent(
+        position: Offset(200, 200),
+        scrollDelta: Offset(0, -20),
+      ),
+    );
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+
+    final CustomPainter after = tester.widget<CustomPaint>(traces).painter!;
+    expect(identical(after, before), isFalse);
   });
 
   testWidgets('non-converged ICA is warned and cannot be applied', (

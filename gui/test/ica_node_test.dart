@@ -55,7 +55,7 @@ void main() {
       sampleRate: sampleRate,
       channelLabels: const <String>['Fz', 'Cz', 'Pz'],
       channelCoordinates: const <String, ChannelCoordinate>{
-        'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.6, z: 0.8),
+        'fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.6, z: 0.8),
       },
       impedanceData: ImpedanceData(
         channelLabels: const <String>['Fz', 'Cz', 'Pz'],
