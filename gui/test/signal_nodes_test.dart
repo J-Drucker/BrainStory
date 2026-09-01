@@ -2816,6 +2816,20 @@ time,Fz,Cz
       await node.run(second, deleteParams);
       expect(first.timeSeries!.channelLabels, <String>['Pz']);
       expect(second.timeSeries!.channelLabels, <String>['Pz']);
+      final Map<String, dynamic> savedDeleteConfig =
+          EditChannelsNodeType.configForDataset(deleteParams, 'a');
+      expect(
+        EditChannelsNodeType.channelLabelsForEditor(
+          savedDeleteConfig,
+          first.timeSeries!.channelLabels,
+        ),
+        <String>['Cz', 'Pz'],
+      );
+      expect(
+        ((savedDeleteConfig['edits'] as Map<String, dynamic>)['0']
+            as Map<String, dynamic>)['remove'],
+        isTrue,
+      );
 
       final Map<String, dynamic> interpolateParams = <String, dynamic>{
         ...node.defaultParams,
@@ -3072,6 +3086,49 @@ time,Fz,Cz
     expect(find.text('Rereference'), findsOneWidget);
   });
 
+  testWidgets('Edit Channels keeps a deleted channel in altered parameters', (
+    WidgetTester tester,
+  ) async {
+    final Map<String, dynamic> config = <String, dynamic>{
+      'sourceChannelLabels': <String>['Cz', 'Pz'],
+      'edits': <String, dynamic>{
+        '0': <String, dynamic>{
+          'sourceLabel': 'Cz',
+          'remove': true,
+          'removeMode': 'delete',
+        },
+      },
+    };
+    final List<String> editorLabels =
+        EditChannelsNodeType.channelLabelsForEditor(config, <String>['Pz']);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 950,
+            height: 500,
+            child: ChannelEditConfigEditor(
+              channelLabels: editorLabels,
+              config: config,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Altered channels'), findsOneWidget);
+    expect(find.text('Cz'), findsOneWidget);
+    expect(find.text('Pz'), findsOneWidget);
+    expect(
+      tester.widgetList<Checkbox>(find.byType(Checkbox)).first.value,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('combined edit parameters share channel and marker tabs', (
     WidgetTester tester,
   ) async {
@@ -3109,10 +3166,12 @@ time,Fz,Cz
 
     expect(find.text('Channels'), findsOneWidget);
     expect(find.text('Markers'), findsOneWidget);
+    expect(find.text('Altered channels'), findsOneWidget);
+    expect(find.text('No altered channels.'), findsOneWidget);
+    expect(find.text('Other channels'), findsOneWidget);
     expect(find.text('Apply to'), findsOneWidget);
     expect(find.text('this dataset'), findsNWidgets(2));
     expect(find.text('all datasets'), findsNWidgets(2));
-    expect(find.text('Other channels'), findsNothing);
     await tester.tap(find.text('Markers'));
     await tester.pumpAndSettle();
     expect(find.text('Rename or delete marker labels.'), findsOneWidget);

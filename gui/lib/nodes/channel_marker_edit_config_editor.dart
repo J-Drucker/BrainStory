@@ -138,7 +138,7 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final TimeSeriesData? series = dataset.timeSeries;
-    final List<String> labels = series == null
+    final List<String> currentLabels = series == null
         ? const <String>[]
         : series.channelLabels.length == series.channelCount
         ? series.channelLabels
@@ -148,6 +148,10 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
                 ? series.channelLabels[index]
                 : 'Ch ${index + 1}',
           );
+    final List<String> labels = EditChannelsNodeType.channelLabelsForEditor(
+      channelConfig,
+      currentLabels,
+    );
     return DefaultTabController(
       initialIndex: initialTab.index,
       length: 2,

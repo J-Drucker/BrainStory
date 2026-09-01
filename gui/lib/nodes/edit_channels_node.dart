@@ -77,7 +77,10 @@ class EditChannelsNodeType extends NodeType {
         ),
         const SizedBox(height: 10),
         ChannelEditConfigEditor(
-          channelLabels: _channelLabelsForSeries(timeSeries),
+          channelLabels: channelLabelsForEditor(
+            configForDataset(params, visibleDataset.id),
+            _channelLabelsForSeries(timeSeries),
+          ),
           config: configForDataset(params, visibleDataset.id),
           currentCoordinateCount: timeSeries.channelCoordinates.length,
           onChanged: (Map<String, dynamic> config) {
@@ -117,11 +120,20 @@ class EditChannelsNodeType extends NodeType {
       return;
     }
 
+    final List<String> inputLabels = _channelLabelsForSeries(configSeries);
+    final Map<String, dynamic> ownConfig = bindConfigToChannelLabels(
+      configForDataset(params, dataset.id),
+      inputLabels,
+    );
+    final String sourceDatasetId =
+        params['channelEditSourceDatasetId']?.toString() ?? dataset.id;
+    if (dataset.id == sourceDatasetId || hasMeaningfulChanges(ownConfig)) {
+      setConfigForDataset(params, dataset.id, ownConfig);
+    }
     final Map<String, dynamic> config = bindConfigToChannelLabels(
       executionConfigForDataset(params, dataset.id),
-      _channelLabelsForSeries(configSeries),
+      inputLabels,
     );
-    setConfigForDataset(params, dataset.id, config);
     if (!hasMeaningfulChanges(config)) {
       return;
     }
@@ -338,7 +350,84 @@ class EditChannelsNodeType extends NodeType {
       edits[entry.key] = edit;
     }
     normalized['edits'] = edits;
+    final List<String> sourceChannelLabels =
+        (normalized['sourceChannelLabels'] as List<dynamic>? ??
+                const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toList(growable: false);
+    if (sourceChannelLabels.isEmpty) {
+      normalized['sourceChannelLabels'] = List<String>.from(channelLabels);
+    }
     return normalized;
+  }
+
+  static List<String> channelLabelsForEditor(
+    Map<String, dynamic> config,
+    List<String> currentLabels,
+  ) {
+    final Map<String, dynamic> normalized = _normalizeDatasetConfig(config);
+    final List<String> stored =
+        (normalized['sourceChannelLabels'] as List<dynamic>? ??
+                const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .where((String value) => value.trim().isNotEmpty)
+            .toList(growable: false);
+    if (stored.isNotEmpty) {
+      return stored;
+    }
+
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      normalized['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    final Map<int, String> fixedLabels = <int, String>{};
+    final Set<String> editedOutputLabels = <String>{};
+    for (final MapEntry<String, dynamic> entry in edits.entries) {
+      final int? index = int.tryParse(entry.key);
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      final String sourceLabel = (edit['sourceLabel'] ?? '').toString().trim();
+      if (index != null && index >= 0 && sourceLabel.isNotEmpty) {
+        fixedLabels[index] = sourceLabel;
+      }
+      final String rename = (edit['rename'] ?? '').toString().trim();
+      if (rename.isNotEmpty) editedOutputLabels.add(rename);
+    }
+    if (fixedLabels.isEmpty) {
+      return List<String>.from(currentLabels);
+    }
+
+    final Set<String> derivedLabels = _normalizeNewChannels(
+      normalized['newChannels'] as List<dynamic>? ?? const <dynamic>[],
+    ).map((Map<String, dynamic> row) => (row['name'] ?? '').toString()).toSet();
+    final Set<String> fixedNames = fixedLabels.values.toSet();
+    final List<String> remaining = currentLabels
+        .where(
+          (String label) =>
+              !fixedNames.contains(label) &&
+              !editedOutputLabels.contains(label) &&
+              !derivedLabels.contains(label),
+        )
+        .toList(growable: true);
+    final int missingDeletedLabels = edits.values.where((dynamic rawEdit) {
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        rawEdit as Map? ?? const <String, dynamic>{},
+      );
+      final String sourceLabel = (edit['sourceLabel'] ?? '').toString().trim();
+      return edit['remove'] == true &&
+          (edit['removeMode'] ?? 'delete').toString() == 'delete' &&
+          sourceLabel.isNotEmpty &&
+          !currentLabels.contains(sourceLabel);
+    }).length;
+    final int length = math.max(
+      currentLabels.length + missingDeletedLabels,
+      fixedLabels.keys.reduce(math.max) + 1,
+    );
+    return List<String>.generate(length, (int index) {
+      final String? fixed = fixedLabels[index];
+      if (fixed != null) return fixed;
+      return remaining.isNotEmpty ? remaining.removeAt(0) : 'Ch ${index + 1}';
+    });
   }
 
   static bool hasMeaningfulChanges(Map<String, dynamic> config) {
@@ -664,6 +753,10 @@ class EditChannelsNodeType extends NodeType {
         (map['coordinateImportMode'] ?? coordinateImportNone).toString();
     final String rereferenceMode = (map['rereferenceMode'] ?? rereferenceNone)
         .toString();
+    final List<String> sourceChannelLabels =
+        (map['sourceChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toList(growable: false);
 
     return <String, dynamic>{
       'edits': edits.map<String, dynamic>(
@@ -689,6 +782,7 @@ class EditChannelsNodeType extends NodeType {
       ),
       'newChannels': newChannels,
       'visibleChannelIndices': visibleChannelIndices,
+      'sourceChannelLabels': sourceChannelLabels,
       'coordinateImportMode': coordinateImportMode,
       'rereferenceMode': rereferenceMode,
     };
@@ -857,7 +951,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     _horizontalController = ScrollController();
     _verticalController = ScrollController();
     _config = EditChannelsNodeType._normalizeDatasetConfig(widget.config);
-    _ensureVisibleChannelIndices();
+    _ensureSourceChannelLabels();
     _syncControllers();
   }
 
@@ -865,7 +959,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
   void didUpdateWidget(covariant ChannelEditConfigEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     _config = EditChannelsNodeType._normalizeDatasetConfig(widget.config);
-    _ensureVisibleChannelIndices();
+    _ensureSourceChannelLabels();
     _syncControllers();
   }
 
@@ -901,54 +995,39 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       (_config['rereferenceMode'] ?? EditChannelsNodeType.rereferenceNone)
           .toString();
 
-  List<int> get _visibleChannelIndices {
-    final List<int> configured =
-        EditChannelsNodeType._intList(
-              _config['visibleChannelIndices'] as List<dynamic>? ??
-                  const <dynamic>[],
-            )
-            .where(
-              (int index) => index >= 0 && index < widget.channelLabels.length,
-            )
-            .toList(growable: false);
-    if (configured.isNotEmpty) {
-      return configured;
+  List<int> get _alteredChannelIndices {
+    final Set<int> altered = <int>{...?widget.initialVisibleChannelIndices};
+    for (final MapEntry<String, dynamic> entry in _edits.entries) {
+      final int? index = int.tryParse(entry.key);
+      if (index == null || index < 0 || index >= widget.channelLabels.length) {
+        continue;
+      }
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      if ((edit['rename'] ?? '').toString().trim().isNotEmpty ||
+          edit['remove'] == true ||
+          (edit['poolName'] ?? '').toString().trim().isNotEmpty) {
+        altered.add(index);
+      }
     }
-    if (widget.initialVisibleChannelIndices != null &&
-        widget.initialVisibleChannelIndices!.isNotEmpty) {
-      return widget.initialVisibleChannelIndices!
-          .where(
-            (int index) => index >= 0 && index < widget.channelLabels.length,
-          )
-          .toList(growable: false);
-    }
-    return List<int>.generate(
-      widget.channelLabels.length,
-      (int index) => index,
-    );
+    return altered
+        .where((int index) => index >= 0 && index < widget.channelLabels.length)
+        .toList(growable: false)
+      ..sort();
   }
 
   List<int> get _remainingChannelIndices =>
       List<int>.generate(widget.channelLabels.length, (int index) => index)
-          .where((int index) => !_visibleChannelIndices.contains(index))
+          .where((int index) => !_alteredChannelIndices.contains(index))
           .toList(growable: false);
 
-  void _ensureVisibleChannelIndices() {
-    final List<int> configured = EditChannelsNodeType._intList(
-      _config['visibleChannelIndices'] as List<dynamic>? ?? const <dynamic>[],
-    );
-    if (configured.isNotEmpty) {
-      _config['visibleChannelIndices'] = <int>{
-        ...configured,
-        ...?widget.initialVisibleChannelIndices,
-      }.toList()..sort();
-      return;
+  void _ensureSourceChannelLabels() {
+    final List<dynamic> stored =
+        _config['sourceChannelLabels'] as List<dynamic>? ?? const <dynamic>[];
+    if (stored.isEmpty) {
+      _config['sourceChannelLabels'] = List<String>.from(widget.channelLabels);
     }
-    _config['visibleChannelIndices'] =
-        widget.initialVisibleChannelIndices != null &&
-            widget.initialVisibleChannelIndices!.isNotEmpty
-        ? widget.initialVisibleChannelIndices!
-        : List<int>.generate(widget.channelLabels.length, (int index) => index);
   }
 
   void _syncControllers() {
@@ -1007,11 +1086,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     widget.onChanged(EditChannelsNodeType._normalizeDatasetConfig(_config));
   }
 
-  void _setVisibleChannelIndices(List<int> indices) {
-    _config['visibleChannelIndices'] = indices.toList(growable: false);
-    _emitConfig();
-  }
-
   void _setCoordinateImportMode(String value) {
     _config['coordinateImportMode'] = value;
     _emitConfig();
@@ -1067,20 +1141,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     }
     _config['newChannels'] = rows;
     _emitConfig();
-  }
-
-  void _promoteOriginalChannelRow(int index) {
-    final List<int> updated = <int>[..._visibleChannelIndices, index]..sort();
-    _setVisibleChannelIndices(updated);
-  }
-
-  void _hideOriginalChannelRow(int index) {
-    final List<int> updated = _visibleChannelIndices
-        .where((int value) => value != index)
-        .toList(growable: false);
-    setState(() {
-      _setVisibleChannelIndices(updated);
-    });
   }
 
   void _addNewChannelRow() {
@@ -1179,7 +1239,27 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                       const SizedBox(height: 12),
                       _buildHeaderRow(),
                       const SizedBox(height: 8),
-                      ..._visibleChannelIndices.map(_buildExistingRow),
+                      Text(
+                        'Altered channels',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (_alteredChannelIndices.isEmpty)
+                        Text(
+                          'No altered channels.',
+                          style: TextStyle(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        )
+                      else
+                        ..._alteredChannelIndices.map(_buildExistingRow),
                       if (_remainingChannelIndices.isNotEmpty) ...<Widget>[
                         const SizedBox(height: 4),
                         Divider(
@@ -1199,11 +1279,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                         ),
                         const SizedBox(height: 8),
                         ..._remainingChannelIndices.map(
-                          (int index) => _buildExistingRow(
-                            index,
-                            promoteOnEdit: true,
-                            showHideButton: false,
-                          ),
+                          (int index) => _buildExistingRow(index),
                         ),
                       ],
                       const SizedBox(height: 10),
@@ -1348,11 +1424,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     );
   }
 
-  Widget _buildExistingRow(
-    int index, {
-    bool promoteOnEdit = false,
-    bool showHideButton = true,
-  }) {
+  Widget _buildExistingRow(int index) {
     final Map<String, dynamic> edit = Map<String, dynamic>.from(
       _edits['$index'] as Map? ?? const <String, dynamic>{},
     );
@@ -1388,9 +1460,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
               hintText: 'Rename',
               onChanged: (String value) {
                 setState(() {
-                  if (promoteOnEdit) {
-                    _promoteOriginalChannelRow(index);
-                  }
                   _updateExistingEdit(index, rename: value);
                 });
               },
@@ -1413,9 +1482,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     onChanged: (bool? value) {
                       setState(() {
-                        if (promoteOnEdit) {
-                          _promoteOriginalChannelRow(index);
-                        }
                         _updateExistingEdit(index, remove: value == true);
                       });
                     },
@@ -1434,9 +1500,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                           return;
                         }
                         setState(() {
-                          if (promoteOnEdit) {
-                            _promoteOriginalChannelRow(index);
-                          }
                           _updateExistingEdit(index, removeMode: value);
                         });
                       },
@@ -1465,9 +1528,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
               onChanged: (String? value) {
                 if (value == null) return;
                 setState(() {
-                  if (promoteOnEdit) {
-                    _promoteOriginalChannelRow(index);
-                  }
                   _updateExistingEdit(index, datasetScope: value);
                 });
               },
@@ -1482,21 +1542,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
             ),
           ),
           const SizedBox(width: 10),
-          SizedBox(
-            width: 40,
-            child: showHideButton
-                ? Tooltip(
-                    message: 'Move to other channels',
-                    child: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      onPressed: _visibleChannelIndices.length > 1
-                          ? () => _hideOriginalChannelRow(index)
-                          : null,
-                      icon: const Icon(Icons.close),
-                    ),
-                  )
-                : null,
-          ),
+          SizedBox(width: 40, child: const SizedBox.shrink()),
         ],
       ),
     );

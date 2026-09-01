@@ -143,12 +143,22 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     }
 
     TimeSeriesData nextSeries = timeSeries;
+    final Map<String, dynamic> ownConfig =
+        EditChannelsNodeType.bindConfigToChannelLabels(
+          EditChannelsNodeType.configForDataset(params, dataset.id),
+          timeSeries.channelLabels,
+        );
+    final String sourceDatasetId =
+        params['channelEditSourceDatasetId']?.toString() ?? dataset.id;
+    if (dataset.id == sourceDatasetId ||
+        EditChannelsNodeType.hasMeaningfulChanges(ownConfig)) {
+      EditChannelsNodeType.setConfigForDataset(params, dataset.id, ownConfig);
+    }
     final Map<String, dynamic> config =
         EditChannelsNodeType.bindConfigToChannelLabels(
           EditChannelsNodeType.executionConfigForDataset(params, dataset.id),
           timeSeries.channelLabels,
         );
-    EditChannelsNodeType.setConfigForDataset(params, dataset.id, config);
     final bool hasChannelChanges = EditChannelsNodeType.hasMeaningfulChanges(
       config,
     );
