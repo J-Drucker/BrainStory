@@ -5591,30 +5591,7 @@ class CanvasLogic {
       return 'Could not resolve the source branch for this visualizer.';
     }
 
-    List<Map<String, dynamic>>? markerEditsValue = markerEdits;
-    if (interactiveArtifactParams != null) {
-      final TimeSeriesData? timeSeries = dataset.timeSeries;
-      if (timeSeries != null) {
-        markerEditsValue =
-            InteractiveArtifactDetectionNodeType.acceptedMarkersForDataset(
-                  dataset.id,
-                  interactiveArtifactParams,
-                  baseMarkers: markerEdits == null
-                      ? timeSeries.markers
-                      : AddRemoveMarkersNodeType.markersForDataset(
-                          dataset.id,
-                          markerEdits,
-                        ),
-                )
-                .map((TimeMarker marker) {
-                  return <String, dynamic>{
-                    ...marker.toJson(),
-                    'datasetId': dataset.id,
-                  };
-                })
-                .toList(growable: false);
-      }
-    }
+    final List<Map<String, dynamic>>? markerEditsValue = markerEdits;
 
     final bool hasMarkerEdits = markerEditsValue != null;
     final bool hasChannelEdits =
@@ -5634,6 +5611,7 @@ class CanvasLogic {
     NodeModel? lastCreatedNode;
     final List<String> createdNodeTitles = <String>[];
     final Set<String> createdNodeIds = <String>{};
+    bool updatedExistingInteractiveNode = false;
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
     if (hasChannelEdits && hasMarkerEdits) {
@@ -5696,6 +5674,49 @@ class CanvasLogic {
       createdNodeTitles.add(lastCreatedNode.title);
       createdNodeIds.add(lastCreatedNode.id);
     }
+    if (hasInteractiveEdits) {
+      final Map<String, dynamic> currentDatasetParams =
+          Map<String, dynamic>.from(interactiveArtifactParams);
+      NodeModel? artifactNode =
+          anchorNode.type is InteractiveArtifactDetectionNodeType
+          ? anchorNode
+          : null;
+      updatedExistingInteractiveNode = artifactNode != null;
+      if (artifactNode == null) {
+        artifactNode = _spawnViewerEditNode(
+          sourceNode: anchorNode,
+          insertBeforeNode: insertBeforeNode,
+          type: InteractiveArtifactDetectionNodeType(),
+          datasetId: dataset.id,
+          params: <String, dynamic>{'createdByInteractiveArtifactViewer': true},
+        );
+        createdNodeTitles.add(artifactNode.title);
+        createdNodeIds.add(artifactNode.id);
+      } else {
+        createdNodeTitles.add(artifactNode.title);
+      }
+      _mergeInteractiveArtifactParamsForDataset(
+        artifactNode.params,
+        currentDatasetParams,
+        dataset.id,
+      );
+      final Set<String> selectedDatasetIds =
+          (artifactNode.params['selectedDatasetIds'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toSet()
+            ..add(dataset.id);
+      artifactNode.params['selectedDatasetIds'] = selectedDatasetIds.toList(
+        growable: false,
+      );
+      final DatasetState currentState =
+          artifactNode.datasetStates[dataset.id] ?? DatasetState.ready;
+      artifactNode.datasetStates[dataset.id] = currentState == DatasetState.done
+          ? DatasetState.stale
+          : DatasetState.ready;
+      lastCreatedNode = artifactNode;
+      anchorNode = artifactNode;
+    }
 
     if (lastCreatedNode == null) {
       return 'No viewer edits were persisted.';
@@ -5717,6 +5738,9 @@ class CanvasLogic {
     _clearPendingConnection();
 
     if (!runAfterSave) {
+      if (updatedExistingInteractiveNode && createdNodeTitles.length == 1) {
+        return 'Updated ${createdNodeTitles.single}.';
+      }
       return _viewerEditSaveMessage(
         createdNodeTitles: createdNodeTitles,
         ranNodes: false,
@@ -5740,6 +5764,38 @@ class CanvasLogic {
     } catch (error) {
       finalDetail = 'Save and run failed: $error';
       rethrow;
+    }
+  }
+
+  void _mergeInteractiveArtifactParamsForDataset(
+    Map<String, dynamic> destination,
+    Map<String, dynamic> currentDatasetParams,
+    String datasetId,
+  ) {
+    destination['interactiveArtifactDetection'] = true;
+    destination['artifactThreshold'] =
+        currentDatasetParams['artifactThreshold'] ??
+        destination['artifactThreshold'] ??
+        0.78;
+    for (final String key in <String>[
+      'artifactExemplars',
+      'artifactCandidates',
+      'artifactTemplates',
+    ]) {
+      final List<Map<String, dynamic>> merged =
+          (destination[key] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((Map item) => Map<String, dynamic>.from(item))
+              .where(
+                (Map<String, dynamic> item) => item['datasetId'] != datasetId,
+              )
+              .toList(growable: true);
+      merged.addAll(
+        (currentDatasetParams[key] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((Map item) => Map<String, dynamic>.from(item)),
+      );
+      destination[key] = merged;
     }
   }
 

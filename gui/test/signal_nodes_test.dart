@@ -1842,7 +1842,7 @@ Mk2=Response,Response,4,1,0
   });
 
   test(
-    'persistViewerEdits converts interactive artifact drafts to edit markers',
+    'persistViewerEdits keeps interactive drafts in a detection node',
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -1900,38 +1900,110 @@ Mk2=Response,Response,4,1,0
         },
       );
 
-      expect(message, 'Created Edit Markers.');
+      expect(message, 'Created Interactive Artifact Detection.');
       expect(
         logic.nodes.map((NodeModel node) => node.title),
-        isNot(contains('Interactive Artifact Detection')),
+        contains('Interactive Artifact Detection'),
       );
 
-      final NodeModel editNode = logic.nodes.firstWhere(
-        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      final NodeModel detectionNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is InteractiveArtifactDetectionNodeType,
       );
-      expect(editNode.params['markerEditScope'], 'selected');
-      expect(editNode.params['markerEditDatasetIds'], <String>[dataset.id]);
-      final List<Map<String, dynamic>> markers =
-          (editNode.params['markers'] as List<dynamic>)
-              .whereType<Map<String, dynamic>>()
-              .toList(growable: false);
+      expect(detectionNode.params['selectedDatasetIds'], contains(dataset.id));
+      await detectionNode.type.run(dataset, detectionNode.params);
+      final List<TimeMarker> markers = dataset.timeSeries!.markers;
 
       expect(
-        markers.map((Map<String, dynamic> marker) => marker['label']),
+        markers.map((TimeMarker marker) => marker.label),
         containsAll(<String>['Existing', 'blink', 'motion']),
       );
       expect(
-        markers.where((Map<String, dynamic> marker) {
-          final Map<String, dynamic> attributes = Map<String, dynamic>.from(
-            marker['attributes'] as Map,
-          );
-          return attributes['brainstory.artifactStatus'] ==
+        markers.where((TimeMarker marker) {
+          return marker.attributes['brainstory.artifactStatus'] ==
               InteractiveArtifactDetectionNodeType.pendingStatus;
         }),
         isEmpty,
       );
     },
   );
+
+  test('interactive detection stores multiple files in one node', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset first = Dataset('dataset-1', label: 'First')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.filled(64, 0.0),
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    final Dataset second = Dataset('dataset-2', label: 'Second')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.filled(64, 0.0),
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    logic.datasets[first.id] = first;
+    logic.datasets[second.id] = second;
+    logic.addNode(ImportNodeType());
+    final NodeModel source = logic.nodes.single;
+    source.datasetStates[first.id] = DatasetState.done;
+    source.datasetStates[second.id] = DatasetState.done;
+
+    Map<String, dynamic> paramsFor(Dataset dataset, String exemplarId) =>
+        <String, dynamic>{
+          'artifactExemplars': <Map<String, dynamic>>[
+            ArtifactExemplarData(
+              id: exemplarId,
+              datasetId: dataset.id,
+              label: 'blink',
+              onsetMicros: 1000000,
+              durationMicros: 50000,
+            ).toJson(),
+          ],
+          'artifactCandidates': <Map<String, dynamic>>[],
+          'artifactTemplates': <Map<String, dynamic>>[],
+        };
+
+    await logic.persistViewerEdits(
+      viewerNodeId: source.id,
+      dataset: first,
+      interactiveArtifactParams: paramsFor(first, 'first-blink'),
+    );
+    final NodeModel detectionNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is InteractiveArtifactDetectionNodeType,
+    );
+    final String updateMessage = await logic.persistViewerEdits(
+      viewerNodeId: detectionNode.id,
+      dataset: second,
+      interactiveArtifactParams: paramsFor(second, 'second-blink'),
+    );
+
+    expect(updateMessage, 'Updated Interactive Artifact Detection.');
+    expect(
+      logic.nodes.where(
+        (NodeModel node) => node.type is InteractiveArtifactDetectionNodeType,
+      ),
+      hasLength(1),
+    );
+    expect(
+      InteractiveArtifactDetectionNodeType.exemplarsForDataset(
+        first.id,
+        detectionNode.params,
+      ),
+      hasLength(1),
+    );
+    expect(
+      InteractiveArtifactDetectionNodeType.exemplarsForDataset(
+        second.id,
+        detectionNode.params,
+      ),
+      hasLength(1),
+    );
+    await detectionNode.type.run(second, detectionNode.params);
+    expect(
+      second.timeSeries!.markers.map((TimeMarker marker) => marker.label),
+      contains('blink'),
+    );
+  });
 
   test(
     'persistViewerEdits creates one combined channel and marker edit node',

@@ -2953,8 +2953,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   String _savedChangesTitle(ViewerDraftSaveRequest request) {
     final List<String> nodes = <String>[
       if (request.hasChannelEdits) '"Edit Channels"',
-      if (request.hasMarkerEdits || request.hasInteractiveArtifactEdits)
-        '"Edit Markers"',
+      if (request.hasMarkerEdits) '"Edit Markers"',
+      if (request.hasInteractiveArtifactEdits)
+        '"Interactive Artifact Detection"',
     ];
     final String nodeText = nodes.length == 1
         ? '${nodes.single} node'
@@ -3094,7 +3095,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       },
     ).length;
     final int templateCount = _artifactTemplateSummaries().length;
-    return '$exemplarCount exemplar(s), $pendingCount pending candidate(s), $acceptedCount accepted match(es), and $templateCount template(s) will be converted into marker parameters in an Edit Markers node for this dataset.';
+    return '$exemplarCount exemplar(s), $pendingCount pending candidate(s), $acceptedCount accepted match(es), and $templateCount template(s) will be saved for this dataset. Accepted detections create new markers when the Interactive Artifact Detection node runs.';
   }
 
   String _currentMode() {
