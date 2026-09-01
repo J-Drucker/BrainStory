@@ -4131,6 +4131,12 @@ class CanvasLogic {
             );
       for (final NodeModel parent in parents) {
         final Set<String> datasetIds = _datasetsForNode(parent);
+        if (parent.type is ICANodeType) {
+          datasetIds.retainWhere(
+            (String datasetId) =>
+                parent.datasetStates[datasetId] == DatasetState.done,
+          );
+        }
         final List<Dataset> matchingDatasets =
             datasets.values
                 .where((Dataset dataset) => datasetIds.contains(dataset.id))
@@ -5797,6 +5803,12 @@ class CanvasLogic {
           'icaSourceNodeId': sourceNode.id,
         },
       );
+      rejectionNode.params['selectedDatasetIds'] = _datasetsForNode(sourceNode)
+          .where(
+            (String datasetId) =>
+                sourceNode.datasetStates[datasetId] == DatasetState.done,
+          )
+          .toList(growable: false);
       rejectionNode.position = _viewerEditSpawnPosition(
         sourceNode: sourceNode,
         insertBeforeNode: null,
@@ -6969,6 +6981,7 @@ class CanvasLogic {
     final Dataset view = _datasetShell(dataset);
     bool appliedAnySnapshot = false;
     bool appliedTransform = false;
+    bool appliedSignal = false;
     for (final Map<String, dynamic> connection in connections.where(
       (Map<String, dynamic> value) => value['toNode'] == node.id,
     )) {
@@ -7007,6 +7020,7 @@ class CanvasLogic {
               },
             ).applyToDataset(view);
             appliedAnySnapshot = true;
+            appliedSignal = true;
           }
           break;
         case PortType.matrixTransformation:
@@ -7053,6 +7067,25 @@ class CanvasLogic {
           ).applyToDataset(view);
           appliedAnySnapshot = true;
         }
+      }
+    }
+    if (!appliedSignal) {
+      final String icaSourceNodeId =
+          node.params['icaSourceNodeId']?.toString() ?? '';
+      final NodeModel? icaSourceNode = _findNode(icaSourceNodeId);
+      final DatasetArtifactSnapshot? snapshot = icaSourceNode == null
+          ? null
+          : await _loadSnapshotForNodeDataset(icaSourceNode.id, dataset.id);
+      final TimeSeriesData? activations = snapshot?.timeSeries;
+      final MatrixTransformationData? transform =
+          view.matrixTransformation ?? snapshot?.matrixTransformation;
+      if (activations != null &&
+          transform != null &&
+          transform.matchesComponentActivations(activations) &&
+          transform.sourceChannelLabels.length ==
+              transform.originalChannelLabels.length) {
+        view.timeSeries = activations;
+        appliedAnySnapshot = true;
       }
     }
     if (appliedAnySnapshot) {

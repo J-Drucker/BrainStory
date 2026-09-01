@@ -2,8 +2,12 @@ import 'dart:math' as math;
 
 import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
+import 'package:brainstory_gui/model/dataset_state.dart';
+import 'package:brainstory_gui/model/node.dart';
+import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/node_registry.dart';
+import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -203,6 +207,54 @@ void main() {
     );
   });
 
+  test(
+    'ICA graph execution produces a distinct result for every dataset',
+    () async {
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset first = _scopedIcaDataset(id: 'ica-a');
+      final Dataset second = _scopedIcaDataset(id: 'ica-b');
+      logic.datasets[first.id] = first;
+      logic.datasets[second.id] = second;
+      logic.addNode(ImportNodeType());
+      logic.addNode(ICANodeType());
+      final NodeModel input = logic.nodes[0];
+      final NodeModel ica = logic.nodes[1];
+      for (final Dataset dataset in <Dataset>[first, second]) {
+        input.datasetStates[dataset.id] = DatasetState.done;
+        ica.datasetStates[dataset.id] = DatasetState.ready;
+      }
+      logic.connections.add(<String, dynamic>{
+        'fromNode': input.id,
+        'fromPort': 0,
+        'toNode': ica.id,
+        'toPort': 0,
+      });
+
+      await logic.runThisStep(ica.id);
+
+      expect(ica.datasetStates[first.id], DatasetState.done);
+      expect(ica.datasetStates[second.id], DatasetState.done);
+      final Dataset firstView = await logic.materializedDatasetViewForNode(
+        ica.id,
+        first,
+      );
+      final Dataset secondView = await logic.materializedDatasetViewForNode(
+        ica.id,
+        second,
+      );
+      expect(firstView.matrixTransformation, isNotNull);
+      expect(secondView.matrixTransformation, isNotNull);
+      expect(
+        firstView.timeSeries!.channelLabels,
+        everyElement(startsWith('IC ')),
+      );
+      expect(
+        secondView.timeSeries!.channelLabels,
+        everyElement(startsWith('IC ')),
+      );
+    },
+  );
+
   test('ICA is visible in the node registry', () {
     final NodeRegistryEntry entry = NodeRegistry.entries.firstWhere(
       (NodeRegistryEntry candidate) => candidate.create() is ICANodeType,
@@ -260,10 +312,13 @@ void main() {
   });
 }
 
-Dataset _scopedIcaDataset({List<TimeMarker> markers = const <TimeMarker>[]}) {
+Dataset _scopedIcaDataset({
+  String id = 'scoped-ica',
+  List<TimeMarker> markers = const <TimeMarker>[],
+}) {
   const int sampleCount = 2048;
   const double sampleRate = 256.0;
-  final Dataset dataset = Dataset('scoped-ica');
+  final Dataset dataset = Dataset(id);
   dataset.timeSeries = TimeSeriesData(
     channelSamples: <List<double>>[
       List<double>.generate(

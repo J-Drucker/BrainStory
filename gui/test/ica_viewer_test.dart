@@ -5,6 +5,7 @@ import 'package:brainstory_gui/model/node.dart';
 import 'package:brainstory_gui/nodes/ica_component_rejection_node.dart';
 import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
+import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/ica_viewer.dart';
 import 'package:flutter/material.dart';
@@ -221,6 +222,9 @@ void main() {
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = _icaDataset();
+      final Dataset pendingDataset = _icaDataset(id: 'pending-ica')
+        ..label = 'Pending ICA';
+      logic.datasets[pendingDataset.id] = pendingDataset;
       logic.datasets[dataset.id] = dataset;
       logic.addNode(ImportNodeType());
       logic.addNode(ICANodeType());
@@ -228,6 +232,8 @@ void main() {
       final NodeModel source = logic.nodes[1];
       input.datasetStates[dataset.id] = DatasetState.done;
       source.datasetStates[dataset.id] = DatasetState.done;
+      input.datasetStates[pendingDataset.id] = DatasetState.done;
+      source.datasetStates[pendingDataset.id] = DatasetState.ready;
       logic.connections.add(<String, dynamic>{
         'fromNode': input.id,
         'fromPort': 0,
@@ -246,6 +252,7 @@ void main() {
       );
       expect(created, 'Created Apply ICA.');
       expect(rejection.params['excludedComponents'], <int>[0]);
+      expect(rejection.params['selectedDatasetIds'], <String>[dataset.id]);
       expect(
         logic.connections,
         contains(
@@ -298,6 +305,42 @@ void main() {
       'ica',
     );
   });
+
+  test('ICA viewer only offers datasets with completed ICA output', () {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset complete = _icaDataset(id: 'complete');
+    final Dataset pending = _icaDataset(id: 'pending');
+    logic.datasets[complete.id] = complete;
+    logic.datasets[pending.id] = pending;
+    logic.addNode(ImportNodeType());
+    logic.addNode(ICANodeType());
+    logic.addNode(VisualizationNodeType());
+    final NodeModel input = logic.nodes[0];
+    final NodeModel ica = logic.nodes[1];
+    final NodeModel viewer = logic.nodes[2];
+    input.datasetStates[complete.id] = DatasetState.done;
+    input.datasetStates[pending.id] = DatasetState.done;
+    ica.datasetStates[complete.id] = DatasetState.done;
+    ica.datasetStates[pending.id] = DatasetState.ready;
+    logic.connections.add(<String, dynamic>{
+      'fromNode': input.id,
+      'fromPort': 0,
+      'toNode': ica.id,
+      'toPort': 0,
+    });
+    logic.connections.add(<String, dynamic>{
+      'fromNode': ica.id,
+      'fromPort': 0,
+      'toNode': viewer.id,
+      'toPort': 0,
+    });
+
+    final List<VisualizationSourceRef> refs = logic
+        .visualizationSourceRefsForNode(viewer.id);
+    expect(refs.map((VisualizationSourceRef ref) => ref.datasetId), <String>[
+      complete.id,
+    ]);
+  });
 }
 
 Future<void> _pumpViewer(
@@ -323,8 +366,12 @@ Future<void> _pumpViewer(
   await tester.pump();
 }
 
-Dataset _icaDataset({bool includeCoordinates = true, bool converged = true}) {
-  final Dataset dataset = Dataset('ica-dataset', label: 'ICA example');
+Dataset _icaDataset({
+  String id = 'ica-dataset',
+  bool includeCoordinates = true,
+  bool converged = true,
+}) {
+  final Dataset dataset = Dataset(id, label: 'ICA example');
   const List<String> sensorLabels = <String>['Fz', 'Cz', 'Pz'];
   const List<String> componentLabels = <String>['IC 1', 'IC 2', 'IC 3'];
   const Map<String, ChannelCoordinate> coordinates =
