@@ -4681,6 +4681,9 @@ class CanvasLogic {
           continue;
         }
         for (final NodeModel parent in _dependencyParentsForNode(node)) {
+          if (!_datasetsForNode(parent).contains(datasetId)) {
+            continue;
+          }
           if (nodeIds.contains(parent.id)) {
             continue;
           }
@@ -4904,7 +4907,14 @@ class CanvasLogic {
   }
 
   Set<String> _datasetsForNode(NodeModel node) {
+    return _datasetsForNodeInternal(node, <String>{});
+  }
+
+  Set<String> _datasetsForNodeInternal(NodeModel node, Set<String> visiting) {
     if (datasets.isEmpty) {
+      return <String>{};
+    }
+    if (!visiting.add(node.id)) {
       return <String>{};
     }
 
@@ -4915,11 +4925,8 @@ class CanvasLogic {
       return _selectedDatasetIdsForNode(node, availableDatasetIds);
     }
 
-    final Set<String> upstreamImports = <String>{};
-    final Set<String> visited = <String>{};
-    _collectUpstreamImports(node.id, upstreamImports, visited);
-
-    if (upstreamImports.isEmpty) {
+    final List<NodeModel> parents = _immediateParents(node.id);
+    if (parents.isEmpty) {
       if (node.type is ImpedancesNodeType) {
         return _selectedDatasetIdsForNode(
           node,
@@ -4930,14 +4937,10 @@ class CanvasLogic {
     }
 
     final Set<String> datasetIds = <String>{};
-    for (final String importNodeId in upstreamImports) {
-      final NodeModel? importNode = _findNode(importNodeId);
-      if (importNode == null) continue;
-      final Set<String> importDatasetIds = _selectedDatasetIdsForNode(
-        importNode,
-        datasets.values.map((Dataset dataset) => dataset.id).toSet(),
+    for (final NodeModel parent in parents) {
+      datasetIds.addAll(
+        _datasetsForNodeInternal(parent, Set<String>.from(visiting)),
       );
-      datasetIds.addAll(importDatasetIds);
     }
     final Set<String> selected = _selectedDatasetIdsForNode(node, datasetIds);
     final Set<String> required = _datasetIdsRequiredByEditScopes(
@@ -5046,16 +5049,11 @@ class CanvasLogic {
       return <String>{};
     }
 
-    return datasets.values
-        .where((Dataset dataset) {
-          return parents.every(
-            (NodeModel parent) =>
-                (parent.datasetStates[dataset.id] ?? DatasetState.notReady) !=
-                DatasetState.notReady,
-          );
-        })
-        .map((Dataset dataset) => dataset.id)
-        .toSet();
+    final Set<String> available = <String>{};
+    for (final NodeModel parent in parents) {
+      available.addAll(_datasetsForNode(parent));
+    }
+    return available;
   }
 
   Map<String, DatasetState> _processedDatasetStatesForNode(NodeModel node) {
@@ -5196,15 +5194,15 @@ class CanvasLogic {
   }
 
   List<NodeModel> _immediateParents(String nodeId) {
-    final List<NodeModel> parents = <NodeModel>[];
+    final Map<String, NodeModel> parents = <String, NodeModel>{};
     for (final Map<String, dynamic> connection in connections) {
       if (connection['toNode'] != nodeId) continue;
       final NodeModel? parent = _findNode(connection['fromNode'] as String);
       if (parent != null) {
-        parents.add(parent);
+        parents[parent.id] = parent;
       }
     }
-    return parents;
+    return parents.values.toList(growable: false);
   }
 
   List<NodeModel> _immediateChildren(String nodeId) {
@@ -5301,30 +5299,6 @@ class CanvasLogic {
     }
 
     return result;
-  }
-
-  void _collectUpstreamImports(
-    String nodeId,
-    Set<String> imports,
-    Set<String> visited,
-  ) {
-    if (!visited.add(nodeId)) {
-      return;
-    }
-
-    final NodeModel? node = _findNode(nodeId);
-    if (node?.type is ImportNodeType) {
-      imports.add(nodeId);
-    }
-
-    for (final Map<String, dynamic> connection in connections) {
-      if (connection['toNode'] != nodeId) continue;
-      _collectUpstreamImports(
-        connection['fromNode'] as String,
-        imports,
-        visited,
-      );
-    }
   }
 
   void _markAllNodes(String datasetId, DatasetState state) {
@@ -6081,12 +6055,12 @@ class CanvasLogic {
       dataset: dataset,
       sourceArtifactIds: sourceArtifactIds,
     );
-    final Set<BrainStoryArtifactKind> outputKinds =
-        _artifactKindsForNodeOutputs(node, dataset);
+    final Set<BrainStoryArtifactKind> snapshotKinds =
+        _artifactKindsPresentInDataset(dataset);
     final DatasetArtifactSnapshot snapshot =
         DatasetArtifactSnapshot.fromDataset(
           dataset,
-          includedKinds: outputKinds,
+          includedKinds: snapshotKinds,
         );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
@@ -6179,12 +6153,12 @@ class CanvasLogic {
       dataset: dataset,
       sourceArtifactIds: sourceArtifactIds,
     );
-    final Set<BrainStoryArtifactKind> outputKinds =
-        _artifactKindsForNodeOutputs(node, dataset);
+    final Set<BrainStoryArtifactKind> snapshotKinds =
+        _artifactKindsPresentInDataset(dataset);
     final DatasetArtifactSnapshot snapshot =
         DatasetArtifactSnapshot.fromDataset(
           dataset,
-          includedKinds: outputKinds,
+          includedKinds: snapshotKinds,
         );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
@@ -6396,6 +6370,26 @@ class CanvasLogic {
       }
     }
     return kinds;
+  }
+
+  Set<BrainStoryArtifactKind> _artifactKindsPresentInDataset(Dataset dataset) {
+    return <BrainStoryArtifactKind>{
+      if (dataset.timeSeries != null) ...<BrainStoryArtifactKind>{
+        BrainStoryArtifactKind.timeSeries,
+        BrainStoryArtifactKind.markers,
+      },
+      if (dataset.segmentedTimeSeries != null)
+        BrainStoryArtifactKind.segmentedTimeSeries,
+      if (dataset.spectrum != null) BrainStoryArtifactKind.spectrum,
+      if (dataset.fooofResult != null) BrainStoryArtifactKind.fooofResult,
+      if (dataset.featureTable != null) BrainStoryArtifactKind.featureTable,
+      if (dataset.bridgeDetection != null)
+        BrainStoryArtifactKind.bridgeDetection,
+      if (dataset.timeFrequency != null) BrainStoryArtifactKind.timeFrequency,
+      if (dataset.matrixTransformation != null)
+        BrainStoryArtifactKind.matrixTransformation,
+      ...dataset.artifactIdentities.keys,
+    };
   }
 
   Set<BrainStoryArtifactKind> _artifactKindsForSnapshotOutputs(
@@ -7005,11 +6999,12 @@ class CanvasLogic {
       return;
     }
 
-    final Set<String> upstreamIds = _collectAncestorsInclusive(node.id)
-      ..remove(node.id);
     final Dataset view = _datasetShell(dataset);
     bool appliedAnySnapshot = false;
-    for (final NodeModel upstreamNode in _orderedNodes(upstreamIds)) {
+    for (final NodeModel upstreamNode in _immediateParents(node.id)) {
+      if (!_datasetsForNode(upstreamNode).contains(dataset.id)) {
+        continue;
+      }
       if (upstreamNode.datasetStates[dataset.id] != DatasetState.done) {
         continue;
       }
@@ -7245,15 +7240,18 @@ class CanvasLogic {
               .toList(growable: false);
       return DatasetArtifactSnapshot(
         datasetLabel: snapshot.datasetLabel,
+        timeSeries: snapshot.timeSeries,
         markers: markers,
         artifactIdentities:
             Map<BrainStoryArtifactKind, ArtifactIdentity>.fromEntries(
               snapshot.artifactIdentities.entries.where(
                 (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
+                    entry.key == BrainStoryArtifactKind.timeSeries ||
                     entry.key == BrainStoryArtifactKind.markers,
               ),
             ),
         includedKinds: const <BrainStoryArtifactKind>{
+          BrainStoryArtifactKind.timeSeries,
           BrainStoryArtifactKind.markers,
         },
       );

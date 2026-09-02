@@ -692,6 +692,95 @@ void main() {
     },
   );
 
+  test('daughter nodes only inherit datasets processed by direct parents', () {
+    final CanvasLogic logic = CanvasLogic();
+    for (final String id in <String>['dataset-a', 'dataset-b']) {
+      logic.datasets[id] = Dataset(id, label: '$id.set')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0, -1],
+          sampleRate: 100,
+        );
+    }
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(VisualizationNodeType());
+    final NodeModel input = logic.nodes[0];
+    final NodeModel parent = logic.nodes[1];
+    final NodeModel daughter = logic.nodes[2];
+    parent.params['selectedDatasetIds'] = <String>['dataset-a'];
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': input.id,
+        'fromPort': 0,
+        'toNode': parent.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': parent.id,
+        'fromPort': 0,
+        'toNode': daughter.id,
+        'toPort': 0,
+      },
+    ]);
+
+    expect(
+      logic
+          .visualizationSourceRefsForNode(daughter.id)
+          .map((VisualizationSourceRef ref) => ref.datasetId),
+      <String>['dataset-a'],
+    );
+  });
+
+  test('a node inherits the union of datasets from its direct parents', () {
+    final CanvasLogic logic = CanvasLogic();
+    for (final String id in <String>['dataset-a', 'dataset-b']) {
+      logic.datasets[id] = Dataset(id, label: '$id.set')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0, -1],
+          sampleRate: 100,
+        );
+    }
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(VisualizationNodeType());
+    final NodeModel input = logic.nodes[0];
+    final NodeModel firstParent = logic.nodes[1];
+    final NodeModel secondParent = logic.nodes[2];
+    final NodeModel daughter = logic.nodes[3];
+    firstParent.params['selectedDatasetIds'] = <String>['dataset-a'];
+    secondParent.params['selectedDatasetIds'] = <String>['dataset-b'];
+    logic.connections.addAll(<Map<String, dynamic>>[
+      for (final NodeModel parent in <NodeModel>[firstParent, secondParent])
+        <String, dynamic>{
+          'fromNode': input.id,
+          'fromPort': 0,
+          'toNode': parent.id,
+          'toPort': 0,
+        },
+      <String, dynamic>{
+        'fromNode': firstParent.id,
+        'fromPort': 0,
+        'toNode': daughter.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': secondParent.id,
+        'fromPort': 0,
+        'toNode': daughter.id,
+        'toPort': 0,
+      },
+    ]);
+
+    expect(
+      logic
+          .sourceDatasetsForVisualizationNode(daughter.id)
+          .map((Dataset dataset) => dataset.id)
+          .toSet(),
+      <String>{'dataset-a', 'dataset-b'},
+    );
+  });
+
   testWidgets('visualization surface starts with no datasets selected', (
     WidgetTester tester,
   ) async {
