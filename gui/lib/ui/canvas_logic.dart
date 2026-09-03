@@ -5558,6 +5558,7 @@ class CanvasLogic {
     Map<String, dynamic>? channelEditConfig,
     Map<String, dynamic>? interactiveArtifactParams,
     bool runAfterSave = false,
+    bool saveToExistingNode = false,
   }) async {
     final NodeModel? viewerNode = _findNode(viewerNodeId);
     if (viewerNode == null) {
@@ -5592,9 +5593,47 @@ class CanvasLogic {
     final List<String> createdNodeTitles = <String>[];
     final Set<String> createdNodeIds = <String>{};
     bool updatedExistingInteractiveNode = false;
+    bool updatedExistingEditNode = false;
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
-    if (hasChannelEdits && hasMarkerEdits) {
+    if (saveToExistingNode && (hasChannelEdits || hasMarkerEdits)) {
+      final NodeModel? existing = _existingViewerEditChild(
+        sourceNode,
+        needsChannels: hasChannelEdits,
+        needsMarkers: hasMarkerEdits,
+      );
+      if (existing == null) {
+        throw StateError('No compatible child edit node is available.');
+      }
+      if (hasChannelEdits) {
+        EditChannelsNodeType.setConfigForDataset(
+          existing.params,
+          dataset.id,
+          channelEditConfigValue!,
+        );
+        existing.params['channelEditSourceDatasetId'] = dataset.id;
+      }
+      if (hasMarkerEdits) {
+        existing.params
+          ..['markers'] = markerEditsValue
+          ..['applyEmptyMarkerSet'] = true
+          ..['markerEditScope'] = 'all'
+          ..['markerEditDatasetIds'] = <String>[]
+          ..['markerEditSourceDatasetId'] = dataset.id;
+      }
+      existing.datasetStates[dataset.id] =
+          existing.datasetStates[dataset.id] == DatasetState.done
+          ? DatasetState.stale
+          : DatasetState.ready;
+      _markImmediateChildrenStale(existing.id, dataset.id);
+      lastCreatedNode = existing;
+      anchorNode = existing;
+      updatedExistingEditNode = true;
+      createdNodeTitles.add(existing.title);
+      createdNodeIds.add(existing.id);
+    }
+
+    if (!updatedExistingEditNode && hasChannelEdits && hasMarkerEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
@@ -5615,7 +5654,7 @@ class CanvasLogic {
       anchorNode = lastCreatedNode;
       createdNodeTitles.add(lastCreatedNode.title);
       createdNodeIds.add(lastCreatedNode.id);
-    } else if (hasChannelEdits) {
+    } else if (!updatedExistingEditNode && hasChannelEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
@@ -5632,7 +5671,7 @@ class CanvasLogic {
       createdNodeTitles.add(lastCreatedNode.title);
       createdNodeIds.add(lastCreatedNode.id);
     }
-    if (hasMarkerEdits && !hasChannelEdits) {
+    if (!updatedExistingEditNode && hasMarkerEdits && !hasChannelEdits) {
       lastCreatedNode = _spawnViewerEditNode(
         sourceNode: anchorNode,
         insertBeforeNode: insertBeforeNode,
@@ -5657,6 +5696,18 @@ class CanvasLogic {
           anchorNode.type is InteractiveArtifactDetectionNodeType
           ? anchorNode
           : null;
+      if (artifactNode == null && saveToExistingNode) {
+        artifactNode = _immediateChildren(anchorNode.id)
+            .where(
+              (NodeModel child) =>
+                  child.type is InteractiveArtifactDetectionNodeType,
+            )
+            .cast<NodeModel?>()
+            .firstWhere(
+              (NodeModel? child) => child != null,
+              orElse: () => null,
+            );
+      }
       updatedExistingInteractiveNode = artifactNode != null;
       if (artifactNode == null) {
         artifactNode = _spawnViewerEditNode(
@@ -5714,7 +5765,8 @@ class CanvasLogic {
     _clearPendingConnection();
 
     if (!runAfterSave) {
-      if (updatedExistingInteractiveNode && createdNodeTitles.length == 1) {
+      if ((updatedExistingInteractiveNode || updatedExistingEditNode) &&
+          createdNodeTitles.length == 1) {
         return 'Updated ${createdNodeTitles.single}.';
       }
       return _viewerEditSaveMessage(
@@ -5919,6 +5971,189 @@ class CanvasLogic {
     return ranNodes
         ? 'Created and ran $createdSummary.'
         : 'Created $createdSummary.';
+  }
+
+  bool canSaveViewerEditsToExistingNode({
+    required String viewerNodeId,
+    required Dataset dataset,
+  }) {
+    final NodeModel? source = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (source == null) return false;
+    return _immediateChildren(source.id).any(_isViewerEditNode);
+  }
+
+  Future<String> runViewerEditChild({
+    required String viewerNodeId,
+    required Dataset dataset,
+  }) async {
+    final NodeModel? source = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (source == null) return 'No source node is available.';
+    final List<NodeModel> editChildren = _immediateChildren(
+      source.id,
+    ).where(_isViewerEditNode).toList(growable: false);
+    if (editChildren.isEmpty) return 'No child edit node is available to run.';
+    final NodeModel target = editChildren.first;
+    await runThisStep(target.id, datasetIds: <String>{dataset.id});
+    return 'Ran ${target.title}.';
+  }
+
+  bool _isViewerEditNode(NodeModel node) {
+    return node.type is EditChannelsNodeType ||
+        node.type is AddRemoveMarkersNodeType ||
+        node.type is EditChannelsAndMarkersNodeType ||
+        node.type is InteractiveArtifactDetectionNodeType;
+  }
+
+  NodeModel? _existingViewerEditChild(
+    NodeModel source, {
+    required bool needsChannels,
+    required bool needsMarkers,
+  }) {
+    final List<NodeModel> children = _immediateChildren(source.id);
+    for (final NodeModel child in children) {
+      final bool supportsChannels =
+          child.type is EditChannelsNodeType ||
+          child.type is EditChannelsAndMarkersNodeType;
+      final bool supportsMarkers =
+          child.type is AddRemoveMarkersNodeType ||
+          child.type is EditChannelsAndMarkersNodeType;
+      if ((!needsChannels || supportsChannels) &&
+          (!needsMarkers || supportsMarkers)) {
+        return child;
+      }
+    }
+    if (needsChannels && needsMarkers) {
+      final NodeModel? channelNode = children
+          .where((NodeModel child) => child.type is EditChannelsNodeType)
+          .cast<NodeModel?>()
+          .firstWhere((NodeModel? child) => child != null, orElse: () => null);
+      final NodeModel? markerNode = children
+          .where((NodeModel child) => child.type is AddRemoveMarkersNodeType)
+          .cast<NodeModel?>()
+          .firstWhere((NodeModel? child) => child != null, orElse: () => null);
+      if (channelNode != null && markerNode != null) {
+        return _combineSiblingViewerEditNodes(source, channelNode, markerNode);
+      }
+    }
+    if (needsMarkers) {
+      for (final NodeModel child in children) {
+        if (child.type is EditChannelsNodeType) {
+          return _promoteViewerEditNodeToCombined(source, child);
+        }
+      }
+    }
+    if (needsChannels) {
+      for (final NodeModel child in children) {
+        if (child.type is AddRemoveMarkersNodeType &&
+            child.params['markerGenerator'] == null) {
+          return _promoteViewerEditNodeToCombined(source, child);
+        }
+      }
+    }
+    return null;
+  }
+
+  NodeModel _promoteViewerEditNodeToCombined(
+    NodeModel source,
+    NodeModel existing,
+  ) {
+    final NodeType type = EditChannelsAndMarkersNodeType();
+    final Map<String, dynamic> params = <String, dynamic>{
+      ...type.defaultParams,
+      for (final MapEntry<String, dynamic> entry in existing.params.entries)
+        entry.key: _deepCloneJsonValue(entry.value),
+    };
+    final List<NodeModel> downstream = _immediateChildren(existing.id);
+    final NodeModel replacement = _buildNode(
+      type: type,
+      position: existing.position,
+      params: params,
+    );
+    nodes.remove(existing);
+    connections.removeWhere(
+      (Map<String, dynamic> connection) =>
+          connection['fromNode'] == existing.id ||
+          connection['toNode'] == existing.id,
+    );
+    nodes.add(replacement);
+    _addAllMatchingConnections(source, replacement);
+    for (final NodeModel child in downstream) {
+      _addAllMatchingConnections(replacement, child);
+    }
+    _nodeRamSnapshots.remove(existing.id);
+    _nodeDiskSnapshotIds.remove(existing.id);
+    _seedNodeDatasetStates(replacement);
+    return replacement;
+  }
+
+  NodeModel _combineSiblingViewerEditNodes(
+    NodeModel source,
+    NodeModel channelNode,
+    NodeModel markerNode,
+  ) {
+    final NodeType type = EditChannelsAndMarkersNodeType();
+    final Map<String, dynamic> params = <String, dynamic>{
+      ...type.defaultParams,
+      'channelEditsByDataset': _deepCloneJsonMap(
+        Map<String, dynamic>.from(
+          channelNode.params['channelEditsByDataset'] as Map? ??
+              const <String, dynamic>{},
+        ),
+      ),
+      for (final String key in <String>[
+        'channelEditSourceDatasetId',
+        'markers',
+        'applyEmptyMarkerSet',
+        'markerEditOperations',
+        'markerEditScope',
+        'markerEditDatasetIds',
+        'markerEditSourceDatasetId',
+      ])
+        if ((key.startsWith('channel') ? channelNode : markerNode).params
+            .containsKey(key))
+          key: _deepCloneJsonValue(
+            (key.startsWith('channel') ? channelNode : markerNode).params[key],
+          ),
+      'selectedDatasetIds': <String>{
+        ..._selectedDatasetIdsForCombination(channelNode),
+        ..._selectedDatasetIdsForCombination(markerNode),
+      }.toList(growable: false),
+    };
+    final Set<String> replacedIds = <String>{channelNode.id, markerNode.id};
+    final Set<NodeModel> downstream = <NodeModel>{
+      ..._immediateChildren(channelNode.id),
+      ..._immediateChildren(markerNode.id),
+    }..removeWhere((NodeModel node) => replacedIds.contains(node.id));
+    final NodeModel replacement = _buildNode(
+      type: type,
+      position: channelNode.position,
+      params: params,
+    );
+    nodes.removeWhere((NodeModel node) => replacedIds.contains(node.id));
+    connections.removeWhere(
+      (Map<String, dynamic> connection) =>
+          replacedIds.contains(connection['fromNode']) ||
+          replacedIds.contains(connection['toNode']),
+    );
+    nodes.add(replacement);
+    _addAllMatchingConnections(source, replacement);
+    for (final NodeModel child in downstream) {
+      _addAllMatchingConnections(replacement, child);
+    }
+    _nodeRamSnapshots
+      ..remove(channelNode.id)
+      ..remove(markerNode.id);
+    _nodeDiskSnapshotIds
+      ..remove(channelNode.id)
+      ..remove(markerNode.id);
+    _seedNodeDatasetStates(replacement);
+    return replacement;
   }
 
   NodeModel? _viewerEditSourceNodeForDataset(

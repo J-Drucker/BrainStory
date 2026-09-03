@@ -626,6 +626,7 @@ class _VisualizationChart extends StatelessWidget {
           channelEditConfig: request.channelEditConfig,
           interactiveArtifactParams: request.interactiveArtifactParams,
           runAfterSave: request.runAfterSave,
+          saveToExistingNode: request.saveToExistingNode,
         );
         if (context.mounted) {
           ScaffoldMessenger.of(
@@ -634,7 +635,23 @@ class _VisualizationChart extends StatelessWidget {
         }
         onDataChanged();
       },
-      onQuit: () {
+      canSaveToExistingNode: logic.canSaveViewerEditsToExistingNode(
+        viewerNodeId: nodeId,
+        dataset: activeDataset,
+      ),
+      onCloseAndRun: () async {
+        final String message = await logic.runViewerEditChild(
+          viewerNodeId: nodeId,
+          dataset: activeDataset,
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(message)));
+        }
+        onDataChanged();
+      },
+      onClose: () {
         if (Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
           return;

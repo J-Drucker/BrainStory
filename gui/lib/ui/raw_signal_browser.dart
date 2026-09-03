@@ -22,14 +22,18 @@ class RawSignalBrowser extends StatefulWidget {
     required this.params,
     this.onChanged,
     this.onPersistDrafts,
-    this.onQuit,
+    this.onClose,
+    this.onCloseAndRun,
+    this.canSaveToExistingNode = false,
   });
 
   final Dataset dataset;
   final Map<String, dynamic> params;
   final VoidCallback? onChanged;
   final Future<void> Function(ViewerDraftSaveRequest request)? onPersistDrafts;
-  final VoidCallback? onQuit;
+  final VoidCallback? onClose;
+  final Future<void> Function()? onCloseAndRun;
+  final bool canSaveToExistingNode;
 
   @override
   State<RawSignalBrowser> createState() => _RawSignalBrowserState();
@@ -41,12 +45,14 @@ class ViewerDraftSaveRequest {
     this.channelEditConfig,
     this.interactiveArtifactParams,
     this.runAfterSave = false,
+    this.saveToExistingNode = false,
   });
 
   final List<Map<String, dynamic>>? markerEdits;
   final Map<String, dynamic>? channelEditConfig;
   final Map<String, dynamic>? interactiveArtifactParams;
   final bool runAfterSave;
+  final bool saveToExistingNode;
 
   bool get hasMarkerEdits => markerEdits != null;
   bool get hasChannelEdits => channelEditConfig != null;
@@ -843,17 +849,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 icon: const Icon(Icons.chevron_right, color: Colors.white70),
               ),
             ),
-            if (_hasAnyDraftChanges) ...<Widget>[
+            if (_hasDraftRecord) ...<Widget>[
               _buildDraftSummary(interactiveArtifactDetection),
               const SizedBox(height: 10),
               _buildDraftActions(interactiveArtifactDetection),
               const SizedBox(height: 10),
-            ] else if (widget.onQuit != null) ...<Widget>[
+            ] else if (widget.onClose != null) ...<Widget>[
               Align(
                 alignment: Alignment.centerRight,
                 child: OutlinedButton(
-                  onPressed: widget.onQuit,
-                  child: const Text('Quit'),
+                  onPressed: _close,
+                  child: const Text('Close'),
                 ),
               ),
               const SizedBox(height: 10),
@@ -980,24 +986,39 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   Widget _buildDraftActions(bool interactiveArtifactDetection) {
+    final bool unsaved = _hasUnsavedDraftChanges;
     return Wrap(
       alignment: WrapAlignment.end,
       spacing: 8,
       runSpacing: 8,
       children: <Widget>[
         OutlinedButton(
-          onPressed: _discardDraftChanges,
-          child: const Text('Discard'),
+          onPressed: unsaved ? _discardDraftChanges : null,
+          child: const Text('Discard changes'),
+        ),
+        OutlinedButton(
+          onPressed: unsaved && widget.canSaveToExistingNode
+              ? () => _persistDraftChanges(
+                  runAfterSave: false,
+                  saveToExistingNode: true,
+                )
+              : null,
+          child: const Text('Save to existing node'),
         ),
         ElevatedButton(
-          onPressed: () => _persistDraftChanges(runAfterSave: false),
-          child: const Text('Save'),
+          onPressed: unsaved
+              ? () => _persistDraftChanges(
+                  runAfterSave: false,
+                  saveToExistingNode: false,
+                )
+              : null,
+          child: const Text('Save as new node'),
         ),
         FilledButton.tonal(
-          onPressed: () => _persistDraftChanges(runAfterSave: true),
-          child: const Text('Save and run'),
+          onPressed: _closeAndRun,
+          child: const Text('Close and run'),
         ),
-        OutlinedButton(onPressed: widget.onQuit, child: const Text('Quit')),
+        OutlinedButton(onPressed: _close, child: const Text('Close')),
       ],
     );
   }
@@ -1583,8 +1604,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       _draftArtifactCandidates != null ||
       _draftArtifactTemplates != null;
 
-  bool get _hasAnyDraftChanges =>
-      _currentDraftSaveRequest(runAfterSave: false) != null;
+  bool get _hasDraftRecord =>
+      _hasMarkerDraft || _hasChannelEditDraft || _hasInteractiveArtifactDraft;
+
+  bool get _hasUnsavedDraftChanges =>
+      _currentDraftSaveRequest(
+        runAfterSave: false,
+        saveToExistingNode: false,
+      ) !=
+      null;
 
   Map<String, dynamic> _effectiveChannelEditConfig() {
     return _draftChannelEditConfig ??
@@ -1853,34 +1881,96 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     });
   }
 
-  Future<void> _persistDraftChanges({required bool runAfterSave}) async {
+  Future<bool> _persistDraftChanges({
+    required bool runAfterSave,
+    required bool saveToExistingNode,
+  }) async {
     final ViewerDraftSaveRequest? request = _currentDraftSaveRequest(
       runAfterSave: runAfterSave,
+      saveToExistingNode: saveToExistingNode,
     );
     if (request == null) {
-      return;
+      return false;
     }
     final Future<void> Function(ViewerDraftSaveRequest request)?
     onPersistDrafts = widget.onPersistDrafts;
     if (onPersistDrafts == null) {
-      return;
+      return false;
     }
     final String fingerprint = _draftSaveFingerprint(request);
     final _SavedChangesSummary savedSummary = _SavedChangesSummary(
       title: _savedChangesTitle(request),
-      items: _draftManifestItems(_interactiveArtifactDetectionEnabled()),
+      items: _draftManifestItems(_interactiveArtifactDetectionEnabled())
+          .map(
+            (_DraftManifestItem item) => _DraftManifestItem(
+              label: item.label,
+              detail: item.detail,
+              color: item.color,
+              saved: true,
+            ),
+          )
+          .toList(growable: false),
     );
     await onPersistDrafts(request);
     if (!mounted) {
-      return;
+      return false;
     }
     setState(() {
       _lastPersistedDraftFingerprint = fingerprint;
       _savedChangesSummary = savedSummary;
     });
-    if (runAfterSave) {
-      widget.onQuit?.call();
+    return true;
+  }
+
+  Future<void> _close() async {
+    if (_hasUnsavedDraftChanges && !await _resolveUnsavedChanges()) return;
+    widget.onClose?.call();
+  }
+
+  Future<void> _closeAndRun() async {
+    if (_hasUnsavedDraftChanges && !await _resolveUnsavedChanges()) {
+      return;
     }
+    await widget.onCloseAndRun?.call();
+    widget.onClose?.call();
+  }
+
+  Future<bool> _resolveUnsavedChanges() async {
+    final String? choice = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: const Text('Save these changes before closing?'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, 'discard'),
+            child: const Text('Discard changes'),
+          ),
+          if (widget.canSaveToExistingNode)
+            OutlinedButton(
+              onPressed: () => Navigator.pop(dialogContext, 'existing'),
+              child: const Text('Save to existing node'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, 'new'),
+            child: const Text('Save as new node'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null) return false;
+    if (choice == 'discard') {
+      _discardDraftChanges();
+      return true;
+    }
+    return _persistDraftChanges(
+      runAfterSave: false,
+      saveToExistingNode: choice == 'existing',
+    );
   }
 
   void _discardDraftChanges() {
@@ -2377,6 +2467,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   ViewerDraftSaveRequest? _currentDraftSaveRequest({
     required bool runAfterSave,
+    required bool saveToExistingNode,
   }) {
     final List<Map<String, dynamic>>? markerEdits = _draftMarkers
         ?.whereType<Map<String, dynamic>>()
@@ -2425,6 +2516,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       channelEditConfig: channelEditConfig,
       interactiveArtifactParams: interactiveArtifactParams,
       runAfterSave: runAfterSave,
+      saveToExistingNode: saveToExistingNode,
     );
     if (_lastPersistedDraftFingerprint == _draftSaveFingerprint(request)) {
       return null;
@@ -2740,7 +2832,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       'Current template',
       'Candidate matches',
       'Accepted',
-      'Save and Quit',
+      'Save to existing node',
     ]) {
       maxWidth = math.max(maxWidth, measure(text) + 56);
     }
@@ -2833,8 +2925,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                     size: 18,
                   ),
                   const SizedBox(width: 4),
-                  const Text(
-                    'Unsaved changes',
+                  Text(
+                    _hasUnsavedDraftChanges
+                        ? 'Unsaved changes'
+                        : 'Saved changes',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -2866,20 +2960,27 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   List<_DraftManifestItem> _draftManifestItems(
     bool interactiveArtifactDetection,
   ) {
+    final bool saved = !_hasUnsavedDraftChanges;
     return <_DraftManifestItem>[
       if (_hasMarkerDraft)
         _DraftManifestItem(
           label: 'Markers',
           detail: _markerDraftSummary(),
           color: const Color(0xFFFFD54F),
+          saved: saved,
         ),
       if (_hasChannelEditDraft)
-        _DraftManifestItem(label: 'Channels', detail: _channelDraftSummary()),
+        _DraftManifestItem(
+          label: 'Channels',
+          detail: _channelDraftSummary(),
+          saved: saved,
+        ),
       if (_hasInteractiveArtifactDraft)
         _DraftManifestItem(
           label: interactiveArtifactDetection ? 'Interactive' : 'Artifacts',
           detail: _interactiveDraftSummary(),
           color: const Color(0xFFFF8A65),
+          saved: saved,
         ),
     ];
   }
@@ -2944,6 +3045,15 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 ),
               ),
             ),
+            const SizedBox(width: 8),
+            Text(
+              item.saved ? 'Saved' : 'Unsaved',
+              style: TextStyle(
+                color: item.saved ? Colors.greenAccent : Colors.amberAccent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
       ),
@@ -2960,7 +3070,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final String nodeText = nodes.length == 1
         ? '${nodes.single} node'
         : '${nodes.join(' and ')} nodes';
-    return 'Saved changes (new $nodeText created)';
+    return request.saveToExistingNode
+        ? 'Saved changes ($nodeText updated)'
+        : 'Saved changes (new $nodeText created)';
   }
 
   String _channelDraftSummary() {
@@ -4428,11 +4540,13 @@ class _DraftManifestItem {
     required this.label,
     required this.detail,
     this.color,
+    this.saved = false,
   });
 
   final String label;
   final String detail;
   final Color? color;
+  final bool saved;
 }
 
 class _SavedChangesSummary {

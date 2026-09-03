@@ -948,6 +948,40 @@ void main() {
     expect(params['y_scale_uv'], 50.0);
   });
 
+  testWidgets('raw viewer uses close instead of quit', (
+    WidgetTester tester,
+  ) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1600, 900);
+    addTearDown(tester.view.reset);
+    final Dataset dataset = Dataset('close-viewer', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.filled(100, 0),
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1200,
+            height: 700,
+            child: RawSignalBrowser(
+              dataset: dataset,
+              params: <String, dynamic>{},
+              onClose: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Close'), findsOneWidget);
+    expect(find.text('Quit'), findsNothing);
+    expect(find.text('Save and run'), findsNothing);
+  });
+
   test('impedance visualization selects imported impedance datasets', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImpedancesNodeType());
@@ -2113,6 +2147,159 @@ Mk2=Response,Response,4,1,0
           detectionNode.params,
         ),
         isEmpty,
+      );
+    },
+  );
+
+  test('viewer edits can update an existing child edit node', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        samples: const <double>[1, 2, 3],
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(EditChannelsNodeType());
+    final NodeModel source = logic.nodes[0];
+    final NodeModel edit = logic.nodes[1];
+    source.datasetStates[dataset.id] = DatasetState.done;
+    logic.connections.add(<String, dynamic>{
+      'fromNode': source.id,
+      'fromPort': 0,
+      'toNode': edit.id,
+      'toPort': 0,
+    });
+
+    expect(
+      logic.canSaveViewerEditsToExistingNode(
+        viewerNodeId: source.id,
+        dataset: dataset,
+      ),
+      isTrue,
+    );
+    final String message = await logic.persistViewerEdits(
+      viewerNodeId: source.id,
+      dataset: dataset,
+      channelEditConfig: <String, dynamic>{
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{'rename': 'Cz edited'},
+        },
+      },
+      saveToExistingNode: true,
+    );
+
+    expect(message, 'Updated Edit Channels.');
+    expect(logic.nodes, hasLength(2));
+    expect(
+      EditChannelsNodeType.configForDataset(edit.params, dataset.id)['edits'],
+      isNotEmpty,
+    );
+  });
+
+  test('same-parent channel and marker edits combine when updated', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        samples: const <double>[1, 2, 3],
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(EditChannelsNodeType());
+    logic.addNode(AddRemoveMarkersNodeType());
+    final NodeModel source = logic.nodes[0];
+    final NodeModel channels = logic.nodes[1];
+    final NodeModel markers = logic.nodes[2];
+    source.datasetStates[dataset.id] = DatasetState.done;
+    for (final NodeModel child in <NodeModel>[channels, markers]) {
+      logic.connections.add(<String, dynamic>{
+        'fromNode': source.id,
+        'fromPort': 0,
+        'toNode': child.id,
+        'toPort': 0,
+      });
+    }
+
+    await logic.persistViewerEdits(
+      viewerNodeId: source.id,
+      dataset: dataset,
+      channelEditConfig: <String, dynamic>{
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{'rename': 'Cz edited'},
+        },
+      },
+      markerEdits: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'datasetId': dataset.id,
+          'label': 'event',
+          'onsetMicros': 1000,
+          'durationMicros': 0,
+          'markerType': MarkerType.event,
+        },
+      ],
+      saveToExistingNode: true,
+    );
+
+    expect(
+      logic.nodes.where(
+        (NodeModel node) => node.type is EditChannelsAndMarkersNodeType,
+      ),
+      hasLength(1),
+    );
+    expect(
+      logic.nodes.where(
+        (NodeModel node) =>
+            node.type is EditChannelsNodeType ||
+            node.type is AddRemoveMarkersNodeType,
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'saving marker changes promotes a child channel edit to combined',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-1', label: 'Example')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[1, 2, 3],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+        );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(EditChannelsNodeType());
+      final NodeModel source = logic.nodes[0];
+      final NodeModel edit = logic.nodes[1];
+      source.datasetStates[dataset.id] = DatasetState.done;
+      logic.connections.add(<String, dynamic>{
+        'fromNode': source.id,
+        'fromPort': 0,
+        'toNode': edit.id,
+        'toPort': 0,
+      });
+
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: dataset,
+        markerEdits: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            'label': 'event',
+            'onsetMicros': 1000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+        ],
+        saveToExistingNode: true,
+      );
+
+      expect(
+        logic.nodes.singleWhere((NodeModel node) => node.id != source.id).type,
+        isA<EditChannelsAndMarkersNodeType>(),
       );
     },
   );
