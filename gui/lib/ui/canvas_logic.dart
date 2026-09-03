@@ -6159,6 +6159,10 @@ class CanvasLogic {
         DatasetArtifactSnapshot.fromDataset(
           dataset,
           includedKinds: snapshotKinds,
+          // ICA has just created a fresh, conventionally immutable activation
+          // object. The RAM snapshot can take that object directly; restores
+          // still make a defensive copy before downstream nodes run.
+          copyTimeSeries: node.type is! ICANodeType,
         );
     if (snapshot.isEmpty) {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);

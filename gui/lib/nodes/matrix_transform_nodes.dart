@@ -506,18 +506,24 @@ class ICANodeType extends _MatrixTransformNodeType {
       );
     }
     final List<String> componentLabels = List<String>.generate(
-      result.activations.length,
+      result.unmixingMatrix.length,
       (int index) => 'IC ${index + 1}',
       growable: false,
     );
     final List<String> originalChannelLabels = selectedChannelIndices
         .map((int index) => sourceChannelLabels[index])
         .toList(growable: false);
-    final List<List<double>> fullActivations = _applyIcaUnmixing(
-      selectedSourceChannels,
-      result.unmixingMatrix,
-      result.channelMeans,
-    );
+    final List<List<double>> fullActivations =
+        applyIcaNative(
+          selectedSourceChannels,
+          unmixingMatrix: result.unmixingMatrix,
+          channelMeans: result.channelMeans,
+        ) ??
+        _applyIcaUnmixing(
+          selectedSourceChannels,
+          result.unmixingMatrix,
+          result.channelMeans,
+        );
     final List<String> fitMarkerLabels = fitScope == 'markers'
         ? (params['markerLabels'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
@@ -669,7 +675,7 @@ List<int> _icaFitSampleIndices(
         postSeconds < 0) {
       throw ArgumentError('ICA marker windows cannot be negative.');
     }
-    final List<bool> included = List<bool>.filled(sampleCount, false);
+    final List<({int start, int stop})> windows = <({int start, int stop})>[];
     int matchedMarkers = 0;
     for (final TimeMarker marker in timeSeries.markers) {
       if (!markerLabels.contains(marker.label)) {
@@ -687,17 +693,39 @@ List<int> _icaFitSampleIndices(
       final int safeStop = stop <= start
           ? (start + 1).clamp(0, sampleCount)
           : stop;
-      for (int sample = start; sample < safeStop; sample++) {
-        included[sample] = true;
-      }
+      windows.add((start: start, stop: safeStop));
     }
     if (matchedMarkers == 0) {
       throw ArgumentError('No markers matched the selected ICA labels.');
     }
-    return List<int>.generate(
-      sampleCount,
-      (int index) => index,
-    ).where((int index) => included[index]).toList(growable: false);
+    windows.sort(
+      (({int start, int stop}) left, ({int start, int stop}) right) =>
+          left.start.compareTo(right.start),
+    );
+    final List<({int start, int stop})> merged = <({int start, int stop})>[];
+    for (final ({int start, int stop}) window in windows) {
+      if (merged.isEmpty || window.start > merged.last.stop) {
+        merged.add(window);
+      } else if (window.stop > merged.last.stop) {
+        merged[merged.length - 1] = (
+          start: merged.last.start,
+          stop: window.stop,
+        );
+      }
+    }
+    final int includedSampleCount = merged.fold<int>(
+      0,
+      (int total, ({int start, int stop}) window) =>
+          total + window.stop - window.start,
+    );
+    final List<int> indices = List<int>.filled(includedSampleCount, 0);
+    int outputIndex = 0;
+    for (final ({int start, int stop}) window in merged) {
+      for (int sample = window.start; sample < window.stop; sample++) {
+        indices[outputIndex++] = sample;
+      }
+    }
+    return indices;
   }
   throw ArgumentError('Unknown ICA fit scope: $scope.');
 }

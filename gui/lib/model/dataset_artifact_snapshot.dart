@@ -50,6 +50,7 @@ class DatasetArtifactSnapshot {
   factory DatasetArtifactSnapshot.fromDataset(
     Dataset dataset, {
     Set<BrainStoryArtifactKind>? includedKinds,
+    bool copyTimeSeries = true,
   }) {
     final Set<BrainStoryArtifactKind>? kinds = includedKinds == null
         ? null
@@ -61,7 +62,9 @@ class DatasetArtifactSnapshot {
                   !kinds.contains(BrainStoryArtifactKind.timeSeries)) ||
               dataset.timeSeries == null
           ? null
-          : TimeSeriesData.fromJson(dataset.timeSeries!.toJson()),
+          : copyTimeSeries
+          ? TimeSeriesData.fromJson(dataset.timeSeries!.toJson())
+          : dataset.timeSeries,
       segmentedTimeSeries:
           (kinds != null &&
                   !kinds.contains(

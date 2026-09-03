@@ -106,6 +106,27 @@ typedef _IcaDart =
       int seed,
     );
 
+typedef _ApplyIcaNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Double> samples,
+      ffi.IntPtr channelCount,
+      ffi.IntPtr sampleCount,
+      ffi.Pointer<ffi.Double> unmixing,
+      ffi.IntPtr componentCount,
+      ffi.Pointer<ffi.Double> channelMeans,
+      ffi.Pointer<ffi.Double> output,
+    );
+typedef _ApplyIcaDart =
+    int Function(
+      ffi.Pointer<ffi.Double> samples,
+      int channelCount,
+      int sampleCount,
+      ffi.Pointer<ffi.Double> unmixing,
+      int componentCount,
+      ffi.Pointer<ffi.Double> channelMeans,
+      ffi.Pointer<ffi.Double> output,
+    );
+
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
 
@@ -123,7 +144,7 @@ NativeIcaResult? computeIcaNative(
   if (channels.any((List<double> channel) => channel.length != sampleCount)) {
     throw ArgumentError('ICA channels must have equal sample counts.');
   }
-  final _IcaDart? ica = _engineLibrary.fastIca;
+  final _IcaDart? ica = _engineLibrary.fastIcaFit;
   if (ica == null || _nativeMemory.unavailable) {
     return null;
   }
@@ -133,11 +154,11 @@ NativeIcaResult? computeIcaNative(
     valueCount,
   );
   try {
+    final List<double> nativeSamples = samplesPtr.asTypedList(valueCount);
     int flatIndex = 0;
     for (final List<double> channel in channels) {
-      for (final double value in channel) {
-        samplesPtr[flatIndex++] = value;
-      }
+      nativeSamples.setRange(flatIndex, flatIndex + sampleCount, channel);
+      flatIndex += sampleCount;
     }
     final ffi.Pointer<ffi.Uint8> resultPointer = ica(
       samplesPtr,
@@ -168,6 +189,86 @@ NativeIcaResult? computeIcaNative(
     }
   } finally {
     _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+  }
+}
+
+List<List<double>>? applyIcaNative(
+  List<List<double>> channels, {
+  required List<List<double>> unmixingMatrix,
+  required List<double> channelMeans,
+}) {
+  if (channels.isEmpty || channels.first.isEmpty || unmixingMatrix.isEmpty) {
+    throw ArgumentError('ICA projection requires non-empty data and a model.');
+  }
+  final int channelCount = channels.length;
+  final int sampleCount = channels.first.length;
+  final int componentCount = unmixingMatrix.length;
+  if (channels.any((List<double> channel) => channel.length != sampleCount) ||
+      unmixingMatrix.any(
+        (List<double> weights) => weights.length != channelCount,
+      ) ||
+      channelMeans.length != channelCount) {
+    throw ArgumentError('ICA projection dimensions do not match.');
+  }
+  final _ApplyIcaDart? apply = _engineLibrary.applyIca;
+  if (apply == null || _nativeMemory.unavailable) {
+    return null;
+  }
+
+  final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
+    channelCount * sampleCount,
+  );
+  final ffi.Pointer<ffi.Double> unmixingPtr = _nativeMemory.callocDouble(
+    componentCount * channelCount,
+  );
+  final ffi.Pointer<ffi.Double> meansPtr = _nativeMemory.callocDouble(
+    channelCount,
+  );
+  final ffi.Pointer<ffi.Double> outputPtr = _nativeMemory.callocDouble(
+    componentCount * sampleCount,
+  );
+  try {
+    final List<double> nativeSamples = samplesPtr.asTypedList(
+      channelCount * sampleCount,
+    );
+    int index = 0;
+    for (final List<double> channel in channels) {
+      nativeSamples.setRange(index, index + sampleCount, channel);
+      index += sampleCount;
+    }
+    final List<double> nativeUnmixing = unmixingPtr.asTypedList(
+      componentCount * channelCount,
+    );
+    index = 0;
+    for (final List<double> weights in unmixingMatrix) {
+      nativeUnmixing.setRange(index, index + channelCount, weights);
+      index += channelCount;
+    }
+    meansPtr.asTypedList(channelCount).setAll(0, channelMeans);
+    final int status = apply(
+      samplesPtr,
+      channelCount,
+      sampleCount,
+      unmixingPtr,
+      componentCount,
+      meansPtr,
+      outputPtr,
+    );
+    if (status != 0) {
+      throw StateError('The native ICA projection failed.');
+    }
+    final List<double> nativeOutput = outputPtr.asTypedList(
+      componentCount * sampleCount,
+    );
+    return List<List<double>>.generate(componentCount, (int component) {
+      final int offset = component * sampleCount;
+      return nativeOutput.sublist(offset, offset + sampleCount);
+    }, growable: false);
+  } finally {
+    _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+    _nativeMemory.free(unmixingPtr.cast<ffi.Void>());
+    _nativeMemory.free(meansPtr.cast<ffi.Void>());
+    _nativeMemory.free(outputPtr.cast<ffi.Void>());
   }
 }
 
@@ -392,14 +493,34 @@ class _BrainstoryEngineLibrary {
 
   final ffi.DynamicLibrary? _library;
 
-  _IcaDart? get fastIca {
+  _IcaDart? get fastIcaFit {
     final ffi.DynamicLibrary? library = _library;
     if (library == null) {
       return null;
     }
     try {
       return library.lookupFunction<_IcaNative, _IcaDart>(
-        'brainstory_fast_ica',
+        'brainstory_fast_ica_fit',
+      );
+    } catch (_) {
+      try {
+        return library.lookupFunction<_IcaNative, _IcaDart>(
+          'brainstory_fast_ica',
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  _ApplyIcaDart? get applyIca {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) {
+      return null;
+    }
+    try {
+      return library.lookupFunction<_ApplyIcaNative, _ApplyIcaDart>(
+        'brainstory_apply_ica',
       );
     } catch (_) {
       return null;

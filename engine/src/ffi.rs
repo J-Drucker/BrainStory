@@ -3,7 +3,7 @@ use std::os::raw::c_char;
 use std::slice;
 
 use crate::filtering::bandpass_filter;
-use crate::ica::fast_ica;
+use crate::ica::{apply_unmixing_flat_into, fast_ica, fit_fast_ica};
 use crate::spectrum::single_sided_spectrum;
 use serde_json::json;
 
@@ -43,6 +43,88 @@ pub extern "C" fn brainstory_fast_ica(
     CString::new(payload.to_string())
         .expect("JSON cannot contain NUL bytes")
         .into_raw()
+}
+
+/// Fits ICA and returns only the compact model metadata as JSON. Component
+/// activations are intentionally omitted so bulk sample data can travel
+/// through `brainstory_apply_ica`'s typed buffers instead of JSON.
+#[no_mangle]
+pub extern "C" fn brainstory_fast_ica_fit(
+    samples_ptr: *const f64,
+    channel_count: usize,
+    sample_count: usize,
+    component_count: usize,
+    tolerance: f64,
+    max_iterations: usize,
+    seed: u64,
+) -> *mut c_char {
+    let result = if samples_ptr.is_null() {
+        Err("ICA did not receive a sample buffer.".to_string())
+    } else if let Some(value_count) = channel_count.checked_mul(sample_count) {
+        let samples = unsafe { slice::from_raw_parts(samples_ptr, value_count) };
+        fit_fast_ica(
+            samples,
+            channel_count,
+            sample_count,
+            component_count,
+            tolerance,
+            max_iterations,
+            seed,
+        )
+    } else {
+        Err("ICA input dimensions overflowed the native address space.".to_string())
+    };
+    let payload = match result {
+        Ok(result) => json!({"ok": true, "result": result}),
+        Err(error) => json!({"ok": false, "error": error}),
+    };
+    CString::new(payload.to_string())
+        .expect("JSON cannot contain NUL bytes")
+        .into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn brainstory_apply_ica(
+    samples_ptr: *const f64,
+    channel_count: usize,
+    sample_count: usize,
+    unmixing_ptr: *const f64,
+    component_count: usize,
+    channel_means_ptr: *const f64,
+    output_ptr: *mut f64,
+) -> i32 {
+    if samples_ptr.is_null()
+        || unmixing_ptr.is_null()
+        || channel_means_ptr.is_null()
+        || output_ptr.is_null()
+    {
+        return STATUS_INVALID_ARGUMENT;
+    }
+    let Some(sample_value_count) = channel_count.checked_mul(sample_count) else {
+        return STATUS_INVALID_ARGUMENT;
+    };
+    let Some(matrix_value_count) = component_count.checked_mul(channel_count) else {
+        return STATUS_INVALID_ARGUMENT;
+    };
+    let Some(output_value_count) = component_count.checked_mul(sample_count) else {
+        return STATUS_INVALID_ARGUMENT;
+    };
+    let samples = unsafe { slice::from_raw_parts(samples_ptr, sample_value_count) };
+    let unmixing = unsafe { slice::from_raw_parts(unmixing_ptr, matrix_value_count) };
+    let channel_means = unsafe { slice::from_raw_parts(channel_means_ptr, channel_count) };
+    let output = unsafe { slice::from_raw_parts_mut(output_ptr, output_value_count) };
+    match apply_unmixing_flat_into(
+        samples,
+        channel_count,
+        sample_count,
+        unmixing,
+        component_count,
+        channel_means,
+        output,
+    ) {
+        Ok(()) => STATUS_OK,
+        Err(_) => STATUS_INVALID_ARGUMENT,
+    }
 }
 
 #[no_mangle]
@@ -169,8 +251,9 @@ pub extern "C" fn brainstory_segment_mean_sd(
 #[cfg(test)]
 mod tests {
     use super::{
-        brainstory_bandpass_filter, brainstory_fast_ica, brainstory_segment_mean_sd,
-        brainstory_single_sided_spectrum, STATUS_OK,
+        brainstory_apply_ica, brainstory_bandpass_filter, brainstory_fast_ica,
+        brainstory_fast_ica_fit, brainstory_segment_mean_sd, brainstory_single_sided_spectrum,
+        STATUS_OK,
     };
     use crate::ant_cnt::brainstory_engine_free_string;
     use std::ffi::CStr;
@@ -254,5 +337,53 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["result"]["activations"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn fits_compact_ica_model_and_projects_through_typed_buffers() {
+        let sample_count = 256;
+        let mut samples = Vec::with_capacity(sample_count * 2);
+        samples.extend((0..sample_count).map(|index| (index as f64 / 9.0).sin()));
+        samples.extend(
+            (0..sample_count)
+                .map(|index| (index as f64 / 9.0).sin() + 0.5 * (index as f64 / 5.0).cos()),
+        );
+        let pointer =
+            brainstory_fast_ica_fit(samples.as_ptr(), 2, sample_count, 2, 1.0e-4, 500, 42);
+        assert!(!pointer.is_null());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        brainstory_engine_free_string(pointer);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["ok"], true);
+        assert!(value["result"].get("activations").is_none());
+        let result = &value["result"];
+        let unmixing: Vec<f64> = result["unmixingMatrix"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|row| row.as_array().unwrap())
+            .map(|entry| entry.as_f64().unwrap())
+            .collect();
+        let means: Vec<f64> = result["channelMeans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.as_f64().unwrap())
+            .collect();
+        let mut output = vec![f64::NAN; 2 * sample_count];
+        let status = brainstory_apply_ica(
+            samples.as_ptr(),
+            2,
+            sample_count,
+            unmixing.as_ptr(),
+            2,
+            means.as_ptr(),
+            output.as_mut_ptr(),
+        );
+        assert_eq!(status, STATUS_OK);
+        assert!(output.iter().all(|value| value.is_finite()));
+        assert!(output.iter().any(|value| value.abs() > 0.1));
     }
 }

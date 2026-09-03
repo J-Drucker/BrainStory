@@ -28,3 +28,9 @@ NativeIcaResult? computeIcaNative(
   required int maxIterations,
   required int seed,
 }) => null;
+
+List<List<double>>? applyIcaNative(
+  List<List<double>> channels, {
+  required List<List<double>> unmixingMatrix,
+  required List<double> channelMeans,
+}) => null;

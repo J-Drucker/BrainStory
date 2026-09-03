@@ -24,3 +24,9 @@ uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 cc = "1.1"
+
+# Desktop development builds execute the native signal-processing engine.
+# Optimizing them avoids making ICA artificially slow while Flutter is in
+# debug mode; level 2 keeps rebuild times lower than a full release build.
+[profile.dev]
+opt-level = 2

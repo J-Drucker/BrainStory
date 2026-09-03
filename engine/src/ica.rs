@@ -21,6 +21,23 @@ pub struct IcaResult {
     pub seed: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IcaModelResult {
+    pub unmixing_matrix: Vec<Vec<f64>>,
+    pub mixing_matrix: Vec<Vec<f64>>,
+    pub whitening_matrix: Vec<Vec<f64>>,
+    pub dewhitening_matrix: Vec<Vec<f64>>,
+    pub channel_means: Vec<f64>,
+    pub component_energies: Vec<f64>,
+    pub converged: bool,
+    pub iteration_count: usize,
+    pub numerical_rank: usize,
+    pub tolerance: f64,
+    pub max_iterations: usize,
+    pub seed: u64,
+}
+
 pub fn fast_ica(
     channel_major_samples: &[f64],
     channel_count: usize,
@@ -30,6 +47,49 @@ pub fn fast_ica(
     max_iterations: usize,
     seed: u64,
 ) -> Result<IcaResult, String> {
+    let model = fit_fast_ica(
+        channel_major_samples,
+        channel_count,
+        sample_count,
+        requested_components,
+        tolerance,
+        max_iterations,
+        seed,
+    )?;
+    let activations = apply_unmixing(
+        channel_major_samples,
+        channel_count,
+        sample_count,
+        &model.unmixing_matrix,
+        &model.channel_means,
+    )?;
+
+    Ok(IcaResult {
+        activations,
+        unmixing_matrix: model.unmixing_matrix,
+        mixing_matrix: model.mixing_matrix,
+        whitening_matrix: model.whitening_matrix,
+        dewhitening_matrix: model.dewhitening_matrix,
+        channel_means: model.channel_means,
+        component_energies: model.component_energies,
+        converged: model.converged,
+        iteration_count: model.iteration_count,
+        numerical_rank: model.numerical_rank,
+        tolerance: model.tolerance,
+        max_iterations: model.max_iterations,
+        seed: model.seed,
+    })
+}
+
+pub fn fit_fast_ica(
+    channel_major_samples: &[f64],
+    channel_count: usize,
+    sample_count: usize,
+    requested_components: usize,
+    tolerance: f64,
+    max_iterations: usize,
+    seed: u64,
+) -> Result<IcaModelResult, String> {
     validate_input(
         channel_major_samples,
         channel_count,
@@ -39,13 +99,17 @@ pub fn fast_ica(
         max_iterations,
     )?;
 
-    let input = DMatrix::from_row_slice(channel_count, sample_count, channel_major_samples);
-    let channel_means: Vec<f64> = (0..channel_count)
-        .map(|channel| input.row(channel).iter().sum::<f64>() / sample_count as f64)
+    let channel_means: Vec<f64> = channel_major_samples
+        .chunks_exact(sample_count)
+        .map(|channel| channel.iter().sum::<f64>() / sample_count as f64)
         .collect();
-    let centered = DMatrix::from_fn(channel_count, sample_count, |channel, sample| {
-        input[(channel, sample)] - channel_means[channel]
-    });
+    let mut centered = DMatrix::from_row_slice(channel_count, sample_count, channel_major_samples);
+    for channel in 0..channel_count {
+        let mean = channel_means[channel];
+        for sample in 0..sample_count {
+            centered[(channel, sample)] -= mean;
+        }
+    }
     let covariance = (&centered * centered.transpose()) / sample_count as f64;
     let covariance_eigen = SymmetricEigen::new(covariance);
     let mut eigen_order: Vec<usize> = (0..channel_count).collect();
@@ -89,6 +153,7 @@ pub fn fast_ica(
         }
     }
     let whitened = &whitening * &centered;
+    let whitened_transpose = whitened.transpose();
 
     let mut random = DeterministicRandom::new(seed);
     let initial = DMatrix::from_fn(component_count, component_count, |_, _| {
@@ -98,22 +163,19 @@ pub fn fast_ica(
     let mut converged = false;
     let mut iteration_count = 0;
     for iteration in 1..=max_iterations {
-        let projected = &unmix_whitened * &whitened;
-        let nonlinearity = projected.map(f64::tanh);
+        let mut nonlinearity = &unmix_whitened * &whitened;
+        nonlinearity.apply(|value| *value = value.tanh());
         let derivative_means: Vec<f64> = (0..component_count)
             .map(|component| {
-                projected
+                nonlinearity
                     .row(component)
                     .iter()
-                    .map(|value| {
-                        let tanh = value.tanh();
-                        1.0 - tanh * tanh
-                    })
+                    .map(|tanh| 1.0 - tanh * tanh)
                     .sum::<f64>()
                     / sample_count as f64
             })
             .collect();
-        let mut next = (&nonlinearity * whitened.transpose()) / sample_count as f64;
+        let mut next = (&nonlinearity * &whitened_transpose) / sample_count as f64;
         for component in 0..component_count {
             for column in 0..component_count {
                 next[(component, column)] -=
@@ -140,12 +202,9 @@ pub fn fast_ica(
 
     let unmixing = &unmix_whitened * &whitening;
     let mixing = &dewhitening * unmix_whitened.transpose();
-    let activations = &unmix_whitened * whitened;
-    let (activations, unmixing, mixing, component_energies) =
-        normalize_components(activations, unmixing, mixing);
+    let (unmixing, mixing, component_energies) = normalize_model(unmixing, mixing);
 
-    Ok(IcaResult {
-        activations: matrix_rows(&activations),
+    Ok(IcaModelResult {
         unmixing_matrix: matrix_rows(&unmixing),
         mixing_matrix: matrix_rows(&mixing),
         whitening_matrix: matrix_rows(&whitening),
@@ -159,6 +218,136 @@ pub fn fast_ica(
         max_iterations,
         seed,
     })
+}
+
+pub fn apply_unmixing(
+    channel_major_samples: &[f64],
+    channel_count: usize,
+    sample_count: usize,
+    unmixing_matrix: &[Vec<f64>],
+    channel_means: &[f64],
+) -> Result<Vec<Vec<f64>>, String> {
+    let component_count = unmixing_matrix.len();
+    let mut output = vec![0.0; component_count.saturating_mul(sample_count)];
+    apply_unmixing_into(
+        channel_major_samples,
+        channel_count,
+        sample_count,
+        unmixing_matrix,
+        channel_means,
+        &mut output,
+    )?;
+    Ok(output
+        .chunks_exact(sample_count)
+        .map(|component| component.to_vec())
+        .collect())
+}
+
+pub fn apply_unmixing_flat_into(
+    channel_major_samples: &[f64],
+    channel_count: usize,
+    sample_count: usize,
+    row_major_unmixing: &[f64],
+    component_count: usize,
+    channel_means: &[f64],
+    output: &mut [f64],
+) -> Result<(), String> {
+    if row_major_unmixing.len() != component_count.saturating_mul(channel_count) {
+        return Err("ICA unmixing matrix dimensions do not match the channel count.".to_string());
+    }
+    if row_major_unmixing.iter().any(|value| !value.is_finite()) {
+        return Err("ICA unmixing matrix values must be finite.".to_string());
+    }
+    validate_projection(
+        channel_major_samples,
+        channel_count,
+        sample_count,
+        component_count,
+        channel_means,
+        output,
+    )?;
+    output.fill(0.0);
+    for (component, weights) in row_major_unmixing.chunks_exact(channel_count).enumerate() {
+        let component_output =
+            &mut output[component * sample_count..(component + 1) * sample_count];
+        for (channel, weight) in weights.iter().copied().enumerate() {
+            let mean = channel_means[channel];
+            let channel_samples =
+                &channel_major_samples[channel * sample_count..(channel + 1) * sample_count];
+            for (target, sample) in component_output.iter_mut().zip(channel_samples) {
+                *target += weight * (*sample - mean);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_unmixing_into(
+    channel_major_samples: &[f64],
+    channel_count: usize,
+    sample_count: usize,
+    unmixing_matrix: &[Vec<f64>],
+    channel_means: &[f64],
+    output: &mut [f64],
+) -> Result<(), String> {
+    let component_count = unmixing_matrix.len();
+    if unmixing_matrix.iter().any(|row| row.len() != channel_count) {
+        return Err("ICA unmixing matrix dimensions do not match the channel count.".to_string());
+    }
+    if unmixing_matrix
+        .iter()
+        .flatten()
+        .any(|value| !value.is_finite())
+    {
+        return Err("ICA unmixing matrix values must be finite.".to_string());
+    }
+    validate_projection(
+        channel_major_samples,
+        channel_count,
+        sample_count,
+        component_count,
+        channel_means,
+        output,
+    )?;
+    output.fill(0.0);
+    for (component, weights) in unmixing_matrix.iter().enumerate() {
+        let component_output =
+            &mut output[component * sample_count..(component + 1) * sample_count];
+        for (channel, weight) in weights.iter().copied().enumerate() {
+            let mean = channel_means[channel];
+            let channel_samples =
+                &channel_major_samples[channel * sample_count..(channel + 1) * sample_count];
+            for (target, sample) in component_output.iter_mut().zip(channel_samples) {
+                *target += weight * (*sample - mean);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_projection(
+    samples: &[f64],
+    channel_count: usize,
+    sample_count: usize,
+    component_count: usize,
+    channel_means: &[f64],
+    output: &[f64],
+) -> Result<(), String> {
+    if channel_count == 0 || sample_count == 0 || component_count == 0 {
+        return Err("ICA projection dimensions must be non-zero.".to_string());
+    }
+    if samples.len() != channel_count.saturating_mul(sample_count)
+        || channel_means.len() != channel_count
+        || output.len() != component_count.saturating_mul(sample_count)
+    {
+        return Err("ICA projection buffer dimensions do not match.".to_string());
+    }
+    if samples.iter().any(|value| !value.is_finite())
+        || channel_means.iter().any(|value| !value.is_finite())
+    {
+        return Err("ICA projection values must be finite.".to_string());
+    }
+    Ok(())
 }
 
 fn validate_input(
@@ -209,29 +398,17 @@ fn symmetric_decorrelation(matrix: DMatrix<f64>) -> Result<DMatrix<f64>, String>
     Ok(&eigen.eigenvectors * inverse_root * eigen.eigenvectors.transpose() * matrix)
 }
 
-fn normalize_components(
-    activations: DMatrix<f64>,
+fn normalize_model(
     unmixing: DMatrix<f64>,
     mixing: DMatrix<f64>,
-) -> (DMatrix<f64>, DMatrix<f64>, DMatrix<f64>, Vec<f64>) {
-    let component_count = activations.nrows();
-    let sample_count = activations.ncols();
+) -> (DMatrix<f64>, DMatrix<f64>, Vec<f64>) {
+    let component_count = unmixing.nrows();
     let raw_energy: Vec<f64> = (0..component_count)
-        .map(|component| {
-            let activation_variance = activations
-                .row(component)
-                .iter()
-                .map(|value| value * value)
-                .sum::<f64>()
-                / sample_count as f64;
-            let mixing_norm = mixing.column(component).norm_squared();
-            activation_variance * mixing_norm
-        })
+        .map(|component| mixing.column(component).norm_squared())
         .collect();
     let mut order: Vec<usize> = (0..component_count).collect();
     order.sort_by(|left, right| raw_energy[*right].total_cmp(&raw_energy[*left]));
 
-    let mut ordered_activations = DMatrix::zeros(component_count, sample_count);
     let mut ordered_unmixing = DMatrix::zeros(component_count, unmixing.ncols());
     let mut ordered_mixing = DMatrix::zeros(mixing.nrows(), component_count);
     let mut energies = Vec::with_capacity(component_count);
@@ -243,10 +420,6 @@ fn normalize_components(
             .max_by(|left, right| left.abs().total_cmp(&right.abs()))
             .unwrap_or(1.0);
         let sign = if dominant_loading < 0.0 { -1.0 } else { 1.0 };
-        for sample in 0..sample_count {
-            ordered_activations[(new_component, sample)] =
-                activations[(old_component, sample)] * sign;
-        }
         for channel in 0..unmixing.ncols() {
             ordered_unmixing[(new_component, channel)] = unmixing[(old_component, channel)] * sign;
         }
@@ -261,12 +434,7 @@ fn normalize_components(
             *energy /= total_energy;
         }
     }
-    (
-        ordered_activations,
-        ordered_unmixing,
-        ordered_mixing,
-        energies,
-    )
+    (ordered_unmixing, ordered_mixing, energies)
 }
 
 fn matrix_rows(matrix: &DMatrix<f64>) -> Vec<Vec<f64>> {

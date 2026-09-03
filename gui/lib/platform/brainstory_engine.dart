@@ -63,6 +63,18 @@ NativeIcaResult? computeIcaNative(
   );
 }
 
+List<List<double>>? applyIcaNative(
+  List<List<double>> channels, {
+  required List<List<double>> unmixingMatrix,
+  required List<double> channelMeans,
+}) {
+  return impl.applyIcaNative(
+    channels,
+    unmixingMatrix: unmixingMatrix,
+    channelMeans: channelMeans,
+  );
+}
+
 AggregateSeriesStats? computeAggregateSeriesStatsWithFallback(
   List<List<double>> traces,
 ) {
