@@ -5607,10 +5607,8 @@ class CanvasLogic {
           'channelEditSourceDatasetId': dataset.id,
           'markers': markerEditsValue,
           'applyEmptyMarkerSet': true,
-          'markerEditScope': hasInteractiveEdits ? 'selected' : 'all',
-          'markerEditDatasetIds': hasInteractiveEdits
-              ? <String>[dataset.id]
-              : <String>[],
+          'markerEditScope': 'all',
+          'markerEditDatasetIds': <String>[],
           'markerEditSourceDatasetId': dataset.id,
         },
       );
@@ -5643,10 +5641,8 @@ class CanvasLogic {
         params: <String, dynamic>{
           'markers': markerEditsValue,
           'applyEmptyMarkerSet': true,
-          'markerEditScope': hasInteractiveEdits ? 'selected' : 'all',
-          'markerEditDatasetIds': hasInteractiveEdits
-              ? <String>[dataset.id]
-              : <String>[],
+          'markerEditScope': 'all',
+          'markerEditDatasetIds': <String>[],
           'markerEditSourceDatasetId': dataset.id,
         },
       );

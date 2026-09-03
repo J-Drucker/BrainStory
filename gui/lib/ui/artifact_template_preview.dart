@@ -63,7 +63,7 @@ class ArtifactTemplatePreview extends StatelessWidget {
 
     return Container(
       width: hasTopomapData ? double.infinity : waveformWidth + 20,
-      height: hasTopomapData ? 308 : 132,
+      height: hasTopomapData ? 250 : 132,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(10),
@@ -74,9 +74,7 @@ class ArtifactTemplatePreview extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            hasTopomapData
-                ? 'Current template topomap'
-                : 'Current template summary',
+            'Current template summary',
             style: const TextStyle(
               color: Colors.white70,
               fontWeight: FontWeight.w600,
@@ -89,8 +87,8 @@ class ArtifactTemplatePreview extends StatelessWidget {
                     builder: (BuildContext context, BoxConstraints constraints) {
                       final double cardWidth = templates.length == 1
                           ? constraints.maxWidth
-                          : (constraints.maxWidth * 0.78)
-                                .clamp(220.0, 260.0)
+                          : (constraints.maxWidth * 0.9)
+                                .clamp(320.0, 430.0)
                                 .toDouble();
                       return ListView.separated(
                         scrollDirection: Axis.horizontal,
@@ -143,17 +141,39 @@ class ArtifactTemplatePreview extends StatelessWidget {
                                         fontSize: 11,
                                       ),
                                     ),
-                                    const SizedBox(height: 6),
+                                    const SizedBox(height: 8),
                                     Expanded(
-                                      child: InterpolatedTopomap(
-                                        key: ValueKey<String>(
-                                          '${template.label}:${template.exemplarCount}:${template.sampleCount}:${points.map((TopomapPointValue point) => point.value.toStringAsFixed(3)).join(',')}',
-                                        ),
-                                        points: points,
-                                        scale: sharedScale,
-                                        bounds: sharedBounds,
-                                        showLabels: false,
-                                        sampleDensity: 2.0,
+                                      child: Row(
+                                        children: <Widget>[
+                                          Expanded(
+                                            child: _LabeledTemplatePanel(
+                                              label: 'Waveform',
+                                              child:
+                                                  _ArtifactTemplateWaveformFallback(
+                                                    templates:
+                                                        <
+                                                          ArtifactTemplateSummary
+                                                        >[template],
+                                                  ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: _LabeledTemplatePanel(
+                                              label: 'Topomap',
+                                              child: InterpolatedTopomap(
+                                                key: ValueKey<String>(
+                                                  '${template.label}:${template.exemplarCount}:${template.sampleCount}:${points.map((TopomapPointValue point) => point.value.toStringAsFixed(3)).join(',')}',
+                                                ),
+                                                points: points,
+                                                scale: sharedScale,
+                                                bounds: sharedBounds,
+                                                showLabels: false,
+                                                sampleDensity: 2.0,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -169,6 +189,28 @@ class ArtifactTemplatePreview extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LabeledTemplatePanel extends StatelessWidget {
+  const _LabeledTemplatePanel({required this.label, required this.child});
+
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
+        ),
+        const SizedBox(height: 4),
+        Expanded(child: child),
+      ],
     );
   }
 }

@@ -35,11 +35,13 @@ import 'package:brainstory_gui/nodes/sleep_staging_node.dart';
 import 'package:brainstory_gui/nodes/spectral_features_node.dart';
 import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/platform/ant_cnt_import.dart';
+import 'package:brainstory_gui/ui/artifact_template_preview.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/canvas_view.dart';
 import 'package:brainstory_gui/ui/connection_painter.dart';
 import 'package:brainstory_gui/ui/node_card.dart';
 import 'package:brainstory_gui/ui/raw_signal_browser.dart';
+import 'package:brainstory_gui/ui/topomap_view.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -2044,6 +2046,122 @@ Mk2=Response,Response,4,1,0
       );
     },
   );
+
+  test(
+    'marker edits stay global while interactive detection stays dataset-specific',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset first = Dataset('dataset-1', label: 'First')
+        ..timeSeries = TimeSeriesData(
+          samples: List<double>.filled(64, 0.0),
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+        );
+      final Dataset second = Dataset('dataset-2', label: 'Second')
+        ..timeSeries = TimeSeriesData(
+          samples: List<double>.filled(64, 0.0),
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+        );
+      logic.datasets
+        ..[first.id] = first
+        ..[second.id] = second;
+      logic.addNode(ImportNodeType());
+      final NodeModel source = logic.nodes.single;
+      source.datasetStates
+        ..[first.id] = DatasetState.done
+        ..[second.id] = DatasetState.done;
+
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: first,
+        markerEdits: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': first.id,
+            'label': 'task',
+            'onsetMicros': 1000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+        ],
+        interactiveArtifactParams: <String, dynamic>{
+          'artifactExemplars': <Map<String, dynamic>>[
+            const ArtifactExemplarData(
+              id: 'blink-1',
+              datasetId: 'dataset-1',
+              label: 'blink',
+              onsetMicros: 1000,
+              durationMicros: 50000,
+            ).toJson(),
+          ],
+          'artifactCandidates': <Map<String, dynamic>>[],
+          'artifactTemplates': <Map<String, dynamic>>[],
+        },
+      );
+
+      final NodeModel markerNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      );
+      final NodeModel detectionNode = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is InteractiveArtifactDetectionNodeType,
+      );
+      expect(markerNode.params['markerEditScope'], 'all');
+      expect(detectionNode.params['selectedDatasetIds'], <String>[first.id]);
+      expect(
+        InteractiveArtifactDetectionNodeType.exemplarsForDataset(
+          second.id,
+          detectionNode.params,
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets('blink template shows waveform beside topomap when positioned', (
+    WidgetTester tester,
+  ) async {
+    const ArtifactTemplateSummary template = ArtifactTemplateSummary(
+      datasetId: 'dataset-1',
+      label: 'blink',
+      exemplarCount: 2,
+      sampleCount: 3,
+      durationMicros: 30000,
+      previewSamples: <double>[0, 1, 0],
+      previewChannels: <List<double>>[
+        <double>[0, 1, 0],
+        <double>[0, -1, 0],
+        <double>[0, 0.5, 0],
+      ],
+      peakTopomapValues: <double>[1, -1, 0.5],
+    );
+    const Map<String, ChannelCoordinate> coordinates =
+        <String, ChannelCoordinate>{
+          'Fp1': ChannelCoordinate(label: 'Fp1', x: -0.5, y: 0.7, z: 0.5),
+          'Fp2': ChannelCoordinate(label: 'Fp2', x: 0.5, y: 0.7, z: 0.5),
+          'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+        };
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 700,
+            child: ArtifactTemplatePreview(
+              templates: <ArtifactTemplateSummary>[template],
+              channelLabels: <String>['Fp1', 'Fp2', 'Cz'],
+              channelCoordinates: coordinates,
+              pixelsPerSecond: 100,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Waveform'), findsOneWidget);
+    expect(find.text('Topomap'), findsOneWidget);
+    expect(find.byType(InterpolatedTopomap), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   test('interactive detection stores multiple files in one node', () async {
     final CanvasLogic logic = CanvasLogic();
