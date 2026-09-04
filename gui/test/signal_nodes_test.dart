@@ -4402,6 +4402,85 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(pulseAverage['sampleCount'], 200);
   });
 
+  test('event segmentation anchors windows to the event sample', () async {
+    final Dataset dataset = Dataset('sample-alignment', label: 'Alignment')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.generate(512, (int index) => index.toDouble()),
+        sampleRate: 256.0,
+        channelLabels: const <String>['Cz'],
+        markers: const <TimeMarker>[
+          TimeMarker(onsetMicros: 1000001, label: 'rare'),
+        ],
+      );
+
+    await SegmentationNodeType().run(dataset, <String, dynamic>{
+      'mode': 'events',
+      'eventWindowStartMs': -200.0,
+      'eventWindowStopMs': 800.0,
+      'includedMarkers': <String, dynamic>{'event|rare': true},
+    });
+
+    final SignalSegmentData segment =
+        dataset.segmentedTimeSeries!.segments.single;
+    expect(segment.sourceStartSample, 205);
+    expect(segment.sourceStopSampleExclusive, 461);
+    expect(segment.anchorTimeSeconds, 1.0);
+    expect(
+      (segment.startSeconds - segment.anchorTimeSeconds!) * 1000.0,
+      closeTo(-199.21875, 0.000001),
+    );
+  });
+
+  test('bad markers exclude epochs by overlap rather than condition label', () {
+    final TimeSeriesData source = TimeSeriesData(
+      samples: <double>[0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      sampleRate: 10.0,
+      markers: <TimeMarker>[
+        TimeMarker(onsetMicros: 500000, label: 'rare'),
+        TimeMarker(
+          onsetMicros: 650000,
+          durationMicros: 200000,
+          label: 'blink',
+          markerType: MarkerType.artifact,
+        ),
+      ],
+    );
+    const SignalSegmentData overlapping = SignalSegmentData(
+      startSeconds: 0.3,
+      stopSeconds: 0.8,
+      label: 'rare',
+      kind: MarkerType.event,
+      sourceStartSample: 3,
+      sourceStopSampleExclusive: 8,
+    );
+    const SignalSegmentData clean = SignalSegmentData(
+      startSeconds: 0.0,
+      stopSeconds: 0.4,
+      label: 'rare',
+      kind: MarkerType.event,
+      sourceStartSample: 0,
+      sourceStopSampleExclusive: 4,
+    );
+    const Set<String> badKeys = <String>{'artifact|blink'};
+
+    expect(
+      segmentOverlapsSelectedBadMarker(
+        segment: overlapping,
+        sourceTimeSeries: source,
+        badMarkerKeys: badKeys,
+      ),
+      isTrue,
+    );
+    expect(
+      segmentOverlapsSelectedBadMarker(
+        segment: clean,
+        sourceTimeSeries: source,
+        badMarkerKeys: badKeys,
+      ),
+      isFalse,
+    );
+  });
+
   test(
     'event segmentation optionally baseline-corrects output artifacts',
     () async {

@@ -11,6 +11,7 @@ import '../model/node.dart';
 import '../platform/brainstory_engine.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/edit_channels_node.dart';
+import '../nodes/segmentation_node.dart';
 import 'canvas_logic.dart';
 import 'channel_positions_dialog.dart';
 import 'ica_viewer.dart';
@@ -1121,6 +1122,8 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     final Set<String> badMarkerKeys = _badSegmentationMarkerKeys(
       params['considerBadMarkers'],
     );
+    final TimeSeriesData? sourceTimeSeries =
+        segmented.sourceTimeSeries ?? widget.dataset.timeSeries;
     final String badTooltip = badMarkerKeys.isEmpty
         ? 'No marker labels are marked bad in Segmentation parameters.'
         : 'Bad markers: ${badMarkerKeys.map(_markerLabelForKey).join(', ')}';
@@ -1133,7 +1136,13 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     final List<SignalSegmentData> visibleSegments = configuredSegments
         .where(
           (SignalSegmentData segment) =>
-              !excludeBad || !_segmentMatchesMarkerKeys(segment, badMarkerKeys),
+              !excludeBad ||
+              sourceTimeSeries == null ||
+              !segmentOverlapsSelectedBadMarker(
+                segment: segment,
+                sourceTimeSeries: sourceTimeSeries,
+                badMarkerKeys: badMarkerKeys,
+              ),
         )
         .toList(growable: false);
     if (visibleSegments.isEmpty) {
@@ -1150,7 +1159,8 @@ class _SegmentedChartState extends State<_SegmentedChart> {
         .toString();
     final String segmentMode = (params['segmented_segment_mode'] ?? 'average')
         .toString();
-    final bool displayBaseline = true;
+    // Segmentation owns baseline correction. The viewer must not alter data.
+    final bool displayBaseline = false;
     final bool baselineConfigured = _segmentationBaselineConfigured(params);
     final double baselineStartMs = baselineConfigured
         ? (params['eventBaselineStartMs'] as num?)?.toDouble() ?? -200.0
@@ -3697,18 +3707,6 @@ String _markerLabelForKey(String key) {
       ? key.trim()
       : key.substring(separatorIndex + 1).trim();
   return label.isEmpty ? 'Unlabeled' : label;
-}
-
-bool _segmentMatchesMarkerKeys(
-  SignalSegmentData segment,
-  Set<String> markerKeys,
-) {
-  if (markerKeys.isEmpty) {
-    return false;
-  }
-  return markerKeys.contains(
-    markerKeyForKindAndLabel(kind: segment.kind, label: segment.label),
-  );
 }
 
 bool _truthyBool(dynamic value) {

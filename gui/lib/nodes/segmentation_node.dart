@@ -440,17 +440,18 @@ List<SignalSegmentData> _buildEventSegments({
     if (!_markerIncluded(marker, includedMarkers)) {
       continue;
     }
+    final int anchorIndex = marker.onsetSamples(sampleRate);
     final int startIndex =
-        ((marker.timeSeconds + startOffsetSeconds) * sampleRate).round();
+        anchorIndex + (startOffsetSeconds * sampleRate).round();
     final int stopIndex =
-        ((marker.timeSeconds + stopOffsetSeconds) * sampleRate).round();
+        anchorIndex + (stopOffsetSeconds * sampleRate).round();
     final SignalSegmentData? segment = _extractSegment(
       timeSeries: timeSeries,
       startIndex: startIndex,
       stopIndex: stopIndex,
       label: marker.label,
       kind: marker.kind,
-      anchorTimeSeconds: marker.timeSeconds,
+      anchorTimeSeconds: anchorIndex / sampleRate,
     );
     if (segment != null) {
       segments.add(segment);
@@ -458,6 +459,44 @@ List<SignalSegmentData> _buildEventSegments({
   }
 
   return segments;
+}
+
+bool segmentOverlapsSelectedBadMarker({
+  required SignalSegmentData segment,
+  required TimeSeriesData sourceTimeSeries,
+  required Set<String> badMarkerKeys,
+}) {
+  if (badMarkerKeys.isEmpty || sourceTimeSeries.sampleRate <= 0) {
+    return false;
+  }
+  final double sampleRate = sourceTimeSeries.sampleRate;
+  final int segmentStart =
+      segment.sourceStartSample ?? (segment.startSeconds * sampleRate).round();
+  final int segmentStop =
+      segment.sourceStopSampleExclusive ??
+      (segment.stopSeconds * sampleRate).round();
+  if (segmentStop <= segmentStart) {
+    return false;
+  }
+
+  for (final TimeMarker marker in sourceTimeSeries.markers) {
+    if (!badMarkerKeys.contains(markerKeyForMarker(marker))) {
+      continue;
+    }
+    final int markerStart = marker.onsetSamples(sampleRate);
+    final int markerDuration = marker.durationSamples(sampleRate);
+    if (markerDuration <= 0) {
+      if (markerStart >= segmentStart && markerStart < segmentStop) {
+        return true;
+      }
+      continue;
+    }
+    final int markerStop = markerStart + markerDuration;
+    if (markerStart < segmentStop && markerStop > segmentStart) {
+      return true;
+    }
+  }
+  return false;
 }
 
 List<SignalSegmentData> _baselineCorrectEventSegments({
