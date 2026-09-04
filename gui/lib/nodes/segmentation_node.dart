@@ -494,14 +494,14 @@ SignalSegmentData _baselineCorrectEventSegment({
   }
   final double anchorSeconds =
       segment.anchorTimeSeconds ?? segment.startSeconds;
-  final int baselineStart =
+  final int requestedBaselineStart =
       ((anchorSeconds + baselineStartMs / 1000.0) * timeSeries.sampleRate)
-          .round()
-          .clamp(0, timeSeries.sampleCount);
-  final int baselineStop =
+          .round();
+  final int requestedBaselineStop =
       ((anchorSeconds + baselineStopMs / 1000.0) * timeSeries.sampleRate)
-          .round()
-          .clamp(0, timeSeries.sampleCount);
+          .round();
+  final int baselineStart = requestedBaselineStart.clamp(start, stop);
+  final int baselineStop = requestedBaselineStop.clamp(start, stop);
   final int anchorIndex = (anchorSeconds * timeSeries.sampleRate).round().clamp(
     start,
     stop - 1,
@@ -512,11 +512,17 @@ SignalSegmentData _baselineCorrectEventSegment({
         final List<double> values = channel.sublist(start, stop);
         double baselineValue;
         if (useBaselineWindow) {
+          final int localBaselineStart = baselineStart - start;
+          final int localBaselineStop = baselineStop - start;
           double sum = 0.0;
-          for (int index = baselineStart; index < baselineStop; index++) {
-            sum += channel[index];
+          for (
+            int index = localBaselineStart;
+            index < localBaselineStop;
+            index++
+          ) {
+            sum += values[index];
           }
-          baselineValue = sum / (baselineStop - baselineStart);
+          baselineValue = sum / (localBaselineStop - localBaselineStart);
         } else {
           baselineValue = channel[anchorIndex];
         }

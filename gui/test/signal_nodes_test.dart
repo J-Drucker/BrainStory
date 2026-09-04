@@ -4203,6 +4203,58 @@ Mk2=Artifact,Bad Segment,11,5,0
   );
 
   test(
+    'event baseline means are independent for every segment and channel',
+    () async {
+      final List<double> firstChannel = List<double>.filled(20, 0);
+      final List<double> secondChannel = List<double>.filled(20, 0);
+      firstChannel.setRange(3, 7, const <double>[10, 12, 20, 22]);
+      secondChannel.setRange(3, 7, const <double>[100, 104, 120, 124]);
+      firstChannel.setRange(13, 17, const <double>[30, 34, 50, 54]);
+      secondChannel.setRange(13, 17, const <double>[200, 206, 230, 236]);
+      final Dataset dataset = Dataset('multi-baseline', label: 'Example')
+        ..timeSeries = TimeSeriesData(
+          channelSamples: <List<double>>[firstChannel, secondChannel],
+          sampleRate: 1000,
+          channelLabels: const <String>['Cz', 'Pz'],
+          markers: const <TimeMarker>[
+            TimeMarker(
+              onsetMicros: 5000,
+              label: 'stim',
+              markerType: MarkerType.event,
+            ),
+            TimeMarker(
+              onsetMicros: 15000,
+              label: 'stim',
+              markerType: MarkerType.event,
+            ),
+          ],
+        );
+
+      await SegmentationNodeType().run(dataset, <String, dynamic>{
+        'mode': 'events',
+        'eventWindowStartMs': -2.0,
+        'eventWindowStopMs': 2.0,
+        'eventApplyBaseline': true,
+        'eventBaselineStartMs': -2.0,
+        'eventBaselineStopMs': 0.0,
+        'includedMarkers': <String, dynamic>{'event|stim': true},
+      });
+
+      final List<SignalSegmentData> segments =
+          dataset.segmentedTimeSeries!.segments;
+      expect(segments, hasLength(2));
+      expect(segments[0].channelSamples, <List<double>>[
+        <double>[-1, 1, 9, 11],
+        <double>[-2, 2, 18, 22],
+      ]);
+      expect(segments[1].channelSamples, <List<double>>[
+        <double>[-2, 2, 18, 22],
+        <double>[-3, 3, 27, 33],
+      ]);
+    },
+  );
+
+  test(
     'segmented snapshots materialize source-window samples for persistence',
     () async {
       final Dataset dataset = Dataset('segments', label: 'Segmented');
