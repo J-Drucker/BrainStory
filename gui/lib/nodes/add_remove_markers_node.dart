@@ -33,6 +33,7 @@ class AddRemoveMarkersNodeType extends NodeType {
     'markers': <Map<String, dynamic>>[],
     'applyEmptyMarkerSet': false,
     'markerEditOperations': <String, dynamic>{},
+    'markerEditOriginalMarkers': <Map<String, dynamic>>[],
     'markerEditScope': 'all',
     'markerEditDatasetIds': <String>[],
   };
@@ -90,8 +91,13 @@ class AddRemoveMarkersNodeType extends NodeType {
     final Map<String, dynamic> operations = Map<String, dynamic>.from(
       params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
     );
+    final List<dynamic> originalMarkers =
+        params['markerEditOriginalMarkers'] as List<dynamic>? ??
+        const <dynamic>[];
     final List<TimeMarker> markers = operations.isNotEmpty
-        ? dataset.timeSeries!.markers
+        ? markersForDataset(dataset.id, originalMarkers).isNotEmpty
+              ? markersForDataset(dataset.id, originalMarkers)
+              : dataset.timeSeries!.markers
         : ((params['applyEmptyMarkerSet'] as bool?) ?? false) ||
               rawMarkers.isNotEmpty
         ? markersForDataset(dataset.id, rawMarkers)
@@ -115,6 +121,13 @@ class AddRemoveMarkersNodeType extends NodeType {
               initialOperations: operations,
               onOperationsChanged: (Map<String, dynamic> nextOperations) {
                 setState(() {
+                  params['markerEditOriginalMarkers'] =
+                      _replaceMarkersForDataset(
+                        dataset.id,
+                        params['markerEditOriginalMarkers'] as List<dynamic>? ??
+                            const <dynamic>[],
+                        markers,
+                      );
                   params['markerEditOperations'] = nextOperations;
                   params['markerEditSourceDatasetId'] = dataset.id;
                 });
@@ -227,6 +240,27 @@ class AddRemoveMarkersNodeType extends NodeType {
     return selected.isEmpty
         ? datasetId == sourceId
         : selected.contains(datasetId);
+  }
+
+  static List<Map<String, dynamic>> _replaceMarkersForDataset(
+    String datasetId,
+    List<dynamic> existing,
+    List<TimeMarker> markers,
+  ) {
+    return <Map<String, dynamic>>[
+      ...existing
+          .whereType<Map>()
+          .map((Map value) => Map<String, dynamic>.from(value))
+          .where(
+            (Map<String, dynamic> value) => value['datasetId'] != datasetId,
+          ),
+      ...markers.map(
+        (TimeMarker marker) => <String, dynamic>{
+          'datasetId': datasetId,
+          ...marker.toJson(),
+        },
+      ),
+    ];
   }
 
   static List<TimeMarker> applyMarkerEditOperations(

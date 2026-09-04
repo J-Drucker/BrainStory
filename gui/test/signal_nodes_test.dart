@@ -2190,6 +2190,103 @@ Mk2=Response,Response,4,1,0
     },
   );
 
+  test(
+    'viewer marker recoding rules run across every parent dataset',
+    () async {
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset first = Dataset('dataset-1', label: 'First')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+          markers: const <TimeMarker>[
+            TimeMarker(onsetMicros: 0, label: 'cue'),
+            TimeMarker(onsetMicros: 1000, label: 'correct'),
+          ],
+        );
+      final Dataset second = Dataset('dataset-2', label: 'Second')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, -1, 0],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+          markers: const <TimeMarker>[
+            TimeMarker(onsetMicros: 0, label: 'cue'),
+            TimeMarker(onsetMicros: 1000, label: 'incorrect'),
+          ],
+        );
+      logic.datasets
+        ..[first.id] = first
+        ..[second.id] = second;
+      logic.addNode(ImportNodeType());
+      final NodeModel source = logic.nodes.single;
+      source.params['selectedDatasetIds'] = <String>[first.id, second.id];
+      source.datasetStates
+        ..[first.id] = DatasetState.done
+        ..[second.id] = DatasetState.done;
+
+      final Map<String, dynamic> operations = <String, dynamic>{
+        'renames': <String, dynamic>{},
+        'deletedLabels': <String>[],
+        'logicRules': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'originLabel': 'cue',
+            'timeLockLabels': <String>['cue'],
+            'logicLabels': <String>['correct', 'incorrect'],
+            'recodeLabels': <String, String>{
+              'correct': 'correct response',
+              'incorrect': 'incorrect response',
+            },
+            'matchMode': MarkerLogicMatchMode.firstSubsequent.name,
+            'windowStartMs': 0.0,
+            'windowEndMs': 1000.0,
+            'keepOriginalMarkers': false,
+          },
+        ],
+        'boundaryRules': <Map<String, dynamic>>[],
+      };
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: first,
+        markerEditOperations: operations,
+        markerOriginalMarkers: first.timeSeries!.markers
+            .map(
+              (TimeMarker marker) => <String, dynamic>{
+                'datasetId': first.id,
+                ...marker.toJson(),
+              },
+            )
+            .toList(growable: false),
+      );
+      final NodeModel edit = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      );
+
+      await logic.runThisStep(edit.id);
+
+      expect(first.timeSeries!.markers.first.label, 'correct response');
+      expect(second.timeSeries!.markers.first.label, 'incorrect response');
+      expect(edit.datasetStates[first.id], DatasetState.done);
+      expect(edit.datasetStates[second.id], DatasetState.done);
+
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: first,
+        markerEditOperations: operations,
+        markerOriginalMarkers: first.timeSeries!.markers
+            .map(
+              (TimeMarker marker) => <String, dynamic>{
+                'datasetId': first.id,
+                ...marker.toJson(),
+              },
+            )
+            .toList(growable: false),
+        saveToExistingNode: true,
+      );
+      expect(edit.datasetStates[first.id], DatasetState.stale);
+      expect(edit.datasetStates[second.id], DatasetState.stale);
+    },
+  );
+
   test('viewer edits can update an existing child edit node', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example')
@@ -3706,6 +3803,7 @@ time,Fz,Cz
     expect(find.text('Apply to'), findsOneWidget);
     expect(find.text('this dataset'), findsNWidgets(2));
     expect(find.text('all datasets'), findsNWidgets(2));
+    await tester.enterText(find.byType(TextField).first, 'Fz renamed');
     await tester.tap(find.text('Markers'));
     await tester.pumpAndSettle();
     expect(find.text('Rename or delete marker labels.'), findsOneWidget);
@@ -3739,8 +3837,86 @@ time,Fz,Cz
     await tester.pumpAndSettle();
     expect(find.text('Recode markers using logic'), findsNothing);
     expect(find.byIcon(Icons.check), findsOneWidget);
+    await tester.tap(find.text('Channels'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widgetList<TextField>(find.byType(TextField))
+          .any((TextField field) => field.controller?.text == 'Fz renamed'),
+      isTrue,
+    );
+    await tester.tap(find.text('Markers'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.check), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'marker parameters show original labels for saved recoding rules',
+    (WidgetTester tester) async {
+      final Dataset dataset = Dataset('dataset-1', label: 'Example')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+          markers: const <TimeMarker>[
+            TimeMarker(onsetMicros: 0, label: 'correct response'),
+          ],
+        );
+      final Map<String, dynamic> params = <String, dynamic>{
+        ...AddRemoveMarkersNodeType().defaultParams,
+        'selectedDatasetIds': <String>[dataset.id],
+        'markerEditOriginalMarkers': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            ...const TimeMarker(onsetMicros: 0, label: 'cue').toJson(),
+          },
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            ...const TimeMarker(onsetMicros: 1000, label: 'correct').toJson(),
+          },
+        ],
+        'markerEditOperations': <String, dynamic>{
+          'logicRules': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'originLabel': 'cue',
+              'timeLockLabels': <String>['cue'],
+              'logicLabels': <String>['correct'],
+              'recodeLabels': <String, String>{'correct': 'correct response'},
+              'matchMode': MarkerLogicMatchMode.firstSubsequent.name,
+            },
+          ],
+        },
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: AddRemoveMarkersNodeType().buildBody(
+              params,
+              datasets: <String, Dataset>{dataset.id: dataset},
+              setState: (VoidCallback change) => change(),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('cue'), findsOneWidget);
+      expect(find.text('correct'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      await tester.tap(
+        find.ancestor(
+          of: find.byIcon(Icons.check),
+          matching: find.byType(OutlinedButton),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Recode markers using logic'), findsOneWidget);
+      expect(find.text('• If correct, recode original as'), findsOneWidget);
+      expect(find.text('correct response'), findsOneWidget);
+    },
+  );
 
   test('loadDatasetSignal imports the sample EDF fixture', () async {
     final ParsedSignalData parsed = await loadDatasetSignal(

@@ -109,7 +109,7 @@ class MarkerDatasetScopeControl extends StatelessWidget {
   }
 }
 
-class ChannelMarkerEditConfigEditor extends StatelessWidget {
+class ChannelMarkerEditConfigEditor extends StatefulWidget {
   const ChannelMarkerEditConfigEditor({
     super.key,
     required this.dataset,
@@ -136,8 +136,52 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
   final Widget? channelHeaderAction;
 
   @override
+  State<ChannelMarkerEditConfigEditor> createState() =>
+      _ChannelMarkerEditConfigEditorState();
+}
+
+class _ChannelMarkerEditConfigEditorState
+    extends State<ChannelMarkerEditConfigEditor>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  late Map<String, dynamic> _channelConfig;
+
+  @override
+  void initState() {
+    super.initState();
+    _channelConfig = Map<String, dynamic>.from(widget.channelConfig);
+    _tabController = TabController(
+      length: 2,
+      initialIndex: widget.initialTab.index,
+      vsync: this,
+    )..addListener(_handleTabChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant ChannelMarkerEditConfigEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.channelConfig, widget.channelConfig)) {
+      _channelConfig = Map<String, dynamic>.from(widget.channelConfig);
+    }
+  }
+
+  void _handleTabChanged() {
+    if (!_tabController.indexIsChanging && mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController
+      ..removeListener(_handleTabChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final TimeSeriesData? series = dataset.timeSeries;
+    final TimeSeriesData? series = widget.dataset.timeSeries;
     final List<String> currentLabels = series == null
         ? const <String>[]
         : series.channelLabels.length == series.channelCount
@@ -149,62 +193,63 @@ class ChannelMarkerEditConfigEditor extends StatelessWidget {
                 : 'Ch ${index + 1}',
           );
     final List<String> labels = EditChannelsNodeType.channelLabelsForEditor(
-      channelConfig,
+      _channelConfig,
       currentLabels,
     );
-    return DefaultTabController(
-      initialIndex: initialTab.index,
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const TabBar(
-            tabs: <Tab>[
-              Tab(text: 'Channels'),
-              Tab(text: 'Markers'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        TabBar(
+          controller: _tabController,
+          tabs: const <Tab>[
+            Tab(text: 'Channels'),
+            Tab(text: 'Markers'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: IndexedStack(
+            index: _tabController.index,
+            children: <Widget>[
+              if (series == null)
+                const Center(child: Text('No time-domain channels.'))
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    if (widget.channelHeaderAction != null) ...<Widget>[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: widget.channelHeaderAction!,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Expanded(
+                      child: ChannelEditConfigEditor(
+                        channelLabels: labels,
+                        config: _channelConfig,
+                        initialVisibleChannelIndices:
+                            widget.initialVisibleChannelIndices,
+                        currentCoordinateCount:
+                            series.channelCoordinates.length,
+                        onChanged: (Map<String, dynamic> config) {
+                          _channelConfig = config;
+                          widget.onChannelConfigChanged(config);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              MarkerLabelEditConfigEditor(
+                markers: widget.markers,
+                onChanged: widget.onMarkersChanged,
+                initialOperations: widget.initialMarkerOperations,
+                onOperationsChanged: widget.onMarkerOperationsChanged,
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: TabBarView(
-              children: <Widget>[
-                if (series == null)
-                  const Center(child: Text('No time-domain channels.'))
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      if (channelHeaderAction != null) ...<Widget>[
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: channelHeaderAction!,
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      Expanded(
-                        child: ChannelEditConfigEditor(
-                          channelLabels: labels,
-                          config: channelConfig,
-                          initialVisibleChannelIndices:
-                              initialVisibleChannelIndices,
-                          currentCoordinateCount:
-                              series.channelCoordinates.length,
-                          onChanged: onChannelConfigChanged,
-                        ),
-                      ),
-                    ],
-                  ),
-                MarkerLabelEditConfigEditor(
-                  markers: markers,
-                  onChanged: onMarkersChanged,
-                  initialOperations: initialMarkerOperations,
-                  onOperationsChanged: onMarkerOperationsChanged,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

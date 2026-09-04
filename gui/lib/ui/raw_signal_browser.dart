@@ -42,6 +42,8 @@ class RawSignalBrowser extends StatefulWidget {
 class ViewerDraftSaveRequest {
   const ViewerDraftSaveRequest({
     this.markerEdits,
+    this.markerEditOperations,
+    this.markerOriginalMarkers,
     this.channelEditConfig,
     this.interactiveArtifactParams,
     this.runAfterSave = false,
@@ -49,12 +51,15 @@ class ViewerDraftSaveRequest {
   });
 
   final List<Map<String, dynamic>>? markerEdits;
+  final Map<String, dynamic>? markerEditOperations;
+  final List<Map<String, dynamic>>? markerOriginalMarkers;
   final Map<String, dynamic>? channelEditConfig;
   final Map<String, dynamic>? interactiveArtifactParams;
   final bool runAfterSave;
   final bool saveToExistingNode;
 
-  bool get hasMarkerEdits => markerEdits != null;
+  bool get hasMarkerEdits =>
+      markerEdits != null || markerEditOperations != null;
   bool get hasChannelEdits => channelEditConfig != null;
   bool get hasInteractiveArtifactEdits => interactiveArtifactParams != null;
 }
@@ -124,6 +129,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   List<Map<String, dynamic>>? _draftArtifactExemplars;
   List<Map<String, dynamic>>? _draftArtifactCandidates;
   List<Map<String, dynamic>>? _draftArtifactTemplates;
+  Map<String, dynamic>? _draftMarkerEditOperations;
+  List<Map<String, dynamic>>? _draftMarkerOriginalMarkers;
   String? _lastPersistedDraftFingerprint;
   Offset? _dragSelectionStart;
   Offset? _dragSelectionCurrent;
@@ -145,6 +152,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     _horizontalController = ScrollController(keepScrollOffset: false);
     _viewIdentity = _currentViewIdentity();
     _ensureDefaults();
+    _savedChangesSummary = _savedChangesSummaryFromParams();
     _scheduleViewportReset();
   }
 
@@ -153,9 +161,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     super.didUpdateWidget(oldWidget);
     _ensureDefaults();
     final String nextIdentity = _currentViewIdentity();
+    _savedChangesSummary ??= _savedChangesSummaryFromParams();
     if (_viewIdentity != nextIdentity) {
       _viewIdentity = nextIdentity;
       _draftMarkers = null;
+      _draftMarkerEditOperations = null;
+      _draftMarkerOriginalMarkers = null;
       _draftChannelEditConfig = null;
       _lastPersistedDraftFingerprint = null;
       _scheduleViewportReset();
@@ -1423,7 +1434,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                     child: ChannelMarkerEditConfigEditor(
                       dataset: widget.dataset,
                       channelConfig: _effectiveChannelEditConfig(),
-                      markers: _currentMarkersForDataset(),
+                      markers: _markerEditorBaseMarkers(),
+                      initialMarkerOperations: _effectiveMarkerEditOperations(),
                       initialTab: initialTab,
                       initialVisibleChannelIndices: channelIndex == null
                           ? null
@@ -1441,8 +1453,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                           _draftChannelEditConfig = config;
                         });
                       },
+                      onMarkerOperationsChanged:
+                          (Map<String, dynamic> operations) {
+                            setState(() {
+                              _draftMarkerOriginalMarkers ??=
+                                  _serializeMarkersForCurrentDataset(
+                                    baseTimeSeries.markers,
+                                  );
+                              _draftMarkerEditOperations =
+                                  Map<String, dynamic>.from(operations);
+                            });
+                          },
                       onMarkersChanged: (List<TimeMarker> markers) {
-                        _setDraftMarkersForDataset(markers);
+                        _setDraftMarkersForDataset(
+                          markers,
+                          preserveOperations: true,
+                        );
                       },
                     ),
                   ),
@@ -1595,7 +1621,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       _draftMarkers ??
       (widget.params['markers'] as List<dynamic>? ?? <dynamic>[]);
 
-  bool get _hasMarkerDraft => _draftMarkers != null;
+  bool get _hasMarkerDraft =>
+      _draftMarkers != null || _draftMarkerEditOperations != null;
 
   bool get _hasChannelEditDraft => _draftChannelEditConfig != null;
 
@@ -1617,6 +1644,57 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   Map<String, dynamic> _effectiveChannelEditConfig() {
     return _draftChannelEditConfig ??
         EditChannelsNodeType.configForDataset(widget.params, widget.dataset.id);
+  }
+
+  Map<String, dynamic> _effectiveMarkerEditOperations() {
+    return _draftMarkerEditOperations ??
+        Map<String, dynamic>.from(
+          widget.params['markerEditOperations'] as Map? ??
+              const <String, dynamic>{},
+        );
+  }
+
+  List<TimeMarker> _markerEditorBaseMarkers() {
+    final List<Map<String, dynamic>> originals =
+        _draftMarkerOriginalMarkers ??
+        (widget.params['markerEditOriginalMarkers'] as List<dynamic>? ??
+                const <dynamic>[])
+            .whereType<Map>()
+            .map((Map value) => Map<String, dynamic>.from(value))
+            .toList(growable: false);
+    final List<TimeMarker> stored = _markersForCurrentDataset(originals);
+    return stored.isNotEmpty
+        ? stored
+        : widget.dataset.timeSeries?.markers ?? const <TimeMarker>[];
+  }
+
+  List<Map<String, dynamic>> _serializeMarkersForCurrentDataset(
+    List<TimeMarker> markers,
+  ) {
+    return markers
+        .map(
+          (TimeMarker marker) => <String, dynamic>{
+            'datasetId': widget.dataset.id,
+            ...marker.toJson(),
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<TimeMarker> _markersForCurrentDataset(
+    List<Map<String, dynamic>> markers,
+  ) {
+    return markers
+        .where(
+          (Map<String, dynamic> marker) =>
+              marker['datasetId'] == widget.dataset.id,
+        )
+        .map((Map<String, dynamic> marker) {
+          final Map<String, dynamic> payload = Map<String, dynamic>.from(marker)
+            ..remove('datasetId');
+          return TimeMarker.fromJson(payload);
+        })
+        .toList(growable: false);
   }
 
   bool _interactiveArtifactDetectionEnabled() =>
@@ -1857,7 +1935,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
-  void _setDraftMarkersForDataset(List<TimeMarker> markers) {
+  void _setDraftMarkersForDataset(
+    List<TimeMarker> markers, {
+    bool preserveOperations = false,
+  }) {
     final List<dynamic> rawMarkers = _effectiveRawMarkers;
     final List<Map<String, dynamic>> preservedMarkers = rawMarkers
         .whereType<Map<String, dynamic>>()
@@ -1877,6 +1958,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     setState(() {
       _draftMarkers = preservedMarkers;
+      if (!preserveOperations) {
+        _draftMarkerEditOperations = null;
+        _draftMarkerOriginalMarkers = null;
+      }
       _markerCacheKey = null;
     });
   }
@@ -1911,7 +1996,19 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           )
           .toList(growable: false),
     );
-    await onPersistDrafts(request);
+    final dynamic previousSavedSummary =
+        widget.params['viewerSavedChangesSummary'];
+    widget.params['viewerSavedChangesSummary'] = savedSummary.toJson();
+    try {
+      await onPersistDrafts(request);
+    } catch (_) {
+      if (previousSavedSummary == null) {
+        widget.params.remove('viewerSavedChangesSummary');
+      } else {
+        widget.params['viewerSavedChangesSummary'] = previousSavedSummary;
+      }
+      rethrow;
+    }
     if (!mounted) {
       return false;
     }
@@ -1976,6 +2073,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   void _discardDraftChanges() {
     setState(() {
       _draftMarkers = null;
+      _draftMarkerEditOperations = null;
+      _draftMarkerOriginalMarkers = null;
       _draftChannelEditConfig = null;
       _draftArtifactExemplars = null;
       _draftArtifactCandidates = null;
@@ -2477,6 +2576,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         )
         .map((Map<String, dynamic> marker) => Map<String, dynamic>.from(marker))
         .toList(growable: false);
+    final Map<String, dynamic>? markerEditOperations =
+        _draftMarkerEditOperations == null
+        ? null
+        : Map<String, dynamic>.from(_draftMarkerEditOperations!);
+    final List<Map<String, dynamic>>? markerOriginalMarkers =
+        _draftMarkerOriginalMarkers
+            ?.map(
+              (Map<String, dynamic> marker) =>
+                  Map<String, dynamic>.from(marker),
+            )
+            .toList(growable: false);
     final Map<String, dynamic>? channelEditConfig =
         _draftChannelEditConfig == null
         ? null
@@ -2513,6 +2623,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
     final ViewerDraftSaveRequest request = ViewerDraftSaveRequest(
       markerEdits: markerEdits,
+      markerEditOperations: markerEditOperations,
+      markerOriginalMarkers: markerOriginalMarkers,
       channelEditConfig: channelEditConfig,
       interactiveArtifactParams: interactiveArtifactParams,
       runAfterSave: runAfterSave,
@@ -2527,6 +2639,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   String _draftSaveFingerprint(ViewerDraftSaveRequest request) {
     return jsonEncode(<String, dynamic>{
       'markerEdits': request.markerEdits,
+      'markerEditOperations': request.markerEditOperations,
+      'markerOriginalMarkers': request.markerOriginalMarkers,
       'channelEditConfig': request.channelEditConfig,
       'interactiveArtifactParams': request.interactiveArtifactParams,
     });
@@ -3157,8 +3271,53 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final List<String> changes = <String>[
       if (deleted.isNotEmpty) 'Deleted: ${deleted.join(', ')}',
       if (added.isNotEmpty) 'Added: ${added.join(', ')}',
+      ..._markerOperationDescriptions(),
     ];
     return changes.isEmpty ? 'Markers edited' : changes.join('; ');
+  }
+
+  List<String> _markerOperationDescriptions() {
+    final Map<String, dynamic> operations = _effectiveMarkerEditOperations();
+    final List<String> descriptions = <String>[];
+    for (final Map<dynamic, dynamic> rawRule
+        in (operations['logicRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()) {
+      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+      final List<String> anchors =
+          (rule['timeLockLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false);
+      final Map<String, dynamic> recodes = Map<String, dynamic>.from(
+        rule['recodeLabels'] as Map? ?? const <String, dynamic>{},
+      );
+      if (anchors.isEmpty || recodes.isEmpty) continue;
+      final String mappings = recodes.entries
+          .map(
+            (MapEntry<String, dynamic> entry) =>
+                '${entry.key} to ${entry.value}',
+          )
+          .join(', ');
+      descriptions.add('Recoded ${anchors.join(', ')} using $mappings');
+    }
+    for (final Map<dynamic, dynamic> rawRule
+        in (operations['boundaryRules'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()) {
+      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
+      final String start = rule['startLabel']?.toString() ?? '';
+      final String stop = rule['stopLabel']?.toString() ?? '';
+      final String block = rule['blockLabel']?.toString() ?? '';
+      if (start.isNotEmpty && stop.isNotEmpty && block.isNotEmpty) {
+        descriptions.add('Combined $start and $stop as $block');
+      }
+    }
+    return descriptions;
+  }
+
+  _SavedChangesSummary? _savedChangesSummaryFromParams() {
+    final dynamic raw = widget.params['viewerSavedChangesSummary'];
+    return raw is Map
+        ? _SavedChangesSummary.fromJson(Map<String, dynamic>.from(raw))
+        : null;
   }
 
   List<TimeMarker> _savedMarkersForDataset() {
@@ -4547,6 +4706,26 @@ class _DraftManifestItem {
   final String detail;
   final Color? color;
   final bool saved;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'label': label,
+    'detail': detail,
+    'saved': saved,
+  };
+
+  factory _DraftManifestItem.fromJson(Map<String, dynamic> json) {
+    final String label = json['label']?.toString() ?? 'Changes';
+    return _DraftManifestItem(
+      label: label,
+      detail: json['detail']?.toString() ?? '',
+      color: switch (label) {
+        'Markers' => const Color(0xFFFFD54F),
+        'Interactive' || 'Artifacts' => const Color(0xFFFF8A65),
+        _ => null,
+      },
+      saved: json['saved'] != false,
+    );
+  }
 }
 
 class _SavedChangesSummary {
@@ -4554,6 +4733,24 @@ class _SavedChangesSummary {
 
   final String title;
   final List<_DraftManifestItem> items;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'title': title,
+    'items': items.map((_DraftManifestItem item) => item.toJson()).toList(),
+  };
+
+  factory _SavedChangesSummary.fromJson(Map<String, dynamic> json) {
+    return _SavedChangesSummary(
+      title: json['title']?.toString() ?? 'Saved changes',
+      items: (json['items'] as List<dynamic>? ?? const <dynamic>[])
+          .whereType<Map>()
+          .map(
+            (Map item) =>
+                _DraftManifestItem.fromJson(Map<String, dynamic>.from(item)),
+          )
+          .toList(growable: false),
+    );
+  }
 }
 
 class _BoundaryCombinationDraft {

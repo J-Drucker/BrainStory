@@ -1313,6 +1313,17 @@ class CanvasLogic {
             )
             .toList(growable: false);
       }
+      final List<dynamic> originalMarkers =
+          (node.params['markerEditOriginalMarkers'] as List<dynamic>? ??
+          const <dynamic>[]);
+      if (originalMarkers.isNotEmpty) {
+        node.params['markerEditOriginalMarkers'] = originalMarkers
+            .where(
+              (dynamic marker) =>
+                  marker is! Map || marker['datasetId'] != datasetId,
+            )
+            .toList(growable: false);
+      }
 
       for (final String key in <String>[
         'artifactExemplars',
@@ -3219,6 +3230,7 @@ class CanvasLogic {
           downstream.params['applyEmptyMarkerSet'] == true;
       for (final String key in <String>[
         'markerEditOperations',
+        'markerEditOriginalMarkers',
         'markerEditScope',
         'markerEditDatasetIds',
         'markerEditSourceDatasetId',
@@ -5759,6 +5771,8 @@ class CanvasLogic {
     required String viewerNodeId,
     required Dataset dataset,
     List<Map<String, dynamic>>? markerEdits,
+    Map<String, dynamic>? markerEditOperations,
+    List<Map<String, dynamic>>? markerOriginalMarkers,
     Map<String, dynamic>? channelEditConfig,
     Map<String, dynamic>? interactiveArtifactParams,
     bool runAfterSave = false,
@@ -5778,7 +5792,8 @@ class CanvasLogic {
 
     final List<Map<String, dynamic>>? markerEditsValue = markerEdits;
 
-    final bool hasMarkerEdits = markerEditsValue != null;
+    final bool hasMarkerEdits =
+        markerEditsValue != null || markerEditOperations != null;
     final bool hasChannelEdits =
         channelEditConfig != null &&
         EditChannelsNodeType.hasMeaningfulChanges(channelEditConfig);
@@ -5824,12 +5839,20 @@ class CanvasLogic {
           ..['markerEditScope'] = 'all'
           ..['markerEditDatasetIds'] = <String>[]
           ..['markerEditSourceDatasetId'] = dataset.id;
+        if (markerEditOperations != null) {
+          existing.params['markerEditOperations'] = markerEditOperations;
+        }
+        if (markerOriginalMarkers != null) {
+          existing.params['markerEditOriginalMarkers'] = markerOriginalMarkers;
+        }
       }
-      existing.datasetStates[dataset.id] =
-          existing.datasetStates[dataset.id] == DatasetState.done
-          ? DatasetState.stale
-          : DatasetState.ready;
-      _markImmediateChildrenStale(existing.id, dataset.id);
+      for (final String affectedDatasetId in _datasetsForNode(existing)) {
+        existing.datasetStates[affectedDatasetId] =
+            existing.datasetStates[affectedDatasetId] == DatasetState.done
+            ? DatasetState.stale
+            : DatasetState.ready;
+        _markImmediateChildrenStale(existing.id, affectedDatasetId);
+      }
       lastCreatedNode = existing;
       anchorNode = existing;
       updatedExistingEditNode = true;
@@ -5849,6 +5872,10 @@ class CanvasLogic {
           },
           'channelEditSourceDatasetId': dataset.id,
           'markers': markerEditsValue,
+          if (markerEditOperations != null)
+            'markerEditOperations': markerEditOperations,
+          if (markerOriginalMarkers != null)
+            'markerEditOriginalMarkers': markerOriginalMarkers,
           'applyEmptyMarkerSet': true,
           'markerEditScope': 'all',
           'markerEditDatasetIds': <String>[],
@@ -5883,6 +5910,10 @@ class CanvasLogic {
         datasetId: dataset.id,
         params: <String, dynamic>{
           'markers': markerEditsValue,
+          if (markerEditOperations != null)
+            'markerEditOperations': markerEditOperations,
+          if (markerOriginalMarkers != null)
+            'markerEditOriginalMarkers': markerOriginalMarkers,
           'applyEmptyMarkerSet': true,
           'markerEditScope': 'all',
           'markerEditDatasetIds': <String>[],
@@ -5985,8 +6016,7 @@ class CanvasLogic {
       finalDetail = await runQueued(
         label: 'Running ${nodeToRun.title}',
         lockedNodeIds: _collectAncestorsInclusive(nodeToRun.id),
-        action: () =>
-            runFromStart(nodeToRun.id, datasetIds: <String>{dataset.id}),
+        action: () => runFromStart(nodeToRun.id),
         successDetail: () => _viewerEditSaveMessage(
           createdNodeTitles: createdNodeTitles,
           ranNodes: true,
@@ -6203,7 +6233,7 @@ class CanvasLogic {
     ).where(_isViewerEditNode).toList(growable: false);
     if (editChildren.isEmpty) return 'No child edit node is available to run.';
     final NodeModel target = editChildren.first;
-    await runThisStep(target.id, datasetIds: <String>{dataset.id});
+    await runThisStep(target.id);
     return 'Ran ${target.title}.';
   }
 
@@ -6315,6 +6345,7 @@ class CanvasLogic {
         'markers',
         'applyEmptyMarkerSet',
         'markerEditOperations',
+        'markerEditOriginalMarkers',
         'markerEditScope',
         'markerEditDatasetIds',
         'markerEditSourceDatasetId',

@@ -623,6 +623,8 @@ class _VisualizationChart extends StatelessWidget {
           viewerNodeId: nodeId,
           dataset: activeDataset,
           markerEdits: request.markerEdits,
+          markerEditOperations: request.markerEditOperations,
+          markerOriginalMarkers: request.markerOriginalMarkers,
           channelEditConfig: request.channelEditConfig,
           interactiveArtifactParams: request.interactiveArtifactParams,
           runAfterSave: request.runAfterSave,

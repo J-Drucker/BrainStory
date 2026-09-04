@@ -22,6 +22,7 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     'markers': <Map<String, dynamic>>[],
     'applyEmptyMarkerSet': false,
     'markerEditOperations': <String, dynamic>{},
+    'markerEditOriginalMarkers': <Map<String, dynamic>>[],
     'markerEditScope': 'all',
     'markerEditDatasetIds': <String>[],
     'channelEditsByDataset': <String, dynamic>{},
@@ -65,8 +66,19 @@ class EditChannelsAndMarkersNodeType extends NodeType {
     final Map<String, dynamic> operations = Map<String, dynamic>.from(
       params['markerEditOperations'] as Map? ?? const <String, dynamic>{},
     );
+    final List<dynamic> originalMarkers =
+        params['markerEditOriginalMarkers'] as List<dynamic>? ??
+        const <dynamic>[];
     final List<TimeMarker> markers = operations.isNotEmpty
-        ? dataset.timeSeries!.markers
+        ? AddRemoveMarkersNodeType.markersForDataset(
+                dataset.id,
+                originalMarkers,
+              ).isNotEmpty
+              ? AddRemoveMarkersNodeType.markersForDataset(
+                  dataset.id,
+                  originalMarkers,
+                )
+              : dataset.timeSeries!.markers
         : hasStoredMarkerSet || rawMarkers.isNotEmpty
         ? AddRemoveMarkersNodeType.markersForDataset(dataset.id, rawMarkers)
         : dataset.timeSeries!.markers;
@@ -95,6 +107,22 @@ class EditChannelsAndMarkersNodeType extends NodeType {
               initialMarkerOperations: operations,
               onMarkerOperationsChanged: (Map<String, dynamic> nextOperations) {
                 setState(() {
+                  params['markerEditOriginalMarkers'] = <Map<String, dynamic>>[
+                    ...(params['markerEditOriginalMarkers'] as List<dynamic>? ??
+                            const <dynamic>[])
+                        .whereType<Map>()
+                        .map((Map value) => Map<String, dynamic>.from(value))
+                        .where(
+                          (Map<String, dynamic> value) =>
+                              value['datasetId'] != dataset.id,
+                        ),
+                    ...markers.map(
+                      (TimeMarker marker) => <String, dynamic>{
+                        'datasetId': dataset.id,
+                        ...marker.toJson(),
+                      },
+                    ),
+                  ];
                   params['markerEditOperations'] = nextOperations;
                   params['markerEditSourceDatasetId'] = dataset.id;
                 });
