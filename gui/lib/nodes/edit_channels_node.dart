@@ -159,7 +159,7 @@ class EditChannelsNodeType extends NodeType {
             .toLowerCase();
     if (coordinateImportMode == coordinateImportStandard &&
         nextSeries != null) {
-      nextSeries = await _applyConfiguredCoordinates(nextSeries);
+      nextSeries = await applyConfiguredCoordinates(nextSeries);
     }
     if (nextSeries != null) {
       dataset.timeSeries = nextSeries;
@@ -323,7 +323,15 @@ class EditChannelsNodeType extends NodeType {
       mergeScopedEdits(source, includeDatasetSpecific: false);
     }
     mergeScopedEdits(own, includeDatasetSpecific: true);
-    return <String, dynamic>{...own, 'edits': mergedEdits};
+    final String sourceCoordinateImportMode =
+        (source['coordinateImportMode'] ?? coordinateImportNone).toString();
+    return <String, dynamic>{
+      ...own,
+      if (datasetId != sourceDatasetId &&
+          sourceCoordinateImportMode != coordinateImportNone)
+        'coordinateImportMode': sourceCoordinateImportMode,
+      'edits': mergedEdits,
+    };
   }
 
   static Map<String, dynamic> bindConfigToChannelLabels(
@@ -860,7 +868,7 @@ class EditChannelsNodeType extends NodeType {
         .toList(growable: false);
   }
 
-  static Future<TimeSeriesData> _applyConfiguredCoordinates(
+  static Future<TimeSeriesData> applyConfiguredCoordinates(
     TimeSeriesData timeSeries,
   ) async {
     final Map<String, ChannelCoordinate> standardCoordinates =

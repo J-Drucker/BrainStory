@@ -204,6 +204,16 @@ class EditChannelsAndMarkersNodeType extends NodeType {
           dataset.ram['editChannels.lastWarning'] = warning;
         },
       );
+      final String coordinateImportMode =
+          (config['coordinateImportMode'] ??
+                  EditChannelsNodeType.coordinateImportNone)
+              .toString();
+      if (coordinateImportMode ==
+          EditChannelsNodeType.coordinateImportStandard) {
+        nextSeries = await EditChannelsNodeType.applyConfiguredCoordinates(
+          nextSeries,
+        );
+      }
     }
 
     final Map<String, dynamic> markerOperations = Map<String, dynamic>.from(

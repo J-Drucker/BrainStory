@@ -5212,6 +5212,12 @@ class CanvasLogic {
         node.params['channelEditSourceDatasetId']?.toString() ?? '';
     final Map<String, dynamic> sourceConfig =
         EditChannelsNodeType.configForDataset(node.params, sourceDatasetId);
+    if ((sourceConfig['coordinateImportMode'] ??
+                EditChannelsNodeType.coordinateImportNone)
+            .toString() !=
+        EditChannelsNodeType.coordinateImportNone) {
+      required.addAll(availableDatasetIds);
+    }
     final Map<String, dynamic> edits = Map<String, dynamic>.from(
       sourceConfig['edits'] as Map? ?? const <String, dynamic>{},
     );

@@ -3561,6 +3561,7 @@ time,Fz,Cz
         editNode.params,
         first.id,
         <String, dynamic>{
+          'coordinateImportMode': EditChannelsNodeType.coordinateImportStandard,
           'edits': <String, dynamic>{
             '0': <String, dynamic>{
               'sourceLabel': 'Cz',
@@ -3595,6 +3596,51 @@ time,Fz,Cz
       );
       expect(firstView.timeSeries!.channelLabels, <String>['Pz']);
       expect(secondView.timeSeries!.channelLabels, <String>['Pz']);
+      expect(firstView.timeSeries!.channelCoordinates, contains('Pz'));
+      expect(secondView.timeSeries!.channelCoordinates, contains('Pz'));
+    },
+  );
+
+  test(
+    'combined channel and marker edits still import channel coordinates',
+    () async {
+      final Dataset dataset = Dataset('combined-coordinate-edits')
+        ..timeSeries = TimeSeriesData(
+          channelSamples: const <List<double>>[
+            <double>[1, 2],
+            <double>[3, 4],
+          ],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz', 'Aux'],
+          markers: const <TimeMarker>[TimeMarker(onsetMicros: 0, label: 'cue')],
+        );
+      final EditChannelsAndMarkersNodeType node =
+          EditChannelsAndMarkersNodeType();
+      await node.run(dataset, <String, dynamic>{
+        ...node.defaultParams,
+        'channelEditSourceDatasetId': dataset.id,
+        'channelEditsByDataset': <String, dynamic>{
+          dataset.id: <String, dynamic>{
+            'coordinateImportMode':
+                EditChannelsNodeType.coordinateImportStandard,
+            'edits': <String, dynamic>{
+              '1': <String, dynamic>{
+                'sourceLabel': 'Aux',
+                'remove': true,
+                'removeMode': 'delete',
+              },
+            },
+          },
+        },
+        'markerEditOperations': <String, dynamic>{
+          'renames': <String, String>{'cue': 'task cue'},
+        },
+        'markerEditScope': 'all',
+      });
+
+      expect(dataset.timeSeries!.channelLabels, <String>['Cz']);
+      expect(dataset.timeSeries!.channelCoordinates, contains('Cz'));
+      expect(dataset.timeSeries!.markers.single.label, 'task cue');
     },
   );
 
