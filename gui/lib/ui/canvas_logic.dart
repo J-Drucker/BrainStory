@@ -52,6 +52,8 @@ enum RunActivityPhase { initializing, running, finalizing }
 
 enum ProcessingResponsiveness { off, fast, balanced, responsive }
 
+enum _ProjectArtifactSavePolicy { pipelineOnly, everything, individual }
+
 class CanvasNodeGroup {
   CanvasNodeGroup({
     required this.id,
@@ -1005,6 +1007,9 @@ class CanvasLogic {
       <String, Map<String, DatasetArtifactSnapshot>>{};
   final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
   String? _currentBrainStoryPath;
+  _ProjectArtifactSavePolicy _projectArtifactSavePolicy =
+      _ProjectArtifactSavePolicy.pipelineOnly;
+  Set<String> _projectArtifactSelections = <String>{};
 
   String? selectedNodeId;
   final Set<String> selectedNodeIds = <String>{};
@@ -1168,6 +1173,9 @@ class CanvasLogic {
     connections.clear();
     _nodeRamSnapshots.clear();
     _nodeDiskSnapshotIds.clear();
+    _currentBrainStoryPath = null;
+    _projectArtifactSavePolicy = _ProjectArtifactSavePolicy.pipelineOnly;
+    _projectArtifactSelections.clear();
     selectedNodeId = null;
     selectedNodeIds.clear();
     selectedConnectionIndex = null;
@@ -1734,6 +1742,26 @@ class CanvasLogic {
   }
 
   Future<void> exportBrainStory(BuildContext context) async {
+    _ProjectArtifactSavePolicy policy = _projectArtifactSavePolicy;
+    Set<String> selectedArtifacts = Set<String>.from(
+      _projectArtifactSelections,
+    );
+    if (_currentBrainStoryPath == null) {
+      final _ProjectArtifactSavePolicy? choice =
+          await _promptForInitialArtifactSavePolicy(context);
+      if (choice == null) return;
+      policy = choice;
+      if (choice == _ProjectArtifactSavePolicy.individual) {
+        if (!context.mounted) return;
+        final Set<String>? selection = await _promptForArtifactSelection(
+          context,
+        );
+        if (selection == null) return;
+        selectedArtifacts = selection;
+      } else {
+        selectedArtifacts = <String>{};
+      }
+    }
     final FileSaveLocation? location = await getSaveLocation(
       suggestedName: 'brainstory_project.bst',
       acceptedTypeGroups: const <XTypeGroup>[
@@ -1744,15 +1772,21 @@ class CanvasLogic {
       return;
     }
 
-    final String jsonPayload = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(exportProjectJson());
+    await _hydrateArtifactsForProjectSave(policy, selectedArtifacts);
+    final String jsonPayload = const JsonEncoder.withIndent('  ').convert(
+      exportProjectJson(
+        artifactSavePolicy: policy.name,
+        selectedArtifactKeys: selectedArtifacts,
+      ),
+    );
     final String? savedPath = await saveBrainStoryProject(
       suggestedName: 'brainstory_project',
       targetPath: location.path,
       jsonPayload: jsonPayload,
     );
     if (savedPath != null) {
+      _projectArtifactSavePolicy = policy;
+      _projectArtifactSelections = selectedArtifacts;
       await _rememberBrainStoryPath(savedPath);
     }
     if (context.mounted) {
@@ -1762,6 +1796,123 @@ class CanvasLogic {
             ? 'BrainStory export was canceled.'
             : 'Saved BrainStory project to $savedPath.',
       );
+    }
+  }
+
+  Future<_ProjectArtifactSavePolicy?> _promptForInitialArtifactSavePolicy(
+    BuildContext context,
+  ) {
+    return showDialog<_ProjectArtifactSavePolicy>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Save BrainStory project'),
+        content: const Text(
+          'Processing pipeline steps will be saved. Include artifacts?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              _ProjectArtifactSavePolicy.pipelineOnly,
+            ),
+            child: const Text('No, just the pipeline for computing them'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              _ProjectArtifactSavePolicy.individual,
+            ),
+            child: const Text('Let me decide individually'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              _ProjectArtifactSavePolicy.everything,
+            ),
+            child: const Text('Yes, save everything'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<Set<String>?> _promptForArtifactSelection(BuildContext context) {
+    final Set<String> selected = Set<String>.from(_projectArtifactSelections);
+    final List<({String key, String label})> choices =
+        <({String key, String label})>[];
+    for (final NodeModel node in nodes) {
+      final Set<String> datasetIds = <String>{
+        ...?_nodeRamSnapshots[node.id]?.keys,
+        ...?_nodeDiskSnapshotIds[node.id],
+      };
+      for (final String datasetId in datasetIds) {
+        final Dataset? dataset = _datasetById(datasetId);
+        choices.add((
+          key: _projectArtifactKey(node.id, datasetId),
+          label: '${node.title} - ${dataset?.label ?? datasetId}',
+        ));
+      }
+    }
+    choices.sort((a, b) => a.label.compareTo(b.label));
+    return showDialog<Set<String>>(
+      context: context,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) => AlertDialog(
+          title: const Text('Choose artifacts to include'),
+          content: SizedBox(
+            width: 520,
+            child: choices.isEmpty
+                ? const Text('No computed artifacts are currently available.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: choices
+                        .map(
+                          (choice) => CheckboxListTile(
+                            value: selected.contains(choice.key),
+                            title: Text(choice.label),
+                            onChanged: (bool? value) => setState(() {
+                              value == true
+                                  ? selected.add(choice.key)
+                                  : selected.remove(choice.key);
+                            }),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, Set<String>.from(selected)),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _hydrateArtifactsForProjectSave(
+    _ProjectArtifactSavePolicy policy,
+    Set<String> selectedArtifacts,
+  ) async {
+    if (policy == _ProjectArtifactSavePolicy.pipelineOnly) return;
+    for (final NodeModel node in nodes) {
+      final Set<String> diskDatasetIds = Set<String>.from(
+        _nodeDiskSnapshotIds[node.id] ?? const <String>{},
+      );
+      for (final String datasetId in diskDatasetIds) {
+        final String key = _projectArtifactKey(node.id, datasetId);
+        if (policy == _ProjectArtifactSavePolicy.individual &&
+            !selectedArtifacts.contains(key)) {
+          continue;
+        }
+        await _loadSnapshotForNodeDataset(node.id, datasetId);
+      }
     }
   }
 
@@ -1992,10 +2143,16 @@ class CanvasLogic {
     return buffer.toString().trimRight();
   }
 
-  Map<String, dynamic> exportProjectJson() {
+  Map<String, dynamic> exportProjectJson({
+    String artifactSavePolicy = 'pipelineOnly',
+    Set<String> selectedArtifactKeys = const <String>{},
+  }) {
+    final bool includeEverything = artifactSavePolicy == 'everything';
     return <String, dynamic>{
       'format': 'brainstory_project',
-      'version': 1,
+      'version': 2,
+      'artifactSavePolicy': artifactSavePolicy,
+      'selectedArtifactKeys': selectedArtifactKeys.toList(growable: false),
       'datasets': datasets.values
           .map(
             (Dataset dataset) => <String, dynamic>{
@@ -2038,7 +2195,27 @@ class CanvasLogic {
                 Map<String, dynamic>.from(connection),
           )
           .toList(growable: false),
+      'artifacts': <Map<String, dynamic>>[
+        for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>>
+            nodeEntry
+            in _nodeRamSnapshots.entries)
+          for (final MapEntry<String, DatasetArtifactSnapshot> datasetEntry
+              in nodeEntry.value.entries)
+            if (includeEverything ||
+                selectedArtifactKeys.contains(
+                  _projectArtifactKey(nodeEntry.key, datasetEntry.key),
+                ))
+              <String, dynamic>{
+                'nodeId': nodeEntry.key,
+                'datasetId': datasetEntry.key,
+                'snapshot': datasetEntry.value.toJson(),
+              },
+      ],
     };
+  }
+
+  String _projectArtifactKey(String nodeId, String datasetId) {
+    return '$nodeId::$datasetId';
   }
 
   Map<String, dynamic> _exportableNodeParams(Map<String, dynamic> params) {
@@ -2052,6 +2229,15 @@ class CanvasLogic {
   void importProjectJson(Map<String, dynamic> jsonMap) {
     clearAll(recordUndo: false);
     datasets.clear();
+    _projectArtifactSavePolicy = _ProjectArtifactSavePolicy.values.firstWhere(
+      (_ProjectArtifactSavePolicy policy) =>
+          policy.name == jsonMap['artifactSavePolicy']?.toString(),
+      orElse: () => _ProjectArtifactSavePolicy.pipelineOnly,
+    );
+    _projectArtifactSelections =
+        (jsonMap['selectedArtifactKeys'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toSet();
 
     final List<dynamic> datasetEntries =
         jsonMap['datasets'] as List<dynamic>? ?? <dynamic>[];
@@ -2120,6 +2306,24 @@ class CanvasLogic {
         );
       }
       nodes.add(node);
+    }
+
+    final List<dynamic> artifactEntries =
+        jsonMap['artifacts'] as List<dynamic>? ?? const <dynamic>[];
+    for (final dynamic rawEntry in artifactEntries) {
+      final Map<String, dynamic> entry = Map<String, dynamic>.from(
+        rawEntry as Map,
+      );
+      final String nodeId = entry['nodeId']?.toString() ?? '';
+      final String datasetId = entry['datasetId']?.toString() ?? '';
+      final dynamic rawSnapshot = entry['snapshot'];
+      if (nodeId.isEmpty || datasetId.isEmpty || rawSnapshot is! Map) continue;
+      _nodeRamSnapshots.putIfAbsent(
+        nodeId,
+        () => <String, DatasetArtifactSnapshot>{},
+      )[datasetId] = DatasetArtifactSnapshot.fromJson(
+        Map<String, dynamic>.from(rawSnapshot),
+      );
     }
 
     final Set<String> importedNodeIds = nodes
@@ -6401,8 +6605,11 @@ class CanvasLogic {
     }
 
     final NodeStoragePolicy policy = _storagePolicyForNode(node);
+    final bool canPersistArtifacts = _currentBrainStoryPath != null;
     if (policy != NodeStoragePolicy.onDemand &&
-        (policy != NodeStoragePolicy.preferDisk || keepRamSnapshot)) {
+        (policy != NodeStoragePolicy.preferDisk ||
+            keepRamSnapshot ||
+            !canPersistArtifacts)) {
       _nodeRamSnapshots.putIfAbsent(
         node.id,
         () => <String, DatasetArtifactSnapshot>{},
@@ -6411,7 +6618,8 @@ class CanvasLogic {
       _nodeRamSnapshots[node.id]?.remove(dataset.id);
     }
 
-    if (supportsNodeSnapshotDiskStore &&
+    if (canPersistArtifacts &&
+        supportsNodeSnapshotDiskStore &&
         (policy == NodeStoragePolicy.preferDisk ||
             policy == NodeStoragePolicy.ramAndDisk)) {
       await saveNodeSnapshotJson(
@@ -6926,6 +7134,9 @@ class CanvasLogic {
   }) async {
     if (!supportsNodeSnapshotDiskStore) {
       return 'Disk cache is not available on this platform.';
+    }
+    if (_currentBrainStoryPath == null) {
+      return 'Save this project as a BST before saving artifacts to disk.';
     }
 
     final List<Dataset> selectedDatasets = _datasetsForAction(datasetIds);
@@ -7618,7 +7829,6 @@ class CanvasLogic {
   }
 
   Future<void> _refreshDiskSnapshotFlagsForLoadedProject() async {
-    _nodeRamSnapshots.clear();
     _nodeDiskSnapshotIds.clear();
     if (!supportsNodeSnapshotDiskStore) {
       return;
@@ -7647,7 +7857,14 @@ class CanvasLogic {
           node.datasetStates[dataset.id] = DatasetState.notReady;
           continue;
         }
-        node.datasetStates[dataset.id] = DatasetState.ready;
+        final bool hasResult =
+            _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true ||
+            _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
+        node.datasetStates[dataset.id] = hasResult
+            ? rawState == DatasetState.stale
+                  ? DatasetState.stale
+                  : DatasetState.done
+            : DatasetState.ready;
       }
     }
   }

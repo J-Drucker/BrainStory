@@ -1265,6 +1265,53 @@ void main() {
     expect(target.timeSeries!.sampleRate, 1000);
   });
 
+  test('BST artifact policy controls embedded snapshot round trips', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        samples: const <double>[0, 1, 0, -1],
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    final NodeModel input = logic.nodes[0];
+    final NodeModel bandpass = logic.nodes[1];
+    logic.connections.add(<String, dynamic>{
+      'fromNode': input.id,
+      'fromPort': 0,
+      'toNode': bandpass.id,
+      'toPort': 0,
+    });
+    input.datasetStates[dataset.id] = DatasetState.done;
+    bandpass.datasetStates[dataset.id] = DatasetState.ready;
+    await logic.runThisStep(bandpass.id, datasetIds: <String>{dataset.id});
+
+    final Map<String, dynamic> pipelineOnly = logic.exportProjectJson();
+    expect(pipelineOnly['artifactSavePolicy'], 'pipelineOnly');
+    expect(pipelineOnly['artifacts'], isEmpty);
+
+    final Map<String, dynamic> withArtifacts = logic.exportProjectJson(
+      artifactSavePolicy: 'everything',
+    );
+    expect(withArtifacts['artifactSavePolicy'], 'everything');
+    expect(withArtifacts['artifacts'], isNotEmpty);
+
+    final CanvasLogic restored = CanvasLogic()
+      ..importProjectJson(withArtifacts);
+    final NodeModel restoredBandpass = restored.nodes.firstWhere(
+      (NodeModel node) => node.type is BandpassNodeType,
+    );
+    final Dataset restoredDataset = restored.datasets.values.single;
+    final Dataset restoredView = await restored.materializedDatasetViewForNode(
+      restoredBandpass.id,
+      restoredDataset,
+    );
+    expect(restoredView.timeSeries, isNotNull);
+    expect(restoredView.timeSeries!.channelLabels, <String>['Cz']);
+  });
+
   test('channel edit change sets describe topology changes', () {
     final TimeSeriesData timeSeries = TimeSeriesData(
       channelSamples: const <List<double>>[
@@ -1607,51 +1654,48 @@ Mk2=Response,Response,4,1,0
     },
   );
 
-  test(
-    'import stores multiple datasets to disk while keeping only the first hot',
-    () async {
-      final CanvasLogic logic = CanvasLogic();
-      final Dataset first = Dataset(
-        'dataset-a',
-        label: 'A.csv',
-        path: 'A.csv',
-        sourceBytes: Uint8List.fromList(
-          utf8.encode('time,Cz\n0,0\n0.001,1\n0.002,0\n'),
-        ),
-      );
-      final Dataset second = Dataset(
-        'dataset-b',
-        label: 'B.csv',
-        path: 'B.csv',
-        sourceBytes: Uint8List.fromList(
-          utf8.encode('time,Cz\n0,2\n0.001,3\n0.002,2\n'),
-        ),
-      );
-      logic.datasets[first.id] = first;
-      logic.datasets[second.id] = second;
-      logic.addNode(ImportNodeType());
+  test('import keeps outputs available in RAM until a BST exists', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset first = Dataset(
+      'dataset-a',
+      label: 'A.csv',
+      path: 'A.csv',
+      sourceBytes: Uint8List.fromList(
+        utf8.encode('time,Cz\n0,0\n0.001,1\n0.002,0\n'),
+      ),
+    );
+    final Dataset second = Dataset(
+      'dataset-b',
+      label: 'B.csv',
+      path: 'B.csv',
+      sourceBytes: Uint8List.fromList(
+        utf8.encode('time,Cz\n0,2\n0.001,3\n0.002,2\n'),
+      ),
+    );
+    logic.datasets[first.id] = first;
+    logic.datasets[second.id] = second;
+    logic.addNode(ImportNodeType());
 
-      final NodeModel importNode = logic.nodes.single;
-      importNode.params['selectedDatasetIds'] = <String>[first.id, second.id];
+    final NodeModel importNode = logic.nodes.single;
+    importNode.params['selectedDatasetIds'] = <String>[first.id, second.id];
 
-      await logic.runThisStep(
-        importNode.id,
-        datasetIds: <String>{first.id, second.id},
-      );
+    await logic.runThisStep(
+      importNode.id,
+      datasetIds: <String>{first.id, second.id},
+    );
 
-      expect(importNode.datasetStates[first.id], DatasetState.done);
-      expect(importNode.datasetStates[second.id], DatasetState.done);
-      expect(first.timeSeries, isNotNull);
-      expect(second.timeSeries, isNull);
+    expect(importNode.datasetStates[first.id], DatasetState.done);
+    expect(importNode.datasetStates[second.id], DatasetState.done);
+    expect(first.timeSeries, isNotNull);
+    expect(second.timeSeries, isNull);
 
-      final Dataset reloadedSecond = await logic.materializedDatasetViewForNode(
-        importNode.id,
-        second,
-      );
-      expect(reloadedSecond.timeSeries, isNotNull);
-      expect(reloadedSecond.timeSeries!.primaryChannel, <double>[2, 3, 2]);
-    },
-  );
+    final Dataset reloadedSecond = await logic.materializedDatasetViewForNode(
+      importNode.id,
+      second,
+    );
+    expect(reloadedSecond.timeSeries, isNotNull);
+    expect(reloadedSecond.timeSeries!.primaryChannel, <double>[2, 3, 2]);
+  });
 
   test(
     'renaming a completed import does not reload data or stale consumers',
@@ -1684,11 +1728,6 @@ Mk2=Response,Response,4,1,0
       final ArtifactIdentity originalIdentity = dataset.artifactIdentityFor(
         BrainStoryArtifactKind.timeSeries,
       )!;
-      consumerNode.datasetStates[dataset.id] = DatasetState.done;
-      await logic.releaseNodeActiveMemoryForTest(importNode, <String>{
-        dataset.id,
-      });
-      importNode.datasetStates[dataset.id] = DatasetState.done;
       consumerNode.datasetStates[dataset.id] = DatasetState.done;
 
       final Map<String, dynamic> renamedParams = Map<String, dynamic>.from(
