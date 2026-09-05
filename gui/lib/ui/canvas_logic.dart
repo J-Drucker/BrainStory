@@ -2590,49 +2590,73 @@ class CanvasLogic {
     final Map<String, NodeModel> nodeById = <String, NodeModel>{
       for (final NodeModel node in nodes) node.id: node,
     };
-    return connections.asMap().entries.map((
-      MapEntry<int, Map<String, dynamic>> entry,
-    ) {
+    final List<List<Offset>> occupiedRoutes = <List<Offset>>[];
+    final List<Widget> widgets = <Widget>[];
+    for (final MapEntry<int, Map<String, dynamic>> entry
+        in connections.asMap().entries) {
       final int connectionIndex = entry.key;
       final Map<String, dynamic> connection = entry.value;
       final NodeModel? fromNode = nodeById[connection['fromNode'] as String];
       final NodeModel? toNode = nodeById[connection['toNode'] as String];
 
       if (fromNode == null || toNode == null) {
-        return const SizedBox.shrink();
+        widgets.add(const SizedBox.shrink());
+        continue;
       }
 
       final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
+      final NodeConnectionEdge fromEdge = _resolvedOutputEdge(
+        connection,
+        fromNode,
+      );
       final Offset start = _outputAnchor(
         fromNode,
         toNode,
         fromPortIndex: fromPort,
-        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
+        edge: fromEdge,
       );
-      final NodeConnectionEdge? toEdge = _connectionEdgeFromName(
-        connection['toEdge']?.toString(),
+      final NodeConnectionEdge toEdge = _resolvedInputEdge(
+        connection,
+        fromNode,
+        toNode,
       );
       final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
-      final bool preferVertical =
-          _connectionEdgeFromName(connection['fromEdge']?.toString()) ==
-              NodeConnectionEdge.bottom ||
-          (connection['fromEdge'] == null &&
-              _shouldUseVerticalAnchors(fromNode, toNode));
+      final bool preferVertical = fromEdge == NodeConnectionEdge.bottom;
 
-      return CustomPaint(
-        painter: ConnectionPainter(
-          start: start,
-          end: end,
-          preferVertical: preferVertical,
-          gridWidth: _gridWidth,
-          gridHeight: _gridHeight,
-          obstacles: _connectionObstacles(fromNode, toNode),
-          selected: selectedConnectionIndex == connectionIndex,
-          color: _outputColorForPort(fromNode, fromPort),
-        ),
-        size: Size.infinite,
+      final List<Rect> obstacles = _connectionObstacles(fromNode, toNode);
+      final List<List<Offset>> priorRoutes = List<List<Offset>>.of(
+        occupiedRoutes,
       );
-    }).toList();
+      final List<Offset> route = buildConnectionPolyline(
+        start: start,
+        end: end,
+        preferVertical: preferVertical,
+        endVertical: toEdge == NodeConnectionEdge.top,
+        gridWidth: _gridWidth,
+        gridHeight: _gridHeight,
+        obstacles: obstacles,
+        existingPolylines: priorRoutes,
+      );
+      widgets.add(
+        CustomPaint(
+          painter: ConnectionPainter(
+            start: start,
+            end: end,
+            preferVertical: preferVertical,
+            endVertical: toEdge == NodeConnectionEdge.top,
+            gridWidth: _gridWidth,
+            gridHeight: _gridHeight,
+            obstacles: obstacles,
+            existingPolylines: priorRoutes,
+            selected: selectedConnectionIndex == connectionIndex,
+            color: _outputColorForPort(fromNode, fromPort),
+          ),
+          size: Size.infinite,
+        ),
+      );
+      occupiedRoutes.add(route);
+    }
+    return widgets;
   }
 
   Widget? connectionDraftWidget(Offset cursor) {
@@ -2642,6 +2666,17 @@ class CanvasLogic {
       return null;
     }
     final Offset start = _anchorForEdge(fromNode, _pendingFromEdge!);
+    final List<Rect> obstacles = nodes
+        .where((NodeModel node) => node.id != fromNode.id)
+        .map(
+          (NodeModel node) => Rect.fromLTWH(
+            node.position.dx,
+            node.position.dy,
+            _cardWidth,
+            _cardHeight,
+          ),
+        )
+        .toList(growable: false);
     return IgnorePointer(
       child: CustomPaint(
         painter: ConnectionPainter(
@@ -2650,6 +2685,8 @@ class CanvasLogic {
           preferVertical: _pendingFromEdge == NodeConnectionEdge.bottom,
           gridWidth: _gridWidth,
           gridHeight: _gridHeight,
+          obstacles: obstacles,
+          existingPolylines: _routedConnectionPolylines(),
           color: const Color(0xFF007BA7),
         ),
         size: Size.infinite,
@@ -2781,6 +2818,10 @@ class CanvasLogic {
     return nodes.asMap().entries.map((MapEntry<int, NodeModel> entry) {
       final int nodeNumber = entry.key + 1;
       final NodeModel node = entry.value;
+      final NodeConnectionEdge? nextOutputEdge = _nextOutputEdge(node);
+      final NodeConnectionEdge? inputEdge = _canCompleteConnectionDraft(node)
+          ? _inputEdgeForDraft(node)
+          : null;
       return NodeCard(
         width: _cardWidth,
         height: _cardHeight,
@@ -2797,8 +2838,12 @@ class CanvasLogic {
             ? _pendingFromEdge
             : null,
         showConnectionOutputs:
-            !hasConnectionDraft && node.outputPorts.isNotEmpty,
-        showConnectionInputs: _canCompleteConnectionDraft(node),
+            !hasConnectionDraft &&
+            node.outputPorts.isNotEmpty &&
+            nextOutputEdge != null,
+        connectionOutputEdge: nextOutputEdge,
+        showConnectionInputs: inputEdge != null,
+        connectionInputEdge: inputEdge,
         onConnectionOutputTap: (NodeConnectionEdge edge) {
           startConnectionDraft(node, edge);
           update();
@@ -3096,6 +3141,8 @@ class CanvasLogic {
 
   void startConnectionDraft(NodeModel node, NodeConnectionEdge edge) {
     if (isNodeMutationLocked(node.id)) return;
+    final NodeConnectionEdge? allowedEdge = _nextOutputEdge(node);
+    if (allowedEdge == null || edge != allowedEdge) return;
     final List<_EffectiveOutputPort> ports = _effectiveOutputPorts(node);
     if (ports.isEmpty) return;
     _pendingFromNodeId = node.id;
@@ -3127,6 +3174,7 @@ class CanvasLogic {
         isNodeMutationLocked(toNode.id)) {
       return false;
     }
+    if (_inputEdgeForDraft(toNode) != edge) return false;
     final int? toPortIndex = _matchingInputPortForOutputPort(
       fromNode,
       fromPortIndex,
@@ -3165,10 +3213,31 @@ class CanvasLogic {
   }
 
   bool completeConnectionDraftAtNode(NodeModel toNode) {
-    final NodeConnectionEdge edge = _pendingFromEdge == NodeConnectionEdge.right
-        ? NodeConnectionEdge.left
-        : NodeConnectionEdge.top;
-    return completeConnectionDraft(toNode, edge);
+    final NodeConnectionEdge? edge = _inputEdgeForDraft(toNode);
+    return edge != null && completeConnectionDraft(toNode, edge);
+  }
+
+  NodeConnectionEdge? _nextOutputEdge(NodeModel node) {
+    final int outgoingCount = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == node.id,
+        )
+        .length;
+    return switch (outgoingCount) {
+      0 => NodeConnectionEdge.bottom,
+      1 => NodeConnectionEdge.right,
+      _ => null,
+    };
+  }
+
+  NodeConnectionEdge? _inputEdgeForDraft(NodeModel toNode) {
+    final NodeModel? fromNode = _findNode(_pendingFromNodeId ?? '');
+    if (fromNode == null || !_canCompleteConnectionDraft(toNode)) return null;
+    final Offset delta = toNode.position - fromNode.position;
+    return delta.dy.abs() >= delta.dx.abs()
+        ? NodeConnectionEdge.top
+        : NodeConnectionEdge.left;
   }
 
   _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {
@@ -8610,6 +8679,7 @@ class CanvasLogic {
   }
 
   int? _connectionIndexIntersectingRect(Rect rect) {
+    final List<List<Offset>> routedConnections = _routedConnectionPolylines();
     final List<Offset> probePoints = <Offset>[
       rect.center,
       rect.topCenter,
@@ -8634,37 +8704,21 @@ class CanvasLogic {
       if (fromNode == null || toNode == null) {
         continue;
       }
-      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(
-        fromNode,
-        toNode,
-        fromPortIndex: fromPort,
-        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
-      );
-      final Offset end = _inputAnchor(
-        fromNode,
-        toNode,
-        edge: _connectionEdgeFromName(connection['toEdge']?.toString()),
-      );
+      final List<Offset> points = routedConnections[index];
+      if (points.isEmpty) continue;
       final Rect corridor = Rect.fromLTRB(
-        math.min(start.dx, end.dx) - corridorPadding,
-        math.min(start.dy, end.dy) - corridorPadding,
-        math.max(start.dx, end.dx) + corridorPadding,
-        math.max(start.dy, end.dy) + corridorPadding,
+        points.map((Offset point) => point.dx).reduce(math.min) -
+            corridorPadding,
+        points.map((Offset point) => point.dy).reduce(math.min) -
+            corridorPadding,
+        points.map((Offset point) => point.dx).reduce(math.max) +
+            corridorPadding,
+        points.map((Offset point) => point.dy).reduce(math.max) +
+            corridorPadding,
       );
       if (!corridor.overlaps(rect)) {
         continue;
       }
-      final bool preferVertical =
-          (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
-      final List<Offset> points = buildConnectionPolyline(
-        start: start,
-        end: end,
-        preferVertical: preferVertical,
-        gridWidth: _gridWidth,
-        gridHeight: _gridHeight,
-        obstacles: _connectionObstacles(fromNode, toNode),
-      );
       double distance = double.infinity;
       for (int pointIndex = 1; pointIndex < points.length; pointIndex++) {
         distance = math.min(
@@ -8922,6 +8976,42 @@ class CanvasLogic {
     return null;
   }
 
+  NodeConnectionEdge _resolvedOutputEdge(
+    Map<String, dynamic> connection,
+    NodeModel fromNode,
+  ) {
+    final NodeConnectionEdge? stored = _connectionEdgeFromName(
+      connection['fromEdge']?.toString(),
+    );
+    if (stored == NodeConnectionEdge.bottom ||
+        stored == NodeConnectionEdge.right) {
+      return stored!;
+    }
+    final List<Map<String, dynamic>> outgoing = connections
+        .where((Map<String, dynamic> item) => item['fromNode'] == fromNode.id)
+        .toList(growable: false);
+    return outgoing.indexOf(connection) <= 0
+        ? NodeConnectionEdge.bottom
+        : NodeConnectionEdge.right;
+  }
+
+  NodeConnectionEdge _resolvedInputEdge(
+    Map<String, dynamic> connection,
+    NodeModel fromNode,
+    NodeModel toNode,
+  ) {
+    final NodeConnectionEdge? stored = _connectionEdgeFromName(
+      connection['toEdge']?.toString(),
+    );
+    if (stored == NodeConnectionEdge.top || stored == NodeConnectionEdge.left) {
+      return stored!;
+    }
+    final Offset delta = toNode.position - fromNode.position;
+    return delta.dy.abs() >= delta.dx.abs()
+        ? NodeConnectionEdge.top
+        : NodeConnectionEdge.left;
+  }
+
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
     final double dx = (toNode.position.dx - fromNode.position.dx).abs();
     final double dy = (toNode.position.dy - fromNode.position.dy).abs();
@@ -8929,6 +9019,7 @@ class CanvasLogic {
   }
 
   int? _connectionIndexAt(Offset point) {
+    final List<List<Offset>> routedConnections = _routedConnectionPolylines();
     for (int index = connections.length - 1; index >= 0; index--) {
       final Map<String, dynamic> connection = connections[index];
       final NodeModel? fromNode = _findNode(connection['fromNode'] as String);
@@ -8937,52 +9028,18 @@ class CanvasLogic {
         continue;
       }
 
-      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
-      final Offset start = _outputAnchor(
-        fromNode,
-        toNode,
-        fromPortIndex: fromPort,
-        edge: _connectionEdgeFromName(connection['fromEdge']?.toString()),
-      );
-      final Offset end = _inputAnchor(
-        fromNode,
-        toNode,
-        edge: _connectionEdgeFromName(connection['toEdge']?.toString()),
-      );
-      if (_isPointNearConnection(
-        point,
-        start,
-        end,
-        obstacles: _connectionObstacles(fromNode, toNode),
-      )) {
+      if (_isPointNearPolyline(point, routedConnections[index])) {
         return index;
       }
     }
     return null;
   }
 
-  bool _isPointNearConnection(
-    Offset point,
-    Offset start,
-    Offset end, {
-    List<Rect> obstacles = const <Rect>[],
-  }) {
+  bool _isPointNearPolyline(Offset point, List<Offset> points) {
     const double threshold = 12.0;
-    final bool preferVertical =
-        (end.dy - start.dy).abs() >= (end.dx - start.dx).abs();
-    final List<Offset> points = buildConnectionPolyline(
-      start: start,
-      end: end,
-      preferVertical: preferVertical,
-      gridWidth: _gridWidth,
-      gridHeight: _gridHeight,
-      obstacles: obstacles,
-    );
-
     for (int index = 1; index < points.length; index++) {
-      final Offset previous = points[index - 1];
-      final Offset current = points[index];
-      if (_distanceToSegment(point, previous, current) <= threshold) {
+      if (_distanceToSegment(point, points[index - 1], points[index]) <=
+          threshold) {
         return true;
       }
     }
@@ -9021,6 +9078,54 @@ class CanvasLogic {
           );
         })
         .toList(growable: false);
+  }
+
+  List<List<Offset>> _routedConnectionPolylines() {
+    final List<List<Offset>> routes = <List<Offset>>[];
+    for (final Map<String, dynamic> connection in connections) {
+      final NodeModel? fromNode = _findNode(
+        connection['fromNode'] as String? ?? '',
+      );
+      final NodeModel? toNode = _findNode(
+        connection['toNode'] as String? ?? '',
+      );
+      if (fromNode == null || toNode == null) {
+        routes.add(const <Offset>[]);
+        continue;
+      }
+      final int fromPort = (connection['fromPort'] as num?)?.toInt() ?? 0;
+      final NodeConnectionEdge fromEdge = _resolvedOutputEdge(
+        connection,
+        fromNode,
+      );
+      final Offset start = _outputAnchor(
+        fromNode,
+        toNode,
+        fromPortIndex: fromPort,
+        edge: fromEdge,
+      );
+      final NodeConnectionEdge toEdge = _resolvedInputEdge(
+        connection,
+        fromNode,
+        toNode,
+      );
+      final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
+      routes.add(
+        buildConnectionPolyline(
+          start: start,
+          end: end,
+          preferVertical: fromEdge == NodeConnectionEdge.bottom,
+          endVertical: toEdge == NodeConnectionEdge.top,
+          gridWidth: _gridWidth,
+          gridHeight: _gridHeight,
+          obstacles: _connectionObstacles(fromNode, toNode),
+          existingPolylines: routes
+              .where((List<Offset> route) => route.isNotEmpty)
+              .toList(growable: false),
+        ),
+      );
+    }
+    return routes;
   }
 
   List<_EffectiveOutputPort> _effectiveOutputPorts(NodeModel node) {

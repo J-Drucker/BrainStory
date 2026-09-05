@@ -103,8 +103,8 @@ void main() {
     painter =
         (logic.connectionWidgets().single as CustomPaint).painter!
             as ConnectionPainter;
-    expect(painter.preferVertical, isFalse);
-    expect(painter.start, const Offset(260, 136));
+    expect(painter.preferVertical, isTrue);
+    expect(painter.start, const Offset(180, 172));
     expect(painter.end, const Offset(-100, 136));
 
     logic.connections.clear();
@@ -113,7 +113,13 @@ void main() {
     expect(logic.completeConnectionDraftAtNode(downstream), isTrue);
     expect(logic.hasConnectionDraft, isFalse);
     expect(logic.connections.single['fromEdge'], 'bottom');
-    expect(logic.connections.single['toEdge'], 'top');
+    expect(logic.connections.single['toEdge'], 'left');
+
+    logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
+    expect(logic.hasConnectionDraft, isFalse);
+    logic.startConnectionDraft(upstream, NodeConnectionEdge.right);
+    expect(logic.hasConnectionDraft, isTrue);
+    logic.clearConnectionDraft();
   });
 
   testWidgets('hovering anywhere on a node reveals its wire handles', (
@@ -133,6 +139,7 @@ void main() {
                 onDragEnd: (_) {},
                 color: Colors.blueGrey,
                 showConnectionOutputs: true,
+                connectionOutputEdge: NodeConnectionEdge.bottom,
                 onConnectionOutputTap: (_) {},
               ),
             ],
@@ -142,7 +149,7 @@ void main() {
     );
 
     final Finder handle = find.byKey(
-      const ValueKey<String>('node-wire-handle-right'),
+      const ValueKey<String>('node-wire-handle-bottom'),
     );
     final Finder visual = find.descendant(
       of: handle,
@@ -158,6 +165,34 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.getSize(visual).width, 12);
+  });
+
+  test('wire routing avoids nodes and prefers not to cross existing wires', () {
+    final List<Offset> aroundNode = buildConnectionPolyline(
+      start: const Offset(0, 50),
+      end: const Offset(200, 50),
+      preferVertical: false,
+      gridWidth: 160,
+      gridHeight: 72,
+      obstacles: const <Rect>[Rect.fromLTWH(80, 20, 40, 60)],
+    );
+    expect(aroundNode.length, greaterThan(2));
+    expect(
+      aroundNode.any((Offset point) => point.dy <= 8 || point.dy >= 92),
+      isTrue,
+    );
+
+    final List<Offset> aroundWire = buildConnectionPolyline(
+      start: Offset.zero,
+      end: const Offset(200, 0),
+      preferVertical: false,
+      gridWidth: 160,
+      gridHeight: 72,
+      existingPolylines: const <List<Offset>>[
+        <Offset>[Offset(100, -20), Offset(100, 20)],
+      ],
+    );
+    expect(aroundWire.any((Offset point) => point.dy.abs() >= 24), isTrue);
   });
 
   test('consecutive channel and marker edits combine into one node', () {

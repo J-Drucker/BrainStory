@@ -36,6 +36,8 @@ class NodeCard extends StatelessWidget {
   final NodeConnectionEdge? selectedConnectionEdge;
   final bool showConnectionOutputs;
   final bool showConnectionInputs;
+  final NodeConnectionEdge? connectionOutputEdge;
+  final NodeConnectionEdge? connectionInputEdge;
 
   final void Function(Offset) onDragEnd;
   final void Function()? onTap;
@@ -66,6 +68,8 @@ class NodeCard extends StatelessWidget {
     this.selectedConnectionEdge,
     this.showConnectionOutputs = false,
     this.showConnectionInputs = false,
+    this.connectionOutputEdge,
+    this.connectionInputEdge,
     this.onTap,
     this.onDoubleTap,
     this.onOutputTap,
@@ -124,24 +128,18 @@ class NodeCard extends StatelessWidget {
                     showOutputHandles: hasVisibleOutputHandles,
                   ),
                   if (showConnectionOutputs) ...<Widget>[
-                    _buildConnectionHandle(
-                      NodeConnectionEdge.right,
-                      forceVisible: hovering,
-                    ),
-                    _buildConnectionHandle(
-                      NodeConnectionEdge.bottom,
-                      forceVisible: hovering,
-                    ),
+                    if (connectionOutputEdge != null)
+                      _buildConnectionHandle(
+                        connectionOutputEdge!,
+                        forceVisible: hovering,
+                      ),
                   ],
                   if (showConnectionInputs) ...<Widget>[
-                    _buildConnectionHandle(
-                      NodeConnectionEdge.left,
-                      forceVisible: hovering,
-                    ),
-                    _buildConnectionHandle(
-                      NodeConnectionEdge.top,
-                      forceVisible: hovering,
-                    ),
+                    if (connectionInputEdge != null)
+                      _buildConnectionHandle(
+                        connectionInputEdge!,
+                        forceVisible: hovering,
+                      ),
                   ],
                 ],
               ),
