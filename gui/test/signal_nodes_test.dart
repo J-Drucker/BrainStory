@@ -417,6 +417,35 @@ void main() {
     expect(find.text('Project'), findsOneWidget);
   });
 
+  testWidgets('recent jobs stays left of the project rail', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.recentRunJobs.value = const <RunJobEntry>[
+      RunJobEntry(
+        label: 'Running Import',
+        detail: 'Finished.',
+        state: RunJobState.done,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CanvasView(logic: logic)),
+      ),
+    );
+
+    final double projectX = tester.getCenter(find.text('Project')).dx;
+    expect(
+      tester.getCenter(find.text('Recent jobs (1)')).dx,
+      lessThan(projectX),
+    );
+
+    await tester.tap(find.text('Recent jobs (1)'));
+    await tester.pumpAndSettle();
+    expect(tester.getCenter(find.text('Recent jobs')).dx, lessThan(projectX));
+  });
+
   testWidgets('canvas keeps active processing visible without modal lock', (
     WidgetTester tester,
   ) async {

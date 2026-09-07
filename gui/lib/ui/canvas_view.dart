@@ -462,6 +462,7 @@ class _CanvasViewState extends State<CanvasView> {
                   ),
                 ),
                 _RecentJobsOverlay(
+                  rightInset: sideRailWidth + 16,
                   runActivity: runActivity,
                   jobs: logic.recentRunJobs.value,
                   queuedJobs: logic.queuedRunJobs.value,
@@ -861,6 +862,7 @@ class _CanvasViewState extends State<CanvasView> {
 
 class _RecentJobsOverlay extends StatefulWidget {
   const _RecentJobsOverlay({
+    required this.rightInset,
     required this.runActivity,
     required this.jobs,
     required this.queuedJobs,
@@ -870,6 +872,7 @@ class _RecentJobsOverlay extends StatefulWidget {
     required this.onToggleCollapsed,
   });
 
+  final double rightInset;
   final RunActivity? runActivity;
   final List<RunJobEntry> jobs;
   final List<RunJobEntry> queuedJobs;
@@ -903,7 +906,7 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
 
     if (widget.collapsed && runActivity == null && !visualizerPriorityActive) {
       return Positioned(
-        right: 16,
+        right: widget.rightInset,
         bottom: 16,
         child: FilledButton.tonalIcon(
           onPressed: widget.onToggleCollapsed,
@@ -918,7 +921,7 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
     }
 
     return Positioned(
-      right: 16,
+      right: widget.rightInset,
       bottom: 16,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360, minWidth: 280),
