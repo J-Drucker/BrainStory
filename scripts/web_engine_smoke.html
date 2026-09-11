@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>BrainStory engine check</title>
+<body><pre id="result">Testing Rust WebAssembly worker...</pre>
+<script>
+const worker = new Worker('brainstory_worker.js');
+const pending = new Map();
+let sequence = 0;
+worker.onmessage = ({data}) => {
+  const {resolve, reject} = pending.get(data.id);
+  pending.delete(data.id);
+  const response = data.error ? {error: data.error} : JSON.parse(data.response);
+  if (response.error) reject(new Error(response.error));
+  else resolve(response.result);
+};
+function run(request) {
+  return new Promise((resolve, reject) => {
+    const id = sequence++;
+    pending.set(id, {resolve, reject});
+    worker.postMessage({id, request: JSON.stringify(request)});
+  });
+}
+(async () => {
+  const samples = Array.from({length:256}, (_, i) => Math.sin(2*Math.PI*12*i/256));
+  const spectrum = await run({operation:'spectrum', samples, rate:256, low:1, high:40});
+  const peak = spectrum.frequencies[spectrum.power.indexOf(Math.max(...spectrum.power))];
+  if (peak !== 12) throw new Error(`Expected 12 Hz, received ${peak}`);
+  const filtered = await run({operation:'filter', samples, rate:256, low:1, high:40, steepness:0.5, notch:null});
+  if (filtered.length !== 256 || filtered.some(x => !Number.isFinite(x))) throw new Error('Invalid filter result');
+  const applied = await run({operation:'applyIca', channels:[[1,2,3],[4,5,6]], matrix:[[1,0],[0,1]], means:[1,4]});
+  if (JSON.stringify(applied) !== '[[0,1,2],[0,1,2]]') throw new Error('Invalid ICA application');
+  document.getElementById('result').textContent = 'PASS: Rust WASM worker\nSpectrum peak: 12 Hz\nFilter: 256 finite samples\nICA application: exact expected values';
+  worker.terminate();
+})().catch(error => {document.getElementById('result').textContent = `FAIL: ${error.message}`; worker.terminate();});
+</script></body></html>

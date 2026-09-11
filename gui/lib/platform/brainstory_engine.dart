@@ -1,11 +1,88 @@
 import 'dart:math' as math;
 
 import 'brainstory_engine_model.dart';
+import 'engine_background.dart';
 import 'brainstory_engine_stub.dart'
     if (dart.library.io) 'brainstory_engine_io.dart'
+    if (dart.library.js_interop) 'brainstory_engine_web.dart'
     as impl;
 
 export 'brainstory_engine_model.dart';
+
+Future<List<double>?> filterBackground(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowCutHz,
+  required double highCutHz,
+  required double steepness,
+  double? notchHz,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'filter',
+    'samples': samples,
+    'rate': sampleRate,
+    'low': lowCutHz,
+    'high': highCutHz,
+    'steepness': steepness,
+    'notch': notchHz,
+  });
+  return result == null
+      ? null
+      : (result as List).map((dynamic v) => (v as num).toDouble()).toList();
+}
+
+Future<List<List<double>>?> applyIcaBackground(
+  List<List<double>> channels, {
+  required List<List<double>> unmixingMatrix,
+  required List<double> channelMeans,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'applyIca',
+    'channels': channels,
+    'matrix': unmixingMatrix,
+    'means': channelMeans,
+  });
+  if (result == null) {
+    return applyIcaNative(
+      channels,
+      unmixingMatrix: unmixingMatrix,
+      channelMeans: channelMeans,
+    );
+  }
+  return (result as List)
+      .map(
+        (dynamic row) =>
+            (row as List).map((dynamic v) => (v as num).toDouble()).toList(),
+      )
+      .toList();
+}
+
+Future<NativeIcaResult?> computeIcaBackground(
+  List<List<double>> channels, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required int seed,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'ica',
+    'channels': channels,
+    'components': componentCount,
+    'tolerance': tolerance,
+    'iterations': maxIterations,
+    'seed': seed,
+  });
+  if (result != null) {
+    return NativeIcaResult.fromJson(result as Map<String, dynamic>);
+  }
+  return computeIcaNative(
+    channels,
+    componentCount: componentCount,
+    tolerance: tolerance,
+    maxIterations: maxIterations,
+    seed: seed,
+  );
+}
 
 AggregateSeriesStats? computeAggregateSeriesStats(List<List<double>> traces) {
   return impl.computeAggregateSeriesStats(traces);

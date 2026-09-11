@@ -32,6 +32,7 @@ import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
+import '../platform/browser_source_files.dart';
 import '../platform/project_file_save.dart';
 import '../platform/recent_project_path.dart';
 import 'connection_painter.dart';
@@ -1208,6 +1209,8 @@ class CanvasLogic {
             'set',
             'fdt',
             'vhdr',
+            'eeg',
+            'vmrk',
           ],
         ),
       ],
@@ -1217,9 +1220,25 @@ class CanvasLogic {
       _recordUndo('import files');
     }
 
+    String? browserRoot;
+    if (kIsWeb && files.isNotEmpty) {
+      final Map<String, Uint8List> selected = <String, Uint8List>{};
+      for (final XFile file in files) {
+        selected[file.name] = await file.readAsBytes();
+      }
+      browserRoot = registerBrowserSourceFiles(selected);
+    }
     for (final XFile file in files) {
+      if (kIsWeb &&
+          <String>['.fdt', '.eeg', '.vmrk'].any(
+            (String extension) => file.name.toLowerCase().endsWith(extension),
+          )) {
+        continue;
+      }
       final String normalizedPath = brainVisionHeaderPathForSelection(
-        eeglabMetadataPathForSelection(file.path),
+        eeglabMetadataPathForSelection(
+          kIsWeb ? '$browserRoot/${file.name}' : file.path,
+        ),
       );
       final bool selectedFdt = file.name.toLowerCase().endsWith('.fdt');
       final bool selectedBrainVisionSidecar =

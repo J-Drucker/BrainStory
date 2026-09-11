@@ -62,10 +62,18 @@ class BandpassNodeType extends NodeType {
           .map((List<double> channel) => List<double>.from(channel))
           .toList(),
     );
-    dataset.timeSeries = TimeSeriesData(
-      channelSamples: channels
-          .map(
-            (List<double> samples) => applyBandpassFilter(
+    final List<List<double>> filteredChannels = <List<double>>[];
+    for (final List<double> samples in channels) {
+      filteredChannels.add(
+        await filterBackground(
+              samples,
+              sampleRate: sampleRate,
+              lowCutHz: low,
+              highCutHz: high,
+              steepness: steepness,
+              notchHz: notch,
+            ) ??
+            applyBandpassFilter(
               samples,
               sampleRate: sampleRate,
               lowCutHz: low,
@@ -73,8 +81,10 @@ class BandpassNodeType extends NodeType {
               steepness: steepness,
               notchHz: notch,
             ),
-          )
-          .toList(growable: false),
+      );
+    }
+    dataset.timeSeries = TimeSeriesData(
+      channelSamples: filteredChannels,
       sampleRate: sampleRate,
       channelLabels: timeSeries.channelLabels,
       channelCoordinates: timeSeries.channelCoordinates,

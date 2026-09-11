@@ -9,6 +9,8 @@ gui/.brainstory_cache/
 
 # Build outputs
 engine/target/
+engine/web/target/
+gui/web/brainstory_web.wasm
 gui/build/
 dist/
 

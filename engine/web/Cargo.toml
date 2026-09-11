@@ -1,0 +1,18 @@
+[package]
+name = "brainstory_web"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nalgebra = "0.33"
+realfft = "3"
+biquad = "0.4"
+
+[profile.release]
+lto = true
+opt-level = 3

@@ -493,7 +493,7 @@ class ICANodeType extends _MatrixTransformNodeType {
       throw ArgumentError('ICA seed must be non-negative.');
     }
 
-    final NativeIcaResult? result = computeIcaNative(
+    final NativeIcaResult? result = await computeIcaBackground(
       fitChannels,
       componentCount: componentCount,
       tolerance: tolerance,
@@ -514,7 +514,7 @@ class ICANodeType extends _MatrixTransformNodeType {
         .map((int index) => sourceChannelLabels[index])
         .toList(growable: false);
     final List<List<double>> fullActivations =
-        applyIcaNative(
+        await applyIcaBackground(
           selectedSourceChannels,
           unmixingMatrix: result.unmixingMatrix,
           channelMeans: result.channelMeans,
