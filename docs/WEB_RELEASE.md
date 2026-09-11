@@ -26,28 +26,42 @@ not a completed large-recording performance port.
 
 ## Webflow
 
-Use **Webflow Cloud**, the application hosting area, rather than pasting the
-Flutter bundle into a Designer Code Embed. Webflow's documentation lists
-`static` as a supported framework declaration in `webflow.json`:
+The deployment project is `packaging/webflow`. It uses Webflow's documented
+Vite integration and contains the compiled Flutter/Rust release in
+`brainstory-web.zip`. No Flutter or Rust installation is needed on Webflow.
+The archive contains app code and assets, not recordings or saved projects.
 
-```json
-{"cloud":{"framework":"static"}}
-```
+One-time account setup:
 
-The generated bundle needs to be published as a static application repository
-with all its assets intact. Flutter and Rust are compiled locally; do not
-assume Webflow's build machines have these SDKs installed. Webflow Cloud's
-GitHub integration needs access to the deployment repository. This account
-connection and actual deployment have not been performed or verified.
+1. Open the Webflow dashboard, choose New Project > App > Connect GitHub.
+2. Sign in to GitHub and authorize Webflow for `J-Drucker/BrainStory` only.
+3. After the prepared commit has been pushed, import that repository.
+4. Name the app `BrainStory`, select branch `main`, and set the root directory
+   in Advanced settings to `packaging/webflow`.
+5. Use framework Vite and the default build/output settings (`npm run build`,
+   `dist`) if prompted. No environment variables or database bindings are needed.
+6. Deploy, then open the generated application URL. A standalone app is suitable
+   for the first friends-only preview. It can later be linked from the
+   HumanNexus Neuroscience site.
 
-For a mount path such as `/brainstory/`, build with:
-`bash scripts/build_web.sh /brainstory/`. The mount path must match the build.
-For a separate application domain use the default `/` build.
+Webflow provides the mount path to Vite. The wrapper uses that path to open
+the workspace; the workspace resolves its assets relative to its own directory.
+Both `/` and a path such as `/brainstory/` are supported without rebuilding Rust.
 
-If your Cloud account does not offer a static deployment, host the bundle on
-a static host and link to it from Webflow, or embed its HTTPS URL in an iframe.
-No recordings should be included in the deployment repository.
+To publish future code changes, run `bash scripts/prepare_webflow.sh`, commit
+the changed source and `packaging/webflow/brainstory-web.zip`, then push when
+ready to deploy. A source-only push does not refresh the compiled release.
+The build configuration unpacks the archive during Vite configuration, so it
+also works when Webflow invokes Vite directly rather than an npm lifecycle hook.
+
+Local wrapper check (Node 22.12 or newer): run `npm ci`, `npm run build`, and
+`npm run preview` from `packaging/webflow`. The `public`, `dist`, and
+`node_modules` folders are generated and ignored by Git.
+
+Account connection and a hosted deployment still require verification. The
+Webflow Designer/API connection alone does not grant Cloud access to GitHub.
 
 References:
 - https://developers.webflow.com/webflow-cloud/bring-your-own-app
+- https://developers.webflow.com/webflow-cloud/environment/framework-customization
 - https://help.webflow.com/hc/en-us/articles/33961332238611-Custom-code-embed
