@@ -797,6 +797,68 @@ void main() {
     );
   });
 
+  test(
+    'unconsumed channel coordinates pass through to daughter nodes',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-a', label: 'dataset-a.set')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0, -1, 0, 1, 0, -1],
+          sampleRate: 100,
+          channelLabels: const <String>['Fp1'],
+          channelCoordinates: const <String, ChannelCoordinate>{
+            'Fp1': ChannelCoordinate(label: 'Fp1', x: -30, y: 80, z: 20),
+          },
+        );
+      dataset.setArtifactIdentity(
+        const ArtifactIdentity(
+          artifactId: 'node-a:dataset-a:channelCoordinates',
+          datasetId: 'dataset-a',
+          kind: BrainStoryArtifactKind.channelCoordinates,
+          producerNodeId: 'node-a',
+        ),
+      );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(BandpassNodeType());
+      logic.addNode(VisualizationNodeType());
+      final NodeModel nodeA = logic.nodes[0];
+      final NodeModel nodeB = logic.nodes[1];
+      final NodeModel nodeC = logic.nodes[2];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': nodeA.id,
+          'fromPort': 0,
+          'toNode': nodeB.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': nodeB.id,
+          'fromPort': 0,
+          'toNode': nodeC.id,
+          'toPort': 0,
+        },
+      ]);
+      nodeA.datasetStates[dataset.id] = DatasetState.done;
+      nodeB.datasetStates[dataset.id] = DatasetState.ready;
+
+      await logic.runThisStep(nodeB.id, datasetIds: <String>{dataset.id});
+      final Dataset downstream = await logic.materializedDatasetViewForNode(
+        nodeB.id,
+        dataset,
+      );
+
+      expect(downstream.timeSeries!.channelCoordinates, contains('Fp1'));
+      expect(
+        downstream
+            .artifactIdentityFor(BrainStoryArtifactKind.channelCoordinates)!
+            .producerNodeId,
+        'node-a',
+      );
+      expect(logic.visualizationSourceRefsForNode(nodeC.id), hasLength(1));
+    },
+  );
+
   test('a node inherits the union of datasets from its direct parents', () {
     final CanvasLogic logic = CanvasLogic();
     for (final String id in <String>['dataset-a', 'dataset-b']) {

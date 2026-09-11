@@ -4578,7 +4578,8 @@ class CanvasLogic {
           sourceIdentities.entries.where(
             (MapEntry<BrainStoryArtifactKind, ArtifactIdentity> entry) =>
                 entry.key == BrainStoryArtifactKind.timeSeries ||
-                entry.key == BrainStoryArtifactKind.markers,
+                entry.key == BrainStoryArtifactKind.markers ||
+                entry.key == BrainStoryArtifactKind.channelCoordinates,
           ),
         );
   }
@@ -6945,6 +6946,8 @@ class CanvasLogic {
       if (dataset.timeSeries != null) ...<BrainStoryArtifactKind>{
         BrainStoryArtifactKind.timeSeries,
         BrainStoryArtifactKind.markers,
+        if (dataset.timeSeries!.channelCoordinates.isNotEmpty)
+          BrainStoryArtifactKind.channelCoordinates,
       },
       if (dataset.segmentedTimeSeries != null)
         BrainStoryArtifactKind.segmentedTimeSeries,
