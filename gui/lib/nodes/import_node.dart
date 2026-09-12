@@ -294,12 +294,16 @@ Future<ParsedSignalData> loadDatasetSignal(
     return parseEdfBytes(bytes, sourceDescription: normalizedSourceDescription);
   }
   if (lowerPath.endsWith('.cnt')) {
-    if (normalizedPath.isEmpty) {
+    if (normalizedPath.isEmpty && fileBytes == null) {
       throw const FormatException(
-        'ANT CNT import requires a local .cnt file path.',
+        'ANT CNT import requires a local path or uploaded file bytes.',
       );
     }
-    final AntCntImportData imported = await readAntCntFromPath(normalizedPath);
+    final AntCntImportData imported = await readAntCnt(
+      path: normalizedPath,
+      bytes: fileBytes,
+      filename: normalizedSourceDescription.split('/').last,
+    );
     return ParsedSignalData(
       channelSamples: imported.channelSamples,
       sampleRate: imported.sampleRate,

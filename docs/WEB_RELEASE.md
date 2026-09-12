@@ -1,7 +1,8 @@
 # BrainStory browser preview
 
 Build with `bash scripts/build_web.sh` from the repository root. Requires the
-existing Flutter and Rust installations and the Rust target
+existing Flutter and Rust installations, an activated Emscripten SDK (`emcc`),
+and the Rust target
 `wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`).
 The result is `gui/build/web`, also packaged in `dist/brainstory-web.zip`.
 Serve over HTTP/HTTPS, not by opening index.html directly.
@@ -12,14 +13,15 @@ Serve over HTTP/HTTPS, not by opening index.html directly.
 - Rust filtering, spectra, ICA fitting and ICA application compiled from the
   desktop engine's source files. Filtering and ICA fitting/application from
   the fitting node use a browser worker; other operations may still block.
-- CSV, TSV, EDF, EEGLAB and BrainVision import paths. Select `.set` and `.fdt`
+- CSV, TSV, EDF, ANT Neuro CNT, EEGLAB and BrainVision import paths. Select `.set` and `.fdt`
   together, or `.vhdr`, `.eeg`, and `.vmrk` together. Companion files must be
   selected again after a page reload if recomputing from original sources.
 - Computation stays on the user's computer. The app contains no data-upload
   backend. Rendering assets and the processing engine are bundled locally.
 
-ANT CNT remains desktop-only. Browser disk caching is not implemented; save
-a BST with artifacts before closing the tab to retain computed outputs.
+ANT CNT parsing uses the vendored libeep reader compiled to WebAssembly and
+runs inside a browser worker; recordings are not uploaded. Browser disk caching
+is not implemented; save a BST with artifacts before closing the tab to retain computed outputs.
 Large recordings have not yet been qualified for browser memory limits.
 The numerical bridge currently copies JSON buffers and is a first preview,
 not a completed large-recording performance port.

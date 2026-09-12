@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../model/data_artifacts.dart';
 import 'ant_cnt_import_stub.dart'
     if (dart.library.io) 'ant_cnt_import_io.dart'
+    if (dart.library.js_interop) 'ant_cnt_import_web.dart'
     as impl;
 
 class AntCntImportData {
@@ -24,8 +25,16 @@ class AntCntImportData {
   final ImpedanceData? impedanceData;
 }
 
+Future<AntCntImportData> readAntCnt({
+  required String path,
+  Uint8List? bytes,
+  String? filename,
+}) {
+  return impl.readAntCnt(path: path, bytes: bytes, filename: filename);
+}
+
 Future<AntCntImportData> readAntCntFromPath(String path) {
-  return impl.readAntCntFromPath(path);
+  return readAntCnt(path: path);
 }
 
 AntCntImportData parseAntCntPayload(

@@ -25,6 +25,15 @@
       pending.set(id, { resolve, reject });
       worker.postMessage({ id, request });
     });
+    globalThis.brainstoryImportCnt = (bytes, filename) => new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      const ownedBytes = bytes.slice();
+      worker.postMessage(
+        { id, cntBytes: ownedBytes, filename },
+        [ownedBytes.buffer],
+      );
+    });
     globalThis.brainstoryEngine = (request) => {
       const bytes = encoder.encode(request);
       const input = api.allocate(bytes.length);

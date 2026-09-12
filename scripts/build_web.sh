@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+bash scripts/build_cnt_web.sh
 cargo build --manifest-path engine/web/Cargo.toml --target wasm32-unknown-unknown --release --locked
 cp engine/web/target/wasm32-unknown-unknown/release/brainstory_web.wasm gui/web/brainstory_web.wasm
 pushd gui >/dev/null

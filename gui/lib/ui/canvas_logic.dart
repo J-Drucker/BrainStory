@@ -1250,7 +1250,7 @@ class CanvasLogic {
           (hasDesktopPath ||
               selectedFdt ||
               selectedBrainVisionSidecar ||
-              selectedAntCnt)
+              (selectedAntCnt && !kIsWeb))
           ? null
           : await file.readAsBytes();
       final String sourceName = selectedFdt
