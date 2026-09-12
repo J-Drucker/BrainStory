@@ -54,6 +54,8 @@ PSD and hypnogram,Plot,Mouse,Scroll wheel or trackpad scroll,Shift,Pan the horiz
 PSD and hypnogram,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl+Shift,Change the visible horizontal span,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
 PSD,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Change the fixed power range,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handlePointerSignal
 PSD,Trace,Mouse,Hover,None,Show spectrum label frequency and power,implemented,gui/lib/ui/visualization_panel.dart::_PsdChart
+PSD,Conditions control,Mouse,Separate or Butterfly,None,Show conditions in separate panels or overlaid,implemented,gui/lib/ui/visualization_panel.dart::_PsdChart
+PSD,Channels control,Mouse,Stack Butterfly or Average,None,Show channels as rows overlays or an average,implemented,gui/lib/ui/visualization_panel.dart::_PsdChart
 PSD and hypnogram,Horizontal scrollbar,Mouse,Drag,None,Pan the horizontal window,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState
 ICA,Component grid,Mouse,Click component tile or checkbox,None,Toggle component exclusion selection,implemented,gui/lib/ui/ica_viewer.dart::_buildComponentTile
 ICA,Trace plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Zoom the voltage axis,implemented,gui/lib/ui/ica_viewer.dart::_handleTracePointerSignal

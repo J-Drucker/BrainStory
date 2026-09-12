@@ -2762,6 +2762,189 @@ Map<String, List<double>> _psdConditionPowers(
   });
 }
 
+class _PsdPanelData {
+  const _PsdPanelData({required this.title, required this.series});
+
+  final String title;
+  final List<_SeriesData> series;
+}
+
+_SeriesData _averagePsdSeries(
+  List<_SeriesData> inputs, {
+  required String label,
+  required Color color,
+  required bool logY,
+}) {
+  final int length = inputs
+      .map((_SeriesData series) => series.points.length)
+      .reduce(math.min);
+  return _SeriesData(
+    label: label,
+    color: color,
+    subtitle: '$length bins',
+    points: List<FlSpot>.generate(length, (int index) {
+      double total = 0;
+      for (final _SeriesData series in inputs) {
+        total += logY
+            ? math.pow(10, series.points[index].y).toDouble()
+            : series.points[index].y;
+      }
+      final double mean = total / inputs.length;
+      return FlSpot(
+        inputs.first.points[index].x,
+        logY ? math.log(mean) / math.ln10 : mean,
+      );
+    }, growable: false),
+  );
+}
+
+List<_SeriesData> _averagePsdChannels(
+  Map<int, List<_SeriesData>> channels, {
+  required String condition,
+  required bool logY,
+  required int colorOffset,
+}) {
+  final int datasetCount = channels.values.fold<int>(
+    0,
+    (int count, List<_SeriesData> series) => math.max(count, series.length),
+  );
+  final List<_SeriesData> averages = <_SeriesData>[];
+  for (int datasetIndex = 0; datasetIndex < datasetCount; datasetIndex++) {
+    final List<_SeriesData> inputs = channels.values
+        .where((List<_SeriesData> values) => datasetIndex < values.length)
+        .map((List<_SeriesData> values) => values[datasetIndex])
+        .toList(growable: false);
+    if (inputs.isEmpty) continue;
+    final String firstLabel = inputs.first.label;
+    final int separator = firstLabel.indexOf(' · ');
+    averages.add(
+      _averagePsdSeries(
+        inputs,
+        label: separator < 0
+            ? '$condition average'
+            : firstLabel.substring(0, separator),
+        color: _seriesColor(colorOffset + averages.length),
+        logY: logY,
+      ),
+    );
+  }
+  return averages;
+}
+
+List<_PsdPanelData> _buildPsdPanels(
+  Map<String, Map<int, List<_SeriesData>>> source, {
+  required String conditionMode,
+  required String channelMode,
+  required List<String> channelLabels,
+  required bool logY,
+}) {
+  final List<_PsdPanelData> panels = <_PsdPanelData>[];
+  if (conditionMode == 'separate') {
+    for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
+        in source.entries) {
+      if (channelMode == 'stack') {
+        for (final MapEntry<int, List<_SeriesData>> channel
+            in condition.value.entries) {
+          panels.add(
+            _PsdPanelData(
+              title:
+                  '${condition.key} · ${channel.key < channelLabels.length ? channelLabels[channel.key] : 'Channel ${channel.key + 1}'}',
+              series: channel.value,
+            ),
+          );
+        }
+      } else if (channelMode == 'average') {
+        final List<_SeriesData> averages = _averagePsdChannels(
+          condition.value,
+          condition: condition.key,
+          logY: logY,
+          colorOffset: panels.length,
+        );
+        if (averages.isNotEmpty) {
+          panels.add(_PsdPanelData(title: condition.key, series: averages));
+        }
+      } else {
+        panels.add(
+          _PsdPanelData(
+            title: condition.key,
+            series: condition.value.values
+                .expand((List<_SeriesData> values) => values)
+                .toList(growable: false),
+          ),
+        );
+      }
+    }
+    return panels;
+  }
+
+  if (channelMode == 'stack') {
+    final Set<int> channelIndices = source.values
+        .expand((Map<int, List<_SeriesData>> channels) => channels.keys)
+        .toSet();
+    for (final int channelIndex in channelIndices) {
+      final List<_SeriesData> conditionSeries = <_SeriesData>[];
+      int conditionIndex = 0;
+      for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
+          in source.entries) {
+        final List<_SeriesData> values =
+            condition.value[channelIndex] ?? const <_SeriesData>[];
+        for (final _SeriesData value in values) {
+          conditionSeries.add(
+            _SeriesData(
+              label: values.length == 1
+                  ? condition.key
+                  : '${condition.key} · ${value.label.split(' · ').first}',
+              color: _seriesColor(conditionIndex++),
+              points: value.points,
+              subtitle: value.subtitle,
+            ),
+          );
+        }
+      }
+      if (conditionSeries.isNotEmpty) {
+        panels.add(
+          _PsdPanelData(
+            title: channelIndex < channelLabels.length
+                ? channelLabels[channelIndex]
+                : 'Channel ${channelIndex + 1}',
+            series: conditionSeries,
+          ),
+        );
+      }
+    }
+  } else if (channelMode == 'average') {
+    final List<_SeriesData> conditionSeries = <_SeriesData>[];
+    int conditionIndex = 0;
+    for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
+        in source.entries) {
+      final List<_SeriesData> averages = _averagePsdChannels(
+        condition.value,
+        condition: condition.key,
+        logY: logY,
+        colorOffset: conditionIndex,
+      );
+      conditionSeries.addAll(averages);
+      conditionIndex += averages.length;
+    }
+    if (conditionSeries.isNotEmpty) {
+      panels.add(_PsdPanelData(title: 'Conditions', series: conditionSeries));
+    }
+  } else {
+    panels.add(
+      _PsdPanelData(
+        title: 'Conditions × channels',
+        series: source.values
+            .expand(
+              (Map<int, List<_SeriesData>> channels) =>
+                  channels.values.expand((List<_SeriesData> values) => values),
+            )
+            .toList(growable: false),
+      ),
+    );
+  }
+  return panels;
+}
+
 class _PsdChart extends StatelessWidget {
   const _PsdChart({
     required this.datasets,
@@ -2780,7 +2963,7 @@ class _PsdChart extends StatelessWidget {
     params.putIfAbsent('psd_view_max_power', () => 10.0);
     params.putIfAbsent('psd_view_log_y', () => true);
     params.putIfAbsent('psd_condition_mode', () => 'separate');
-    params.putIfAbsent('psd_channel_index', () => 0);
+    params.putIfAbsent('psd_channel_mode', () => 'average');
 
     final int channelCount = datasets
         .map((Dataset dataset) {
@@ -2794,13 +2977,6 @@ class _PsdChart extends StatelessWidget {
           );
         })
         .fold<int>(0, math.max);
-    final int selectedChannelIndex = channelCount == 0
-        ? 0
-        : ((params['psd_channel_index'] as num?)?.toInt() ?? 0).clamp(
-            0,
-            channelCount - 1,
-          );
-    params['psd_channel_index'] = selectedChannelIndex;
     FrequencySpectrumData? labelSpectrum;
     for (final Dataset dataset in datasets) {
       if (dataset.spectrum != null) {
@@ -2820,8 +2996,8 @@ class _PsdChart extends StatelessWidget {
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
-    final Map<String, List<_SeriesData>> seriesByCondition =
-        <String, List<_SeriesData>>{};
+    final Map<String, Map<int, List<_SeriesData>>> seriesByConditionAndChannel =
+        <String, Map<int, List<_SeriesData>>>{};
     int seriesIndex = 0;
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
@@ -2830,41 +3006,61 @@ class _PsdChart extends StatelessWidget {
       if (freqs == null || freqs.isEmpty || spectrum == null) {
         continue;
       }
-      final Map<String, List<double>> conditionPowers = _psdConditionPowers(
-        dataset,
-        spectrum,
-        selectedChannelIndex,
-      );
-      for (final MapEntry<String, List<double>> entry
-          in conditionPowers.entries) {
-        final int count = math.min(freqs.length, entry.value.length);
-        final List<FlSpot> points = <FlSpot>[];
-        for (int i = 0; i < count; i++) {
-          final double sourcePower = entry.value[i];
-          final double plotPower = logY
-              ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) / math.ln10
-              : sourcePower;
-          points.add(FlSpot(freqs[i], plotPower));
+      for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+        final Map<String, List<double>> conditionPowers = _psdConditionPowers(
+          dataset,
+          spectrum,
+          channelIndex,
+        );
+        for (final MapEntry<String, List<double>> entry
+            in conditionPowers.entries) {
+          final int count = math.min(freqs.length, entry.value.length);
+          final List<FlSpot> points = <FlSpot>[];
+          for (int i = 0; i < count; i++) {
+            final double sourcePower = entry.value[i];
+            final double plotPower = logY
+                ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) /
+                      math.ln10
+                : sourcePower;
+            points.add(FlSpot(freqs[i], plotPower));
+          }
+          if (points.isEmpty) continue;
+          final String channelLabel = channelIndex < channelLabels.length
+              ? channelLabels[channelIndex]
+              : 'Channel ${channelIndex + 1}';
+          seriesByConditionAndChannel
+              .putIfAbsent(entry.key, () => <int, List<_SeriesData>>{})
+              .putIfAbsent(channelIndex, () => <_SeriesData>[])
+              .add(
+                _SeriesData(
+                  label: datasets.length == 1
+                      ? channelLabel
+                      : '${dataset.label} · $channelLabel',
+                  color: _seriesColor(seriesIndex++),
+                  points: points,
+                  subtitle: '$count bins',
+                ),
+              );
         }
-        if (points.isEmpty) {
-          continue;
-        }
-        final String condition = entry.key;
-        seriesByCondition
-            .putIfAbsent(condition, () => <_SeriesData>[])
-            .add(
-              _SeriesData(
-                label: datasets.length == 1 ? condition : dataset.label,
-                color: _seriesColor(seriesIndex++),
-                points: points,
-                subtitle: '$count bins',
-              ),
-            );
       }
     }
-
-    final List<_SeriesData> series = seriesByCondition.values
-        .expand((List<_SeriesData> values) => values)
+    final String storedConditionMode =
+        (params['psd_condition_mode'] ?? 'separate').toString();
+    final String conditionMode = storedConditionMode == 'overlay'
+        ? 'butterfly'
+        : storedConditionMode;
+    params['psd_condition_mode'] = conditionMode;
+    final String channelMode = (params['psd_channel_mode'] ?? 'average')
+        .toString();
+    final List<_PsdPanelData> panels = _buildPsdPanels(
+      seriesByConditionAndChannel,
+      conditionMode: conditionMode,
+      channelMode: channelMode,
+      channelLabels: channelLabels,
+      logY: logY,
+    );
+    final List<_SeriesData> series = panels
+        .expand((_PsdPanelData panel) => panel.series)
         .toList(growable: false);
 
     if (series.isEmpty) {
@@ -2891,98 +3087,93 @@ class _PsdChart extends StatelessWidget {
         ? math.max(configuredMaxPower, minY + 0.001)
         : math.max(dataMaxY * 1.1, minY + 0.001);
     final double maxX = allX.reduce(math.max);
-    final String conditionMode = (params['psd_condition_mode'] ?? 'separate')
-        .toString();
-    final bool separateConditions =
-        seriesByCondition.length > 1 && conditionMode == 'separate';
-
-    LineChart buildLineChart(List<_SeriesData> visibleSeries) {
-      return LineChart(
-        LineChartData(
-          minX: 0,
-          maxX: maxX,
-          minY: minY,
-          maxY: maxY,
-          gridData: FlGridData(
-            show: true,
-            horizontalInterval: _niceAxisStep(maxY - minY),
-            verticalInterval: _niceAxisStep(maxX),
-          ),
-          rangeAnnotations: RangeAnnotations(
-            verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
-          ),
-          borderData: FlBorderData(show: false),
-          lineTouchData: LineTouchData(
-            enabled: true,
-            touchTooltipData: LineTouchTooltipData(
-              getTooltipItems: (List<LineBarSpot> touchedSpots) {
-                return touchedSpots
-                    .map((LineBarSpot spot) {
-                      final int index = spot.barIndex;
-                      final String label = index < visibleSeries.length
-                          ? visibleSeries[index].label
-                          : 'Spectrum ${index + 1}';
-                      final String power = logY
-                          ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
-                          : '${spot.y.toStringAsFixed(2)} μV²/Hz';
-                      return LineTooltipItem(
-                        '$label\n${spot.x.toStringAsFixed(1)} Hz · $power',
-                        const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      );
-                    })
-                    .toList(growable: false);
-              },
+    Widget buildLineChart(List<_SeriesData> visibleSeries) {
+      return Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: maxX,
+                minY: minY,
+                maxY: maxY,
+                gridData: FlGridData(
+                  show: true,
+                  horizontalInterval: _niceAxisStep(maxY - minY),
+                  verticalInterval: _niceAxisStep(maxX),
+                ),
+                rangeAnnotations: RangeAnnotations(
+                  verticalRangeAnnotations: _canonicalBandAnnotations(maxX),
+                ),
+                borderData: FlBorderData(show: false),
+                lineTouchData: LineTouchData(
+                  enabled: true,
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipItems: (List<LineBarSpot> touchedSpots) {
+                      return touchedSpots
+                          .map((LineBarSpot spot) {
+                            final int index = spot.barIndex;
+                            final String label = index < visibleSeries.length
+                                ? visibleSeries[index].label
+                                : 'Spectrum ${index + 1}';
+                            final String power = logY
+                                ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
+                                : '${spot.y.toStringAsFixed(2)} μV²/Hz';
+                            return LineTooltipItem(
+                              '$label\n${spot.x.toStringAsFixed(1)} Hz · $power',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            );
+                          })
+                          .toList(growable: false);
+                    },
+                  ),
+                ),
+                titlesData: _chartTitles(
+                  minX: 0,
+                  maxX: maxX,
+                  minY: minY,
+                  maxY: maxY,
+                  logY: logY,
+                  xAxisLabel: 'Frequency (Hz)',
+                  yAxisLabel: logY ? 'log₁₀(μV²/Hz)' : 'μV²/Hz',
+                  yAxisReservedSize: 84,
+                ),
+                clipData: const FlClipData.all(),
+                lineBarsData: visibleSeries
+                    .map(
+                      (_SeriesData seriesData) => LineChartBarData(
+                        spots: seriesData.points,
+                        isCurved: false,
+                        barWidth: 2,
+                        color: seriesData.color,
+                        dotData: const FlDotData(show: false),
+                      ),
+                    )
+                    .toList(),
+              ),
             ),
           ),
-          titlesData: _chartTitles(
-            minX: 0,
-            maxX: maxX,
-            minY: minY,
-            maxY: maxY,
-            logY: logY,
-            xAxisLabel: 'Frequency (Hz)',
-            yAxisLabel: logY ? 'log₁₀(μV²/Hz)' : 'μV²/Hz',
-            yAxisReservedSize: 84,
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(painter: _PsdBandLabelPainter(maxHz: maxX)),
+            ),
           ),
-          clipData: const FlClipData.all(),
-          lineBarsData: visibleSeries
-              .map(
-                (_SeriesData seriesData) => LineChartBarData(
-                  spots: seriesData.points,
-                  isCurved: false,
-                  barWidth: 2,
-                  color: seriesData.color,
-                  dotData: const FlDotData(show: false),
-                ),
-              )
-              .toList(),
-        ),
+        ],
       );
     }
 
     return _ChartCard(
       title: 'PSD',
       subtitle: '${series.length} overlay${series.length == 1 ? '' : 's'}',
-      legend: series,
+      legend: channelMode == 'average' ? series : const <_SeriesData>[],
       toolbar: Wrap(
         spacing: 8,
         runSpacing: 8,
         children: <Widget>[
-          if (channelCount > 1)
-            _PsdMenuChip<int>(
-              label: 'Channel',
-              valueLabel: channelLabels[selectedChannelIndex],
-              options: List<int>.generate(channelCount, (int index) => index),
-              itemLabel: (int index) => channelLabels[index],
-              onSelected: (int value) {
-                params['psd_channel_index'] = value;
-                onChanged();
-              },
-            ),
           _PsdMenuChip<double>(
             label: 'Range',
             valueLabel: '${windowHz.toStringAsFixed(0)} Hz',
@@ -3027,18 +3218,37 @@ class _PsdChart extends StatelessWidget {
               onChanged();
             },
           ),
-          if (seriesByCondition.length > 1)
+          if (seriesByConditionAndChannel.length > 1)
             SegmentedButton<String>(
               segments: const <ButtonSegment<String>>[
                 ButtonSegment<String>(
                   value: 'separate',
                   label: Text('Separate'),
                 ),
-                ButtonSegment<String>(value: 'overlay', label: Text('Overlay')),
+                ButtonSegment<String>(
+                  value: 'butterfly',
+                  label: Text('Butterfly'),
+                ),
               ],
               selected: <String>{conditionMode},
               onSelectionChanged: (Set<String> selection) {
                 params['psd_condition_mode'] = selection.first;
+                onChanged();
+              },
+            ),
+          if (channelCount > 1)
+            SegmentedButton<String>(
+              segments: const <ButtonSegment<String>>[
+                ButtonSegment<String>(value: 'stack', label: Text('Stack')),
+                ButtonSegment<String>(
+                  value: 'butterfly',
+                  label: Text('Butterfly'),
+                ),
+                ButtonSegment<String>(value: 'average', label: Text('Average')),
+              ],
+              selected: <String>{channelMode},
+              onSelectionChanged: (Set<String> selection) {
+                params['psd_channel_mode'] = selection.first;
                 onChanged();
               },
             ),
@@ -3063,30 +3273,29 @@ class _PsdChart extends StatelessWidget {
         builder: (double chartWidth) {
           return SizedBox(
             width: chartWidth,
-            child: separateConditions
+            child: panels.length > 1
                 ? LayoutBuilder(
                     builder:
                         (BuildContext context, BoxConstraints constraints) {
                           final double panelHeight = math.max(
                             220,
                             (constraints.maxHeight -
-                                    (12 * (seriesByCondition.length - 1))) /
-                                seriesByCondition.length,
+                                    (12 * (panels.length - 1))) /
+                                panels.length,
                           );
                           return ListView.separated(
-                            itemCount: seriesByCondition.length,
+                            itemCount: panels.length,
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 12),
                             itemBuilder: (BuildContext context, int index) {
-                              final MapEntry<String, List<_SeriesData>> group =
-                                  seriesByCondition.entries.elementAt(index);
+                              final _PsdPanelData panel = panels[index];
                               return SizedBox(
                                 height: panelHeight,
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: <Widget>[
                                     Text(
-                                      group.key,
+                                      panel.title,
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.w700,
@@ -3094,7 +3303,7 @@ class _PsdChart extends StatelessWidget {
                                     ),
                                     const SizedBox(height: 6),
                                     Expanded(
-                                      child: buildLineChart(group.value),
+                                      child: buildLineChart(panel.series),
                                     ),
                                   ],
                                 ),
@@ -3103,7 +3312,7 @@ class _PsdChart extends StatelessWidget {
                           );
                         },
                   )
-                : buildLineChart(series),
+                : buildLineChart(panels.single.series),
           );
         },
       ),
@@ -7831,23 +8040,24 @@ class _PsdMenuChip<T> extends StatelessWidget {
 }
 
 class _BandRange {
-  const _BandRange(this.startHz, this.endHz, this.color);
+  const _BandRange(this.startHz, this.endHz, this.color, this.symbol);
 
   final double startHz;
   final double endHz;
   final Color color;
+  final String symbol;
 }
 
-List<VerticalRangeAnnotation> _canonicalBandAnnotations(double maxHz) {
-  final List<_BandRange> bands = <_BandRange>[
-    const _BandRange(0, 4, Color(0x223A86FF)),
-    const _BandRange(4, 8, Color(0x2237C871)),
-    const _BandRange(8, 12, Color(0x22FFD54F)),
-    const _BandRange(12, 40, Color(0x22FF8A65)),
-    _BandRange(40, maxHz, const Color(0x22CE93D8)),
-  ];
+const List<_BandRange> _canonicalPsdBands = <_BandRange>[
+  _BandRange(0, 4, Color(0x223A86FF), 'δ'),
+  _BandRange(4, 8, Color(0x2237C871), 'θ'),
+  _BandRange(8, 12, Color(0x22FFD54F), 'α'),
+  _BandRange(12, 40, Color(0x22FF8A65), 'β'),
+  _BandRange(40, double.infinity, Color(0x22CE93D8), 'γ'),
+];
 
-  return bands
+List<VerticalRangeAnnotation> _canonicalBandAnnotations(double maxHz) {
+  return _canonicalPsdBands
       .where(
         (_BandRange band) => band.startHz < maxHz && band.endHz > band.startHz,
       )
@@ -7859,6 +8069,42 @@ List<VerticalRangeAnnotation> _canonicalBandAnnotations(double maxHz) {
         ),
       )
       .toList(growable: false);
+}
+
+class _PsdBandLabelPainter extends CustomPainter {
+  const _PsdBandLabelPainter({required this.maxHz});
+
+  final double maxHz;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (maxHz <= 0 || size.width <= 100) return;
+    const double leftInset = 84;
+    const double rightInset = 8;
+    final double plotWidth = math.max(1, size.width - leftInset - rightInset);
+    for (final _BandRange band in _canonicalPsdBands) {
+      if (band.startHz >= maxHz) continue;
+      final double end = math.min(band.endHz, maxHz);
+      final double centerHz = (band.startHz + end) / 2;
+      final TextPainter textPainter = TextPainter(
+        text: TextSpan(
+          text: band.symbol,
+          style: const TextStyle(
+            color: Color(0x59FFFFFF),
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final double x = leftInset + (centerHz / maxHz) * plotWidth;
+      textPainter.paint(canvas, Offset(x - textPainter.width / 2, 7));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PsdBandLabelPainter oldDelegate) =>
+      oldDelegate.maxHz != maxHz;
 }
 
 Color _seriesColor(int index) {
