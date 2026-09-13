@@ -104,16 +104,16 @@ void main() {
         (logic.connectionWidgets().single as CustomPaint).painter!
             as ConnectionPainter;
     expect(painter.preferVertical, isFalse);
-    expect(painter.start, const Offset(100, 136));
-    expect(painter.end, const Offset(60, 136));
+    expect(painter.start, const Offset(260, 136));
+    expect(painter.end, const Offset(-100, 136));
 
     logic.connections.clear();
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
     expect(logic.hasConnectionDraft, isTrue);
     expect(logic.completeConnectionDraftAtNode(downstream), isTrue);
     expect(logic.hasConnectionDraft, isFalse);
-    expect(logic.connections.single['fromEdge'], 'left');
-    expect(logic.connections.single['toEdge'], 'right');
+    expect(logic.connections.single['fromEdge'], 'right');
+    expect(logic.connections.single['toEdge'], 'left');
 
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
     expect(logic.hasConnectionDraft, isTrue);

@@ -3272,13 +3272,9 @@ class CanvasLogic {
   ) {
     final Offset delta = toNode.position - fromNode.position;
     if (delta.dy.abs() >= delta.dx.abs()) {
-      return delta.dy >= 0
-          ? (NodeConnectionEdge.bottom, NodeConnectionEdge.top)
-          : (NodeConnectionEdge.top, NodeConnectionEdge.bottom);
+      return (NodeConnectionEdge.bottom, NodeConnectionEdge.top);
     }
-    return delta.dx >= 0
-        ? (NodeConnectionEdge.right, NodeConnectionEdge.left)
-        : (NodeConnectionEdge.left, NodeConnectionEdge.right);
+    return (NodeConnectionEdge.right, NodeConnectionEdge.left);
   }
 
   _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {
@@ -9027,8 +9023,9 @@ class CanvasLogic {
     final NodeConnectionEdge? stored = _connectionEdgeFromName(
       connection['fromEdge']?.toString(),
     );
-    if (stored != null) {
-      return stored;
+    if (stored == NodeConnectionEdge.bottom ||
+        stored == NodeConnectionEdge.right) {
+      return stored!;
     }
     final NodeModel? toNode = _findNode(connection['toNode']?.toString() ?? '');
     return toNode == null
@@ -9044,8 +9041,8 @@ class CanvasLogic {
     final NodeConnectionEdge? stored = _connectionEdgeFromName(
       connection['toEdge']?.toString(),
     );
-    if (stored != null) {
-      return stored;
+    if (stored == NodeConnectionEdge.top || stored == NodeConnectionEdge.left) {
+      return stored!;
     }
     return _connectionEdgesForNodes(fromNode, toNode).$2;
   }
