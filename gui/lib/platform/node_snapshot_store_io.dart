@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 const bool supportsNodeSnapshotDiskStore = true;
 
@@ -7,9 +9,19 @@ Future<String> saveNodeSnapshotJson({
   required String datasetId,
   required String jsonPayload,
 }) async {
-  final File file = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  final File file = _compressedSnapshotFile(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
   await file.parent.create(recursive: true);
-  await file.writeAsString(jsonPayload, flush: true);
+  final List<int> compressed = await Isolate.run(
+    () => gzip.encode(utf8.encode(jsonPayload)),
+  );
+  await file.writeAsBytes(compressed, flush: true);
+  final File legacy = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  if (await legacy.exists()) {
+    await legacy.delete();
+  }
   return file.path;
 }
 
@@ -17,11 +29,16 @@ Future<String?> loadNodeSnapshotJson({
   required String nodeId,
   required String datasetId,
 }) async {
-  final File file = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
-  if (!await file.exists()) {
-    return null;
+  final File compressed = _compressedSnapshotFile(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
+  if (await compressed.exists()) {
+    final List<int> bytes = await compressed.readAsBytes();
+    return Isolate.run(() => utf8.decode(gzip.decode(bytes)));
   }
-  return file.readAsString();
+  final File legacy = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  return await legacy.exists() ? legacy.readAsString() : null;
 }
 
 void saveNodeSnapshotMetadataJsonSync({
@@ -49,7 +66,11 @@ Future<bool> hasNodeSnapshotOnDisk({
   required String nodeId,
   required String datasetId,
 }) async {
-  return _snapshotFile(nodeId: nodeId, datasetId: datasetId).exists();
+  return await _compressedSnapshotFile(
+        nodeId: nodeId,
+        datasetId: datasetId,
+      ).exists() ||
+      await _snapshotFile(nodeId: nodeId, datasetId: datasetId).exists();
 }
 
 Future<void> deleteNodeSnapshotFromDisk({
@@ -59,6 +80,13 @@ Future<void> deleteNodeSnapshotFromDisk({
   final File file = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
   if (await file.exists()) {
     await file.delete();
+  }
+  final File compressedFile = _compressedSnapshotFile(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
+  if (await compressedFile.exists()) {
+    await compressedFile.delete();
   }
   final File metadataFile = _snapshotMetadataFile(
     nodeId: nodeId,
@@ -75,6 +103,13 @@ File _snapshotFile({required String nodeId, required String datasetId}) {
     _joinPath(<String>[root.path, 'nodes', nodeId]),
   );
   return File(_joinPath(<String>[nodeDir.path, '$datasetId.json']));
+}
+
+File _compressedSnapshotFile({
+  required String nodeId,
+  required String datasetId,
+}) {
+  return File('${_snapshotFile(nodeId: nodeId, datasetId: datasetId).path}.gz');
 }
 
 File _snapshotMetadataFile({

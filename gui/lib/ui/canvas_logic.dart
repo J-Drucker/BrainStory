@@ -32,6 +32,7 @@ import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
+import '../platform/node_snapshot_codec.dart';
 import '../platform/browser_source_files.dart';
 import '../platform/project_file_save.dart';
 import '../platform/recent_project_path.dart';
@@ -6769,7 +6770,7 @@ class CanvasLogic {
       await saveNodeSnapshotJson(
         nodeId: node.id,
         datasetId: dataset.id,
-        jsonPayload: jsonEncode(snapshot.toJson()),
+        jsonPayload: await encodeNodeSnapshotJson(snapshot.toJson()),
       );
       _saveSnapshotMetadata(node.id, dataset);
       _nodeDiskSnapshotIds
@@ -7305,7 +7306,7 @@ class CanvasLogic {
       lastPath = await saveNodeSnapshotJson(
         nodeId: node.id,
         datasetId: dataset.id,
-        jsonPayload: jsonEncode(snapshot.toJson()),
+        jsonPayload: await encodeNodeSnapshotJson(snapshot.toJson()),
       );
       _saveSnapshotMetadata(node.id, dataset);
       _nodeDiskSnapshotIds

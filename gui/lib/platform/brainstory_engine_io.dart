@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'brainstory_engine_model.dart';
 
@@ -144,25 +145,51 @@ NativeIcaResult? computeIcaNative(
   if (channels.any((List<double> channel) => channel.length != sampleCount)) {
     throw ArgumentError('ICA channels must have equal sample counts.');
   }
+  final Float64List flatSamples = Float64List(channels.length * sampleCount);
+  int offset = 0;
+  for (final List<double> channel in channels) {
+    flatSamples.setRange(offset, offset + sampleCount, channel);
+    offset += sampleCount;
+  }
+  return computeIcaNativeFlat(
+    flatSamples,
+    channelCount: channels.length,
+    sampleCount: sampleCount,
+    componentCount: componentCount,
+    tolerance: tolerance,
+    maxIterations: maxIterations,
+    seed: seed,
+  );
+}
+
+NativeIcaResult? computeIcaNativeFlat(
+  Float64List flatSamples, {
+  required int channelCount,
+  required int sampleCount,
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required int seed,
+}) {
+  final int valueCount = channelCount * sampleCount;
+  if (channelCount == 0 ||
+      sampleCount == 0 ||
+      flatSamples.length != valueCount) {
+    throw ArgumentError('ICA flattened input dimensions do not match.');
+  }
   final _IcaDart? ica = _engineLibrary.fastIcaFit;
   if (ica == null || _nativeMemory.unavailable) {
     return null;
   }
 
-  final int valueCount = channels.length * sampleCount;
   final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
     valueCount,
   );
   try {
-    final List<double> nativeSamples = samplesPtr.asTypedList(valueCount);
-    int flatIndex = 0;
-    for (final List<double> channel in channels) {
-      nativeSamples.setRange(flatIndex, flatIndex + sampleCount, channel);
-      flatIndex += sampleCount;
-    }
+    samplesPtr.asTypedList(valueCount).setAll(0, flatSamples);
     final ffi.Pointer<ffi.Uint8> resultPointer = ica(
       samplesPtr,
-      channels.length,
+      channelCount,
       sampleCount,
       componentCount,
       tolerance,
@@ -210,6 +237,44 @@ List<List<double>>? applyIcaNative(
       channelMeans.length != channelCount) {
     throw ArgumentError('ICA projection dimensions do not match.');
   }
+  final Float64List flatSamples = Float64List(channelCount * sampleCount);
+  int offset = 0;
+  for (final List<double> channel in channels) {
+    flatSamples.setRange(offset, offset + sampleCount, channel);
+    offset += sampleCount;
+  }
+  final Float64List flatUnmixing = Float64List(componentCount * channelCount);
+  offset = 0;
+  for (final List<double> weights in unmixingMatrix) {
+    flatUnmixing.setRange(offset, offset + channelCount, weights);
+    offset += channelCount;
+  }
+  return applyIcaNativeFlat(
+    flatSamples,
+    channelCount: channelCount,
+    sampleCount: sampleCount,
+    flatUnmixing: flatUnmixing,
+    componentCount: componentCount,
+    channelMeans: Float64List.fromList(channelMeans),
+  );
+}
+
+List<List<double>>? applyIcaNativeFlat(
+  Float64List flatSamples, {
+  required int channelCount,
+  required int sampleCount,
+  required Float64List flatUnmixing,
+  required int componentCount,
+  required Float64List channelMeans,
+}) {
+  if (channelCount == 0 ||
+      sampleCount == 0 ||
+      componentCount == 0 ||
+      flatSamples.length != channelCount * sampleCount ||
+      flatUnmixing.length != componentCount * channelCount ||
+      channelMeans.length != channelCount) {
+    throw ArgumentError('ICA flattened projection dimensions do not match.');
+  }
   final _ApplyIcaDart? apply = _engineLibrary.applyIca;
   if (apply == null || _nativeMemory.unavailable) {
     return null;
@@ -228,22 +293,10 @@ List<List<double>>? applyIcaNative(
     componentCount * sampleCount,
   );
   try {
-    final List<double> nativeSamples = samplesPtr.asTypedList(
-      channelCount * sampleCount,
-    );
-    int index = 0;
-    for (final List<double> channel in channels) {
-      nativeSamples.setRange(index, index + sampleCount, channel);
-      index += sampleCount;
-    }
-    final List<double> nativeUnmixing = unmixingPtr.asTypedList(
-      componentCount * channelCount,
-    );
-    index = 0;
-    for (final List<double> weights in unmixingMatrix) {
-      nativeUnmixing.setRange(index, index + channelCount, weights);
-      index += channelCount;
-    }
+    samplesPtr.asTypedList(channelCount * sampleCount).setAll(0, flatSamples);
+    unmixingPtr
+        .asTypedList(componentCount * channelCount)
+        .setAll(0, flatUnmixing);
     meansPtr.asTypedList(channelCount).setAll(0, channelMeans);
     final int status = apply(
       samplesPtr,

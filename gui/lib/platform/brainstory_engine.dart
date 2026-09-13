@@ -49,6 +49,9 @@ Future<List<List<double>>?> applyIcaBackground(
       channelMeans: channelMeans,
     );
   }
+  if (result is List<List<double>>) {
+    return result;
+  }
   return (result as List)
       .map(
         (dynamic row) =>
@@ -72,6 +75,9 @@ Future<NativeIcaResult?> computeIcaBackground(
     'iterations': maxIterations,
     'seed': seed,
   });
+  if (result is NativeIcaResult) {
+    return result;
+  }
   if (result != null) {
     return NativeIcaResult.fromJson(result as Map<String, dynamic>);
   }
