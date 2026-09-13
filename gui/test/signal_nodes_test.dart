@@ -103,23 +103,37 @@ void main() {
     painter =
         (logic.connectionWidgets().single as CustomPaint).painter!
             as ConnectionPainter;
-    expect(painter.preferVertical, isTrue);
-    expect(painter.start, const Offset(180, 172));
-    expect(painter.end, const Offset(-100, 136));
+    expect(painter.preferVertical, isFalse);
+    expect(painter.start, const Offset(100, 136));
+    expect(painter.end, const Offset(60, 136));
 
     logic.connections.clear();
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
     expect(logic.hasConnectionDraft, isTrue);
     expect(logic.completeConnectionDraftAtNode(downstream), isTrue);
     expect(logic.hasConnectionDraft, isFalse);
-    expect(logic.connections.single['fromEdge'], 'bottom');
-    expect(logic.connections.single['toEdge'], 'left');
+    expect(logic.connections.single['fromEdge'], 'left');
+    expect(logic.connections.single['toEdge'], 'right');
 
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
-    expect(logic.hasConnectionDraft, isFalse);
-    logic.startConnectionDraft(upstream, NodeConnectionEdge.right);
     expect(logic.hasConnectionDraft, isTrue);
     logic.clearConnectionDraft();
+  });
+
+  test('clicking a node selects it as the connection parent', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(ResampleNodeType());
+    final NodeModel parent = logic.nodes[0];
+    final NodeModel child = logic.nodes[1];
+
+    logic.selectNodeAsConnectionParent(parent);
+
+    expect(logic.selectedNodeId, parent.id);
+    expect(logic.hasConnectionDraft, isTrue);
+    expect(logic.completeConnectionDraftAtNode(child), isTrue);
+    expect(logic.connections.single['fromNode'], parent.id);
+    expect(logic.connections.single['toNode'], child.id);
   });
 
   testWidgets('hovering anywhere on a node reveals its wire handles', (
@@ -193,6 +207,28 @@ void main() {
       ],
     );
     expect(aroundWire.any((Offset point) => point.dy.abs() >= 24), isTrue);
+
+    final Rect parent = const Rect.fromLTWH(0, 0, 160, 72).inflate(12);
+    final Rect child = const Rect.fromLTWH(240, 0, 160, 72).inflate(12);
+    final List<Offset> clearEndpoints = buildConnectionPolyline(
+      start: const Offset(160, 36),
+      end: const Offset(240, 36),
+      preferVertical: false,
+      endVertical: false,
+      startDirection: const Offset(1, 0),
+      endDirection: const Offset(-1, 0),
+      gridWidth: 160,
+      gridHeight: 72,
+      obstacles: const <Rect>[
+        Rect.fromLTWH(0, 0, 160, 72),
+        Rect.fromLTWH(240, 0, 160, 72),
+      ],
+    );
+    expect(clearEndpoints[1].dx, greaterThanOrEqualTo(parent.right));
+    expect(
+      clearEndpoints[clearEndpoints.length - 2].dx,
+      lessThanOrEqualTo(child.left),
+    );
   });
 
   test('consecutive channel and marker edits combine into one node', () {

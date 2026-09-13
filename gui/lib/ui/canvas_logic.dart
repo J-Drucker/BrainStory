@@ -2640,7 +2640,9 @@ class CanvasLogic {
         toNode,
       );
       final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
-      final bool preferVertical = fromEdge == NodeConnectionEdge.bottom;
+      final bool preferVertical =
+          fromEdge == NodeConnectionEdge.bottom ||
+          fromEdge == NodeConnectionEdge.top;
 
       final List<Rect> obstacles = _connectionObstacles(fromNode, toNode);
       final List<List<Offset>> priorRoutes = List<List<Offset>>.of(
@@ -2650,7 +2652,11 @@ class CanvasLogic {
         start: start,
         end: end,
         preferVertical: preferVertical,
-        endVertical: toEdge == NodeConnectionEdge.top,
+        endVertical:
+            toEdge == NodeConnectionEdge.top ||
+            toEdge == NodeConnectionEdge.bottom,
+        startDirection: _directionForEdge(fromEdge),
+        endDirection: _directionForEdge(toEdge),
         gridWidth: _gridWidth,
         gridHeight: _gridHeight,
         obstacles: obstacles,
@@ -2662,7 +2668,11 @@ class CanvasLogic {
             start: start,
             end: end,
             preferVertical: preferVertical,
-            endVertical: toEdge == NodeConnectionEdge.top,
+            endVertical:
+                toEdge == NodeConnectionEdge.top ||
+                toEdge == NodeConnectionEdge.bottom,
+            startDirection: _directionForEdge(fromEdge),
+            endDirection: _directionForEdge(toEdge),
             gridWidth: _gridWidth,
             gridHeight: _gridHeight,
             obstacles: obstacles,
@@ -2686,7 +2696,6 @@ class CanvasLogic {
     }
     final Offset start = _anchorForEdge(fromNode, _pendingFromEdge!);
     final List<Rect> obstacles = nodes
-        .where((NodeModel node) => node.id != fromNode.id)
         .map(
           (NodeModel node) => Rect.fromLTWH(
             node.position.dx,
@@ -2702,6 +2711,7 @@ class CanvasLogic {
           start: start,
           end: cursor,
           preferVertical: _pendingFromEdge == NodeConnectionEdge.bottom,
+          startDirection: _directionForEdge(_pendingFromEdge!),
           gridWidth: _gridWidth,
           gridHeight: _gridHeight,
           obstacles: obstacles,
@@ -2881,7 +2891,7 @@ class CanvasLogic {
             update();
             return;
           }
-          _handleNodeTap(node);
+          selectNodeAsConnectionParent(node);
           update();
         },
         onDoubleTap: () {
@@ -3158,6 +3168,14 @@ class CanvasLogic {
     selectedConnectionIndex = null;
   }
 
+  void selectNodeAsConnectionParent(NodeModel node) {
+    _handleNodeTap(node);
+    final NodeConnectionEdge? edge = _nextOutputEdge(node);
+    if (edge != null) {
+      startConnectionDraft(node, edge);
+    }
+  }
+
   void startConnectionDraft(NodeModel node, NodeConnectionEdge edge) {
     if (isNodeMutationLocked(node.id)) return;
     final NodeConnectionEdge? allowedEdge = _nextOutputEdge(node);
@@ -3204,13 +3222,15 @@ class CanvasLogic {
     ).contains(fromNode.id);
     if (toPortIndex == null || introducesCycle) return false;
 
+    final (NodeConnectionEdge, NodeConnectionEdge) resolvedEdges =
+        _connectionEdgesForNodes(fromNode, toNode);
     final Map<String, dynamic> nextConnection = <String, dynamic>{
       'fromNode': fromNode.id,
       'fromPort': fromPortIndex,
-      'fromEdge': (_pendingFromEdge ?? NodeConnectionEdge.bottom).name,
+      'fromEdge': resolvedEdges.$1.name,
       'toNode': toNode.id,
       'toPort': toPortIndex,
-      'toEdge': edge.name,
+      'toEdge': resolvedEdges.$2.name,
     };
     final bool duplicate = connections.any(
       (Map<String, dynamic> connection) =>
@@ -3237,26 +3257,28 @@ class CanvasLogic {
   }
 
   NodeConnectionEdge? _nextOutputEdge(NodeModel node) {
-    final int outgoingCount = connections
-        .where(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == node.id,
-        )
-        .length;
-    return switch (outgoingCount) {
-      0 => NodeConnectionEdge.bottom,
-      1 => NodeConnectionEdge.right,
-      _ => null,
-    };
+    return node.outputPorts.isEmpty ? null : NodeConnectionEdge.bottom;
   }
 
   NodeConnectionEdge? _inputEdgeForDraft(NodeModel toNode) {
     final NodeModel? fromNode = _findNode(_pendingFromNodeId ?? '');
     if (fromNode == null || !_canCompleteConnectionDraft(toNode)) return null;
+    return _connectionEdgesForNodes(fromNode, toNode).$2;
+  }
+
+  (NodeConnectionEdge, NodeConnectionEdge) _connectionEdgesForNodes(
+    NodeModel fromNode,
+    NodeModel toNode,
+  ) {
     final Offset delta = toNode.position - fromNode.position;
-    return delta.dy.abs() >= delta.dx.abs()
-        ? NodeConnectionEdge.top
-        : NodeConnectionEdge.left;
+    if (delta.dy.abs() >= delta.dx.abs()) {
+      return delta.dy >= 0
+          ? (NodeConnectionEdge.bottom, NodeConnectionEdge.top)
+          : (NodeConnectionEdge.top, NodeConnectionEdge.bottom);
+    }
+    return delta.dx >= 0
+        ? (NodeConnectionEdge.right, NodeConnectionEdge.left)
+        : (NodeConnectionEdge.left, NodeConnectionEdge.right);
   }
 
   _NodeCombinationPlan? _combinationPlanWithPrevious(NodeModel node) {
@@ -9005,16 +9027,13 @@ class CanvasLogic {
     final NodeConnectionEdge? stored = _connectionEdgeFromName(
       connection['fromEdge']?.toString(),
     );
-    if (stored == NodeConnectionEdge.bottom ||
-        stored == NodeConnectionEdge.right) {
-      return stored!;
+    if (stored != null) {
+      return stored;
     }
-    final List<Map<String, dynamic>> outgoing = connections
-        .where((Map<String, dynamic> item) => item['fromNode'] == fromNode.id)
-        .toList(growable: false);
-    return outgoing.indexOf(connection) <= 0
+    final NodeModel? toNode = _findNode(connection['toNode']?.toString() ?? '');
+    return toNode == null
         ? NodeConnectionEdge.bottom
-        : NodeConnectionEdge.right;
+        : _connectionEdgesForNodes(fromNode, toNode).$1;
   }
 
   NodeConnectionEdge _resolvedInputEdge(
@@ -9025,13 +9044,10 @@ class CanvasLogic {
     final NodeConnectionEdge? stored = _connectionEdgeFromName(
       connection['toEdge']?.toString(),
     );
-    if (stored == NodeConnectionEdge.top || stored == NodeConnectionEdge.left) {
-      return stored!;
+    if (stored != null) {
+      return stored;
     }
-    final Offset delta = toNode.position - fromNode.position;
-    return delta.dy.abs() >= delta.dx.abs()
-        ? NodeConnectionEdge.top
-        : NodeConnectionEdge.left;
+    return _connectionEdgesForNodes(fromNode, toNode).$2;
   }
 
   bool _shouldUseVerticalAnchors(NodeModel fromNode, NodeModel toNode) {
@@ -9088,9 +9104,6 @@ class CanvasLogic {
 
   List<Rect> _connectionObstacles(NodeModel fromNode, NodeModel toNode) {
     return nodes
-        .where(
-          (NodeModel node) => node.id != fromNode.id && node.id != toNode.id,
-        )
         .map((NodeModel node) {
           return Rect.fromLTWH(
             node.position.dx,
@@ -9136,8 +9149,14 @@ class CanvasLogic {
         buildConnectionPolyline(
           start: start,
           end: end,
-          preferVertical: fromEdge == NodeConnectionEdge.bottom,
-          endVertical: toEdge == NodeConnectionEdge.top,
+          preferVertical:
+              fromEdge == NodeConnectionEdge.bottom ||
+              fromEdge == NodeConnectionEdge.top,
+          endVertical:
+              toEdge == NodeConnectionEdge.top ||
+              toEdge == NodeConnectionEdge.bottom,
+          startDirection: _directionForEdge(fromEdge),
+          endDirection: _directionForEdge(toEdge),
           gridWidth: _gridWidth,
           gridHeight: _gridHeight,
           obstacles: _connectionObstacles(fromNode, toNode),
@@ -9148,6 +9167,15 @@ class CanvasLogic {
       );
     }
     return routes;
+  }
+
+  Offset _directionForEdge(NodeConnectionEdge edge) {
+    return switch (edge) {
+      NodeConnectionEdge.right => const Offset(1, 0),
+      NodeConnectionEdge.bottom => const Offset(0, 1),
+      NodeConnectionEdge.left => const Offset(-1, 0),
+      NodeConnectionEdge.top => const Offset(0, -1),
+    };
   }
 
   List<_EffectiveOutputPort> _effectiveOutputPorts(NodeModel node) {

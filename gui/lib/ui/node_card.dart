@@ -131,6 +131,7 @@ class NodeCard extends StatelessWidget {
                     if (connectionOutputEdge != null)
                       _buildConnectionHandle(
                         connectionOutputEdge!,
+                        output: true,
                         forceVisible: hovering,
                       ),
                   ],
@@ -138,6 +139,7 @@ class NodeCard extends StatelessWidget {
                     if (connectionInputEdge != null)
                       _buildConnectionHandle(
                         connectionInputEdge!,
+                        output: false,
                         forceVisible: hovering,
                       ),
                   ],
@@ -152,11 +154,10 @@ class NodeCard extends StatelessWidget {
 
   Widget _buildConnectionHandle(
     NodeConnectionEdge edge, {
+    required bool output,
     required bool forceVisible,
   }) {
     const double hitSize = 24;
-    final bool output =
-        edge == NodeConnectionEdge.right || edge == NodeConnectionEdge.bottom;
     return Positioned(
       left: switch (edge) {
         NodeConnectionEdge.left => -hitSize / 2,

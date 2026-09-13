@@ -7,6 +7,8 @@ List<Offset> buildConnectionPolyline({
   required Offset end,
   required bool preferVertical,
   bool? endVertical,
+  Offset? startDirection,
+  Offset? endDirection,
   required double gridWidth,
   required double gridHeight,
   List<Rect> obstacles = const <Rect>[],
@@ -16,16 +18,23 @@ List<Offset> buildConnectionPolyline({
   final List<Rect> inflatedObstacles = obstacles
       .map((Rect rect) => rect.inflate(clearance))
       .toList(growable: false);
+  final double leadLength = clearance + 4;
+  final Offset routedStart = startDirection == null
+      ? start
+      : start + (startDirection * leadLength);
+  final Offset routedEnd = endDirection == null
+      ? end
+      : end + (endDirection * leadLength);
 
   final List<List<Offset>> candidates = <List<Offset>>[];
   final List<double> candidateYs = _candidateAxisValues(
-    primary: _snapToHalfGrid((start.dy + end.dy) / 2, gridHeight),
+    primary: _snapToHalfGrid((routedStart.dy + routedEnd.dy) / 2, gridHeight),
     obstacleStarts: inflatedObstacles.map((Rect rect) => rect.top),
     obstacleEnds: inflatedObstacles.map((Rect rect) => rect.bottom),
     gridSize: gridHeight,
   );
   final List<double> candidateXs = _candidateAxisValues(
-    primary: _snapToHalfGrid((start.dx + end.dx) / 2, gridWidth),
+    primary: _snapToHalfGrid((routedStart.dx + routedEnd.dx) / 2, gridWidth),
     obstacleStarts: inflatedObstacles.map((Rect rect) => rect.left),
     obstacleEnds: inflatedObstacles.map((Rect rect) => rect.right),
     gridSize: gridWidth,
@@ -35,53 +44,64 @@ List<Offset> buildConnectionPolyline({
     existingPolylines,
     horizontal: true,
     gridSize: gridWidth,
-    primary: (start.dx + end.dx) / 2,
+    primary: (routedStart.dx + routedEnd.dx) / 2,
   );
   _addWireDetourAxes(
     candidateYs,
     existingPolylines,
     horizontal: false,
     gridSize: gridHeight,
-    primary: (start.dy + end.dy) / 2,
+    primary: (routedStart.dy + routedEnd.dy) / 2,
   );
-  _addEndpointDetourAxes(candidateXs, start.dx, end.dx, clearance: clearance);
-  _addEndpointDetourAxes(candidateYs, start.dy, end.dy, clearance: clearance);
+  _addEndpointDetourAxes(
+    candidateXs,
+    routedStart.dx,
+    routedEnd.dx,
+    clearance: clearance,
+  );
+  _addEndpointDetourAxes(
+    candidateYs,
+    routedStart.dy,
+    routedEnd.dy,
+    clearance: clearance,
+  );
 
-  if ((start.dx - end.dx).abs() < 0.001 || (start.dy - end.dy).abs() < 0.001) {
-    candidates.add(<Offset>[start, end]);
+  if ((routedStart.dx - routedEnd.dx).abs() < 0.001 ||
+      (routedStart.dy - routedEnd.dy).abs() < 0.001) {
+    candidates.add(<Offset>[routedStart, routedEnd]);
   }
 
   for (final double midY in candidateYs) {
     candidates.add(<Offset>[
-      start,
-      Offset(start.dx, midY),
-      Offset(end.dx, midY),
-      end,
+      routedStart,
+      Offset(routedStart.dx, midY),
+      Offset(routedEnd.dx, midY),
+      routedEnd,
     ]);
   }
   for (final double midX in candidateXs) {
     candidates.add(<Offset>[
-      start,
-      Offset(midX, start.dy),
-      Offset(midX, end.dy),
-      end,
+      routedStart,
+      Offset(midX, routedStart.dy),
+      Offset(midX, routedEnd.dy),
+      routedEnd,
     ]);
   }
   for (final double midX in candidateXs) {
     for (final double midY in candidateYs) {
       candidates.add(<Offset>[
-        start,
-        Offset(midX, start.dy),
+        routedStart,
+        Offset(midX, routedStart.dy),
         Offset(midX, midY),
-        Offset(end.dx, midY),
-        end,
+        Offset(routedEnd.dx, midY),
+        routedEnd,
       ]);
       candidates.add(<Offset>[
-        start,
-        Offset(start.dx, midY),
+        routedStart,
+        Offset(routedStart.dx, midY),
         Offset(midX, midY),
-        Offset(midX, end.dy),
-        end,
+        Offset(midX, routedEnd.dy),
+        routedEnd,
       ]);
     }
   }
@@ -91,11 +111,11 @@ List<Offset> buildConnectionPolyline({
       : <List<Offset>>[
           ...candidates.where(
             (List<Offset> points) =>
-                points.length > 2 && points[1].dy == start.dy,
+                points.length > 2 && points[1].dy == routedStart.dy,
           ),
           ...candidates.where(
             (List<Offset> points) =>
-                !(points.length > 2 && points[1].dy == start.dy),
+                !(points.length > 2 && points[1].dy == routedStart.dy),
           ),
         ];
 
@@ -125,10 +145,36 @@ List<Offset> buildConnectionPolyline({
   }
 
   if (best != null) {
-    return _compressPolyline(best);
+    return _withEndpointLeads(
+      best,
+      start: start,
+      end: end,
+      hasStartLead: startDirection != null,
+      hasEndLead: endDirection != null,
+    );
   }
 
-  return _compressPolyline(candidates.first);
+  return _withEndpointLeads(
+    candidates.first,
+    start: start,
+    end: end,
+    hasStartLead: startDirection != null,
+    hasEndLead: endDirection != null,
+  );
+}
+
+List<Offset> _withEndpointLeads(
+  List<Offset> route, {
+  required Offset start,
+  required Offset end,
+  required bool hasStartLead,
+  required bool hasEndLead,
+}) {
+  return _compressPolyline(<Offset>[
+    if (hasStartLead) start,
+    ...route,
+    if (hasEndLead) end,
+  ]);
 }
 
 void _addEndpointDetourAxes(
@@ -351,6 +397,8 @@ class ConnectionPainter extends CustomPainter {
     required this.end,
     required this.preferVertical,
     this.endVertical,
+    this.startDirection,
+    this.endDirection,
     required this.gridWidth,
     required this.gridHeight,
     this.obstacles = const <Rect>[],
@@ -363,6 +411,8 @@ class ConnectionPainter extends CustomPainter {
   final Offset end;
   final bool preferVertical;
   final bool? endVertical;
+  final Offset? startDirection;
+  final Offset? endDirection;
   final double gridWidth;
   final double gridHeight;
   final List<Rect> obstacles;
@@ -382,6 +432,8 @@ class ConnectionPainter extends CustomPainter {
       end: end,
       preferVertical: preferVertical,
       endVertical: endVertical,
+      startDirection: startDirection,
+      endDirection: endDirection,
       gridWidth: gridWidth,
       gridHeight: gridHeight,
       obstacles: obstacles,
@@ -402,6 +454,8 @@ class ConnectionPainter extends CustomPainter {
         color != oldDelegate.color ||
         preferVertical != oldDelegate.preferVertical ||
         endVertical != oldDelegate.endVertical ||
+        startDirection != oldDelegate.startDirection ||
+        endDirection != oldDelegate.endDirection ||
         gridWidth != oldDelegate.gridWidth ||
         gridHeight != oldDelegate.gridHeight ||
         obstacles != oldDelegate.obstacles ||
