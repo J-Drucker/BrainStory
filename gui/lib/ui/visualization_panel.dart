@@ -5448,28 +5448,31 @@ Widget _segmentLineChart(
       borderData: FlBorderData(show: false),
       lineTouchData: LineTouchData(
         enabled: true,
+        distanceCalculator: (Offset touchPoint, Offset spotPixelCoordinates) =>
+            (touchPoint - spotPixelCoordinates).distance,
         touchTooltipData: LineTouchTooltipData(
           getTooltipItems: (List<LineBarSpot> touchedSpots) {
-            return touchedSpots
-                .map((LineBarSpot spot) {
-                  final int index = spot.barIndex;
-                  final String label = index < plotData.traceLabels.length
-                      ? plotData.traceLabels[index]
-                      : 'Trace ${index + 1}';
-                  final double offset =
-                      index < plotData.traceValueOffsets.length
-                      ? plotData.traceValueOffsets[index]
-                      : 0;
-                  return LineTooltipItem(
-                    '$label\n${(spot.y - offset).toStringAsFixed(1)} μV',
-                    const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  );
-                })
-                .toList(growable: false);
+            return List<LineTooltipItem?>.generate(touchedSpots.length, (
+              int touchedIndex,
+            ) {
+              if (touchedIndex != 0) return null;
+              final LineBarSpot spot = touchedSpots[touchedIndex];
+              final int index = spot.barIndex;
+              final String label = index < plotData.traceLabels.length
+                  ? plotData.traceLabels[index]
+                  : 'Trace ${index + 1}';
+              final double offset = index < plotData.traceValueOffsets.length
+                  ? plotData.traceValueOffsets[index]
+                  : 0;
+              return LineTooltipItem(
+                '$label\n${(spot.y - offset).toStringAsFixed(1)} μV',
+                const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              );
+            }, growable: false);
           },
         ),
       ),

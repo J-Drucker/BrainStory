@@ -42,7 +42,7 @@ Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Shift,Pan the time windo
 Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl,Change the voltage range,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
 Segmentation,Plot,Mouse,Scroll wheel or trackpad scroll,Ctrl+Shift,Change the visible time span,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile._handlePointerSignal
 Segmentation,Plot,Mouse,Double-click,None,Jump to the beginning,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile
-Segmentation,Trace,Mouse,Hover,None,Show channel label and voltage,implemented,gui/lib/ui/visualization_panel.dart::_segmentLineChart
+Segmentation,Trace,Mouse,Hover,None,Show the nearest channel label and voltage,implemented,Only one trace is identified at a time; gui/lib/ui/visualization_panel.dart::_segmentLineChart
 Segmentation,Horizontal scrollbar,Mouse,Drag,None,Pan the time window,implemented,gui/lib/ui/visualization_panel.dart::_SegmentPlotTile
 PSD and hypnogram,Plot,Keyboard,Left Arrow,None,Pan the horizontal window left,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
 PSD and hypnogram,Plot,Keyboard,Right Arrow,None,Pan the horizontal window right,implemented,gui/lib/ui/visualization_panel.dart::_SharedZoomableChartViewportState._handleKeyEvent
