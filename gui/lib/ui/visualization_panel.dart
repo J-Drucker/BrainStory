@@ -3108,27 +3108,34 @@ class _PsdChart extends StatelessWidget {
                 borderData: FlBorderData(show: false),
                 lineTouchData: LineTouchData(
                   enabled: true,
+                  distanceCalculator:
+                      (Offset touchPoint, Offset spotPixelCoordinates) =>
+                          (touchPoint - spotPixelCoordinates).distance,
                   touchTooltipData: LineTouchTooltipData(
                     getTooltipItems: (List<LineBarSpot> touchedSpots) {
-                      return touchedSpots
-                          .map((LineBarSpot spot) {
-                            final int index = spot.barIndex;
-                            final String label = index < visibleSeries.length
-                                ? visibleSeries[index].label
-                                : 'Spectrum ${index + 1}';
-                            final String power = logY
-                                ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
-                                : '${spot.y.toStringAsFixed(2)} μV²/Hz';
-                            return LineTooltipItem(
-                              '$label\n${spot.x.toStringAsFixed(1)} Hz · $power',
-                              const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            );
-                          })
-                          .toList(growable: false);
+                      return List<LineTooltipItem?>.generate(
+                        touchedSpots.length,
+                        (int touchedIndex) {
+                          if (touchedIndex != 0) return null;
+                          final LineBarSpot spot = touchedSpots[touchedIndex];
+                          final int index = spot.barIndex;
+                          final String label = index < visibleSeries.length
+                              ? visibleSeries[index].label
+                              : 'Spectrum ${index + 1}';
+                          final String power = logY
+                              ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
+                              : '${spot.y.toStringAsFixed(2)} μV²/Hz';
+                          return LineTooltipItem(
+                            '$label\n${spot.x.toStringAsFixed(1)} Hz · $power',
+                            const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          );
+                        },
+                        growable: false,
+                      );
                     },
                   ),
                 ),
