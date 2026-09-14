@@ -14,7 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('ICA selection supports preview, reset, and apply', (
+  testWidgets('ICA selection supports preview, reset, and node creation', (
     WidgetTester tester,
   ) async {
     final Dataset dataset = _icaDataset();
@@ -27,9 +27,28 @@ void main() {
       },
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('ica-component-0')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ica-component-label-0')),
+    );
     await tester.pump();
     expect(find.text('1 excluded'), findsOneWidget);
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(const ValueKey<String>('ica-component-checkbox-0')),
+          )
+          .value,
+      isTrue,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ica-component-topo-0')),
+    );
+    await tester.pump();
+    expect(find.text('0 excluded'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ica-component-topo-0')),
+    );
+    await tester.pump();
 
     await tester.tap(find.byKey(const ValueKey<String>('ica-preview')));
     await tester.pump();
@@ -39,7 +58,8 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('ica-apply')));
+    expect(find.text('Create Apply ICA node'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey<String>('ica-create-node')));
     await tester.pumpAndSettle();
     expect(applied, <int>{0});
 
@@ -64,7 +84,9 @@ void main() {
       find.byKey(const ValueKey<String>('ica-component-traces')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey<String>('ica-component-0')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ica-component-topo-0')),
+    );
     await tester.pump();
     expect(find.text('1 excluded'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -93,7 +115,7 @@ void main() {
     expect(identical(after, before), isFalse);
   });
 
-  testWidgets('non-converged ICA is warned and cannot be applied', (
+  testWidgets('non-converged ICA is warned and cannot create a node', (
     WidgetTester tester,
   ) async {
     final Dataset dataset = _icaDataset(converged: false);
@@ -103,10 +125,12 @@ void main() {
       find.byKey(const ValueKey<String>('ica-nonconvergence-warning')),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey<String>('ica-component-0')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ica-component-label-0')),
+    );
     await tester.pump();
     final FilledButton apply = tester.widget<FilledButton>(
-      find.byKey(const ValueKey<String>('ica-apply')),
+      find.byKey(const ValueKey<String>('ica-create-node')),
     );
     expect(apply.onPressed, isNull);
   });
@@ -270,12 +294,12 @@ void main() {
         viewerNodeId: source.id,
         dataset: dataset,
         excludedComponents: <int>{0},
-        runAfterApply: false,
       );
       final NodeModel rejection = logic.nodes.firstWhere(
         (NodeModel node) => node.type is IcaComponentRejectionNodeType,
       );
       expect(created, 'Created Apply ICA.');
+      expect(rejection.datasetStates[dataset.id], DatasetState.ready);
       expect(rejection.params['excludedComponents'], <int>[0]);
       expect(rejection.params['selectedDatasetIds'], <String>[dataset.id]);
       expect(
@@ -307,7 +331,6 @@ void main() {
         viewerNodeId: source.id,
         dataset: dataset,
         excludedComponents: <int>{1, 2},
-        runAfterApply: false,
       );
       expect(updated, 'Updated Apply ICA.');
       expect(
@@ -383,7 +406,7 @@ Future<void> _pumpViewer(
       home: Scaffold(
         body: Padding(
           padding: const EdgeInsets.all(16),
-          child: IcaViewer(dataset: dataset, onApply: onApply),
+          child: IcaViewer(dataset: dataset, onCreateNode: onApply),
         ),
       ),
     ),

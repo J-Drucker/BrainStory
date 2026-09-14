@@ -554,11 +554,12 @@ class _VisualizationChart extends StatelessWidget {
       );
       return IcaViewer(
         dataset: activeDataset,
-        onApply: (Set<int> excludedComponents) async {
+        onCreateNode: (Set<int> excludedComponents) async {
           final String message = await logic.persistIcaComponentExclusions(
             viewerNodeId: nodeId,
             dataset: activeDataset,
             excludedComponents: excludedComponents,
+            runAfterApply: false,
           );
           if (context.mounted) {
             ScaffoldMessenger.of(

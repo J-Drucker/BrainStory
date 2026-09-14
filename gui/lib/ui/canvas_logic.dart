@@ -6179,7 +6179,7 @@ class CanvasLogic {
     required String viewerNodeId,
     required Dataset dataset,
     required Set<int> excludedComponents,
-    bool runAfterApply = true,
+    bool runAfterApply = false,
   }) async {
     final NodeModel? viewerNode = _findNode(viewerNodeId);
     if (viewerNode == null) {

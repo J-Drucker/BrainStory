@@ -15,6 +15,22 @@ import '../nodes/interactive_artifact_detection_node.dart';
 import 'artifact_template_preview.dart';
 import 'channel_positions_dialog.dart';
 
+const List<Color> rawSignalChannelPalette = <Color>[
+  Color(0xFF7FDBFF),
+  Color(0xFF39CCCC),
+  Color(0xFF00B5D8),
+  Color(0xFF3A86FF),
+  Color(0xFF4CC9F0),
+  Color(0xFF6C63FF),
+  Color(0xFF7B6DFF),
+  Color(0xFF8E7CFF),
+  Color(0xFF5E60CE),
+  Color(0xFF4EA8DE),
+  Color(0xFF48CAE4),
+  Color(0xFF2EC4B6),
+  Color(0xFF00F5D4),
+];
+
 class RawSignalBrowser extends StatefulWidget {
   const RawSignalBrowser({
     super.key,
@@ -79,21 +95,6 @@ class _ChannelDisplayRow {
 }
 
 class _RawSignalBrowserState extends State<RawSignalBrowser> {
-  static const List<Color> _palette = <Color>[
-    Color(0xFF7FDBFF),
-    Color(0xFF39CCCC),
-    Color(0xFF00B5D8),
-    Color(0xFF3A86FF),
-    Color(0xFF4CC9F0),
-    Color(0xFF6C63FF),
-    Color(0xFF7B6DFF),
-    Color(0xFF8E7CFF),
-    Color(0xFF5E60CE),
-    Color(0xFF4EA8DE),
-    Color(0xFF48CAE4),
-    Color(0xFF2EC4B6),
-    Color(0xFF00F5D4),
-  ];
   static const List<double> _yScaleOptionsUv = <double>[
     10,
     25,
@@ -3407,7 +3408,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     if (colorValue != null) {
       return Color(colorValue);
     }
-    return _palette[channelIndex % _palette.length];
+    return rawSignalChannelPalette[channelIndex %
+        rawSignalChannelPalette.length];
   }
 
   List<Color> _channelColors(int channelCount) {
@@ -3431,10 +3433,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   void _cycleChannelColor(int channelIndex) {
     final Color current = _colorForChannel(channelIndex);
-    final int currentIndex = _palette.indexWhere(
+    final int currentIndex = rawSignalChannelPalette.indexWhere(
       (Color color) => color.toARGB32() == current.toARGB32(),
     );
-    final Color nextColor = _palette[(currentIndex + 1) % _palette.length];
+    final Color nextColor =
+        rawSignalChannelPalette[(currentIndex + 1) %
+            rawSignalChannelPalette.length];
     final Map<String, dynamic> colorMap = Map<String, dynamic>.from(
       widget.params['channel_colors'] as Map? ?? <String, dynamic>{},
     );

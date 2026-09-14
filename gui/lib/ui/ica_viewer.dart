@@ -7,13 +7,18 @@ import 'package:flutter/services.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../nodes/channel_coordinates_node.dart';
+import 'raw_signal_browser.dart';
 import 'topomap_view.dart';
 
 class IcaViewer extends StatefulWidget {
-  const IcaViewer({super.key, required this.dataset, required this.onApply});
+  const IcaViewer({
+    super.key,
+    required this.dataset,
+    required this.onCreateNode,
+  });
 
   final Dataset dataset;
-  final Future<void> Function(Set<int> excludedComponents) onApply;
+  final Future<void> Function(Set<int> excludedComponents) onCreateNode;
 
   @override
   State<IcaViewer> createState() => _IcaViewerState();
@@ -21,12 +26,46 @@ class IcaViewer extends StatefulWidget {
 
 class _IcaViewerState extends State<IcaViewer> {
   static const List<double> _windowOptions = <double>[1, 2, 5, 10, 20, 30];
+  static const List<double> _amplitudeOptions = <double>[
+    0.25,
+    0.5,
+    1,
+    2,
+    4,
+    8,
+    16,
+  ];
+  static const List<double> _spacingOptions = <double>[
+    0.5,
+    0.75,
+    1,
+    1.25,
+    1.5,
+    2,
+  ];
   final Set<int> _excluded = <int>{};
   bool _previewing = false;
-  bool _applying = false;
+  bool _saving = false;
+  bool _scaleToposSeparately = false;
   double _windowSeconds = 10;
-  double _startFraction = 0;
   double _verticalScale = 1;
+  double _spacing = 1;
+  late final ScrollController _horizontalController;
+  late final ScrollController _verticalController;
+
+  @override
+  void initState() {
+    super.initState();
+    _horizontalController = ScrollController(keepScrollOffset: false);
+    _verticalController = ScrollController(keepScrollOffset: false);
+  }
+
+  @override
+  void dispose() {
+    _horizontalController.dispose();
+    _verticalController.dispose();
+    super.dispose();
+  }
 
   MatrixTransformationData? get _transform =>
       widget.dataset.matrixTransformation;
@@ -68,7 +107,7 @@ class _IcaViewerState extends State<IcaViewer> {
               borderRadius: BorderRadius.circular(6),
             ),
             child: Text(
-              'ICA did not converge after ${transform.iterationCount} iterations. Review is available, but exclusions cannot be applied.',
+              'ICA did not converge after ${transform.iterationCount} iterations. Review is available, but an Apply ICA node cannot be created.',
               style: const TextStyle(
                 color: Colors.redAccent,
                 fontWeight: FontWeight.w700,
@@ -133,26 +172,29 @@ class _IcaViewerState extends State<IcaViewer> {
           label: Text(_previewing ? 'Components' : 'Preview'),
         ),
         FilledButton.icon(
-          key: const ValueKey<String>('ica-apply'),
-          onPressed: !trustworthy || _excluded.isEmpty || _applying
+          key: const ValueKey<String>('ica-create-node'),
+          onPressed: !trustworthy || _excluded.isEmpty || _saving
               ? null
-              : _apply,
-          icon: _applying
+              : _createNode,
+          icon: _saving
               ? const SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.check),
-          label: const Text('Apply'),
+          label: const Text('Create Apply ICA node'),
         ),
         OutlinedButton.icon(
           key: const ValueKey<String>('ica-reset'),
           onPressed: () => setState(() {
             _excluded.clear();
             _previewing = false;
-            _startFraction = 0;
             _verticalScale = 1;
+            _spacing = 1;
+            if (_horizontalController.hasClients) {
+              _horizontalController.jumpTo(0);
+            }
           }),
           icon: const Icon(Icons.restart_alt),
           label: const Text('Reset'),
@@ -180,19 +222,43 @@ class _IcaViewerState extends State<IcaViewer> {
           ),
         ),
         const SizedBox(width: 6),
-        DropdownButton<double>(
+        _scaleDropdown(
+          label: 'Time',
           value: _windowSeconds,
-          items: _windowOptions
-              .map(
-                (double seconds) => DropdownMenuItem<double>(
-                  value: seconds,
-                  child: Text('${seconds.toStringAsFixed(0)} s'),
-                ),
-              )
-              .toList(growable: false),
-          onChanged: (double? value) {
-            if (value != null) setState(() => _windowSeconds = value);
-          },
+          options: _windowOptions,
+          format: (double value) => '${value.toStringAsFixed(0)} s',
+          onChanged: (double value) => _windowSeconds = value,
+        ),
+        _scaleDropdown(
+          label: 'Amplitude',
+          value: _verticalScale,
+          options: _amplitudeOptions,
+          format: (double value) =>
+              '${value.toStringAsFixed(value < 1 ? 2 : 0)}×',
+          onChanged: (double value) => _verticalScale = value,
+        ),
+        _scaleDropdown(
+          label: 'Spacing',
+          value: _spacing,
+          options: _spacingOptions,
+          format: (double value) => '${value.toStringAsFixed(2)}×',
+          onChanged: (double value) => _spacing = value,
+        ),
+        Tooltip(
+          message:
+              'Off uses one shared color scale so component strengths remain comparable.',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Checkbox(
+                key: const ValueKey<String>('ica-separate-topo-scales'),
+                value: _scaleToposSeparately,
+                onChanged: (bool? value) =>
+                    setState(() => _scaleToposSeparately = value ?? false),
+              ),
+              const Text('Scale each topo separately'),
+            ],
+          ),
         ),
         Text(
           '${transform.algorithm}  |  ${transform.iterationCount} iterations  |  tol ${transform.tolerance}',
@@ -207,22 +273,12 @@ class _IcaViewerState extends State<IcaViewer> {
     TimeSeriesData activations,
   ) {
     final int sampleCount = activations.sampleCount;
-    final int windowSamples = math.max(
-      1,
-      math.min(sampleCount, (_windowSeconds * activations.sampleRate).round()),
-    );
-    final int maxStart = math.max(0, sampleCount - windowSamples);
-    final int startSample = (maxStart * _startFraction).round();
-    final int endSample = math.min(sampleCount, startSample + windowSamples);
-    final List<List<double>> activationWindow = activations.channels
-        .map((List<double> channel) => channel.sublist(startSample, endSample))
-        .toList(growable: false);
-    List<List<double>> traces = activationWindow;
+    List<List<double>> traces = activations.channels;
     List<String> labels = transform.componentLabels;
     if (_previewing) {
       try {
         traces = transform.reconstructSensorChannels(
-          activationWindow,
+          activations.channels,
           excludedComponents: _excluded,
         );
         labels = transform.originalChannelLabels;
@@ -257,32 +313,82 @@ class _IcaViewerState extends State<IcaViewer> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: Listener(
-                key: const ValueKey<String>('ica-trace-viewport'),
-                onPointerSignal: _handleTracePointerSignal,
-                child: CustomPaint(
-                  key: ValueKey<String>(
-                    _previewing ? 'ica-preview-traces' : 'ica-component-traces',
-                  ),
-                  painter: _StackedTracePainter(
-                    traces: traces,
-                    labels: labels,
-                    verticalScale: _verticalScale,
-                  ),
-                  child: const SizedBox.expand(),
-                ),
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final double duration = sampleCount / activations.sampleRate;
+                  final double canvasWidth = math.max(
+                    constraints.maxWidth,
+                    constraints.maxWidth * duration / _windowSeconds,
+                  );
+                  final double canvasHeight = math.max(
+                    constraints.maxHeight,
+                    traces.length * 52.0 * _spacing,
+                  );
+                  return Listener(
+                    key: const ValueKey<String>('ica-trace-viewport'),
+                    onPointerSignal: _handleTracePointerSignal,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragUpdate: (DragUpdateDetails details) =>
+                          _scrollHorizontal(-details.delta.dx),
+                      onDoubleTap: () {
+                        if (_horizontalController.hasClients) {
+                          _horizontalController.jumpTo(0);
+                        }
+                      },
+                      child: Scrollbar(
+                        controller: _verticalController,
+                        thumbVisibility: canvasHeight > constraints.maxHeight,
+                        child: SingleChildScrollView(
+                          controller: _verticalController,
+                          child: Scrollbar(
+                            controller: _horizontalController,
+                            thumbVisibility: canvasWidth > constraints.maxWidth,
+                            notificationPredicate:
+                                (ScrollNotification notice) =>
+                                    notice.metrics.axis == Axis.horizontal,
+                            child: SingleChildScrollView(
+                              controller: _horizontalController,
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: canvasWidth,
+                                height: canvasHeight,
+                                child: CustomPaint(
+                                  key: ValueKey<String>(
+                                    _previewing
+                                        ? 'ica-preview-traces'
+                                        : 'ica-component-traces',
+                                  ),
+                                  painter: _StackedTracePainter(
+                                    traces: traces,
+                                    labels: labels,
+                                    colors: _previewing
+                                        ? null
+                                        : List<Color>.generate(
+                                            traces.length,
+                                            _componentColor,
+                                          ),
+                                    excluded: _previewing
+                                        ? const <int>{}
+                                        : _excluded,
+                                    verticalScale: _verticalScale,
+                                  ),
+                                  child: const SizedBox.expand(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
-            if (maxStart > 0)
-              Slider(
-                value: _startFraction,
-                onChanged: (double value) =>
-                    setState(() => _startFraction = value),
-              ),
-            Text(
-              '${(startSample / activations.sampleRate).toStringAsFixed(1)}-${(endSample / activations.sampleRate).toStringAsFixed(1)} s',
+            const Text(
+              'Drag or scroll to pan. Ctrl-scroll changes amplitude; Ctrl-Shift-scroll changes time.',
               textAlign: TextAlign.right,
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
           ],
         ),
@@ -290,10 +396,43 @@ class _IcaViewerState extends State<IcaViewer> {
     );
   }
 
+  Widget _scaleDropdown({
+    required String label,
+    required double value,
+    required List<double> options,
+    required String Function(double value) format,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text('$label: ', style: const TextStyle(color: Colors.white70)),
+        DropdownButton<double>(
+          value: value,
+          items: options
+              .map(
+                (double option) => DropdownMenuItem<double>(
+                  value: option,
+                  child: Text(format(option)),
+                ),
+              )
+              .toList(growable: false),
+          onChanged: (double? next) {
+            if (next != null) setState(() => onChanged(next));
+          },
+        ),
+      ],
+    );
+  }
+
   Widget _buildComponentGrid(
     MatrixTransformationData transform,
     int componentCount,
   ) {
+    final TopomapValueBounds sharedBounds = _sharedTopomapBounds(
+      transform,
+      componentCount,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.025),
@@ -313,7 +452,7 @@ class _IcaViewerState extends State<IcaViewer> {
             ),
             itemCount: componentCount,
             itemBuilder: (BuildContext context, int index) {
-              return _buildComponentTile(transform, index);
+              return _buildComponentTile(transform, index, sharedBounds);
             },
           );
         },
@@ -324,6 +463,7 @@ class _IcaViewerState extends State<IcaViewer> {
   Widget _buildComponentTile(
     MatrixTransformationData transform,
     int componentIndex,
+    TopomapValueBounds sharedBounds,
   ) {
     final String label = componentIndex < transform.componentLabels.length
         ? transform.componentLabels[componentIndex]
@@ -338,11 +478,6 @@ class _IcaViewerState extends State<IcaViewer> {
     final bool selected = _excluded.contains(componentIndex);
     return InkWell(
       key: ValueKey<String>('ica-component-$componentIndex'),
-      onTap: () => setState(() {
-        selected
-            ? _excluded.remove(componentIndex)
-            : _excluded.add(componentIndex);
-      }),
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -362,6 +497,9 @@ class _IcaViewerState extends State<IcaViewer> {
             Row(
               children: <Widget>[
                 Checkbox(
+                  key: ValueKey<String>(
+                    'ica-component-checkbox-$componentIndex',
+                  ),
                   value: selected,
                   onChanged: (bool? value) => setState(() {
                     value == true
@@ -370,9 +508,23 @@ class _IcaViewerState extends State<IcaViewer> {
                   }),
                 ),
                 Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  child: InkWell(
+                    key: ValueKey<String>(
+                      'ica-component-label-$componentIndex',
+                    ),
+                    onTap: () => _toggleComponent(componentIndex),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text(
+                        label,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: selected
+                              ? Colors.white54
+                              : _componentColor(componentIndex),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 if (energy != null)
@@ -383,28 +535,34 @@ class _IcaViewerState extends State<IcaViewer> {
               ],
             ),
             Expanded(
-              child: points.length >= 3
-                  ? InterpolatedTopomap(
-                      points: points,
-                      bounds: _symmetricBounds(points),
-                      scale: TopomapColorScale(
-                        colors: const <Color>[
-                          Color(0xFF315A71),
-                          Color(0xFF34363A),
-                          Color(0xFF8A493F),
-                        ],
+              child: InkWell(
+                key: ValueKey<String>('ica-component-topo-$componentIndex'),
+                onTap: () => _toggleComponent(componentIndex),
+                child: points.length >= 3
+                    ? InterpolatedTopomap(
+                        points: points,
+                        bounds: _scaleToposSeparately
+                            ? _symmetricBounds(points)
+                            : sharedBounds,
+                        scale: TopomapColorScale(
+                          colors: const <Color>[
+                            Color(0xFF315A71),
+                            Color(0xFF34363A),
+                            Color(0xFF8A493F),
+                          ],
+                        ),
+                        showLabels: false,
+                        sampleDensity: 0.65,
+                      )
+                    : const Center(
+                        child: Text(
+                          'Coordinates unavailable',
+                          key: ValueKey<String>('ica-missing-coordinates'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white54, fontSize: 11),
+                        ),
                       ),
-                      showLabels: false,
-                      sampleDensity: 0.65,
-                    )
-                  : const Center(
-                      child: Text(
-                        'Coordinates unavailable',
-                        key: ValueKey<String>('ica-missing-coordinates'),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                      ),
-                    ),
+              ),
             ),
           ],
         ),
@@ -412,29 +570,108 @@ class _IcaViewerState extends State<IcaViewer> {
     );
   }
 
-  Future<void> _apply() async {
-    setState(() => _applying = true);
+  Future<void> _createNode() async {
+    setState(() => _saving = true);
     try {
-      await widget.onApply(Set<int>.from(_excluded));
+      await widget.onCreateNode(Set<int>.from(_excluded));
     } finally {
-      if (mounted) setState(() => _applying = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
-  void _handleTracePointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent ||
-        !HardwareKeyboard.instance.isControlPressed ||
-        event.scrollDelta.dy == 0) {
-      return;
-    }
+  void _toggleComponent(int componentIndex) {
     setState(() {
-      _verticalScale =
-          (_verticalScale * (event.scrollDelta.dy < 0 ? 1.25 : 0.8)).clamp(
-            0.125,
-            16.0,
-          );
+      _excluded.contains(componentIndex)
+          ? _excluded.remove(componentIndex)
+          : _excluded.add(componentIndex);
     });
   }
+
+  Color _componentColor(int index) {
+    final int value =
+        rawSignalChannelPalette[index % rawSignalChannelPalette.length]
+            .toARGB32();
+    return Color(
+      0xFF000000 |
+          ((255 - ((value >> 16) & 0xFF)) << 16) |
+          ((255 - ((value >> 8) & 0xFF)) << 8) |
+          (255 - (value & 0xFF)),
+    );
+  }
+
+  void _scrollHorizontal(double delta) {
+    if (!_horizontalController.hasClients) return;
+    _horizontalController.jumpTo(
+      (_horizontalController.offset + delta).clamp(
+        0.0,
+        _horizontalController.position.maxScrollExtent,
+      ),
+    );
+  }
+
+  void _handleTracePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    final bool control = HardwareKeyboard.instance.isControlPressed;
+    final bool shift = HardwareKeyboard.instance.isShiftPressed;
+    if (control && shift && event.scrollDelta.dy != 0) {
+      _stepWindowSeconds(event.scrollDelta.dy < 0 ? -1 : 1);
+    } else if (control && event.scrollDelta.dy != 0) {
+      _stepAmplitude(event.scrollDelta.dy < 0 ? 1 : -1);
+    } else {
+      final double delta =
+          event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs()
+          ? event.scrollDelta.dx
+          : event.scrollDelta.dy;
+      _scrollHorizontal(delta);
+    }
+  }
+
+  void _stepWindowSeconds(int direction) {
+    int nearest = 0;
+    double distance = double.infinity;
+    for (int index = 0; index < _windowOptions.length; index++) {
+      final double candidate = (_windowOptions[index] - _windowSeconds).abs();
+      if (candidate < distance) {
+        distance = candidate;
+        nearest = index;
+      }
+    }
+    setState(() {
+      _windowSeconds =
+          _windowOptions[(nearest + direction).clamp(
+            0,
+            _windowOptions.length - 1,
+          )];
+    });
+  }
+
+  void _stepAmplitude(int direction) {
+    final int current = _amplitudeOptions.indexOf(_verticalScale);
+    setState(() {
+      _verticalScale =
+          _amplitudeOptions[(current + direction).clamp(
+            0,
+            _amplitudeOptions.length - 1,
+          )];
+    });
+  }
+}
+
+TopomapValueBounds _sharedTopomapBounds(
+  MatrixTransformationData transform,
+  int componentCount,
+) {
+  double maximum = 0;
+  for (int component = 0; component < componentCount; component++) {
+    for (final TopomapPointValue point in _componentTopomapPoints(
+      transform,
+      component,
+    )) {
+      maximum = math.max(maximum, point.value.abs());
+    }
+  }
+  if (maximum == 0) maximum = 1;
+  return TopomapValueBounds(min: -maximum, max: maximum);
 }
 
 List<TopomapPointValue> _componentTopomapPoints(
@@ -482,11 +719,15 @@ class _StackedTracePainter extends CustomPainter {
   const _StackedTracePainter({
     required this.traces,
     required this.labels,
+    required this.colors,
+    required this.excluded,
     required this.verticalScale,
   });
 
   final List<List<double>> traces;
   final List<String> labels;
+  final List<Color>? colors;
+  final Set<int> excluded;
   final double verticalScale;
 
   @override
@@ -499,7 +740,6 @@ class _StackedTracePainter extends CustomPainter {
       ..color = Colors.white.withValues(alpha: 0.08)
       ..strokeWidth = 1;
     final Paint tracePaint = Paint()
-      ..color = const Color(0xFF63D4EF)
       ..strokeWidth = 1
       ..style = PaintingStyle.stroke;
     for (int row = 0; row < traces.length; row++) {
@@ -512,7 +752,12 @@ class _StackedTracePainter extends CustomPainter {
       final TextPainter labelPainter = TextPainter(
         text: TextSpan(
           text: row < labels.length ? labels[row] : '${row + 1}',
-          style: const TextStyle(color: Colors.white70, fontSize: 10),
+          style: TextStyle(
+            color: excluded.contains(row)
+                ? Colors.white24
+                : colors?[row] ?? Colors.white70,
+            fontSize: 10,
+          ),
         ),
         textDirection: TextDirection.ltr,
         maxLines: 1,
@@ -524,6 +769,9 @@ class _StackedTracePainter extends CustomPainter {
       );
       final List<double> values = traces[row];
       if (values.length < 2) continue;
+      tracePaint.color = excluded.contains(row)
+          ? Colors.white.withValues(alpha: 0.16)
+          : colors?[row] ?? const Color(0xFF63D4EF);
       double maximum = 0;
       for (final double value in values) {
         if (value.isFinite) maximum = math.max(maximum, value.abs());
@@ -550,6 +798,8 @@ class _StackedTracePainter extends CustomPainter {
   bool shouldRepaint(covariant _StackedTracePainter oldDelegate) {
     return oldDelegate.traces != traces ||
         oldDelegate.labels != labels ||
+        oldDelegate.colors != colors ||
+        oldDelegate.excluded != excluded ||
         oldDelegate.verticalScale != verticalScale;
   }
 }
