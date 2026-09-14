@@ -17,6 +17,7 @@ class IcaComponentRejectionNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'excludedComponents': <int>[],
+    'excludedComponentsByDataset': <String, List<int>>{},
   };
 
   @override
@@ -30,8 +31,19 @@ class IcaComponentRejectionNodeType extends NodeType {
     PortSpec(name: 'clean signal', type: PortType.signal),
   ];
 
-  static Set<int> excludedComponents(Map<String, dynamic> params) {
-    return (params['excludedComponents'] as List<dynamic>? ?? const <dynamic>[])
+  static Set<int> excludedComponents(
+    Map<String, dynamic> params, {
+    String? datasetId,
+  }) {
+    final Object? perDataset = params['excludedComponentsByDataset'];
+    final List<dynamic> values;
+    if (datasetId != null && perDataset is Map && perDataset.isNotEmpty) {
+      values = perDataset[datasetId] as List<dynamic>? ?? const <dynamic>[];
+    } else {
+      values =
+          params['excludedComponents'] as List<dynamic>? ?? const <dynamic>[];
+    }
+    return values
         .whereType<num>()
         .map((num value) => value.toInt())
         .where((int value) => value >= 0)
@@ -46,19 +58,15 @@ class IcaComponentRejectionNodeType extends NodeType {
   }) {
     final List<dynamic> selectedDatasetIds =
         params['selectedDatasetIds'] as List<dynamic>? ?? const <dynamic>[];
-    final Dataset? dataset = datasets.values
+    final List<Dataset> applicableDatasets = datasets.values
         .where(
           (Dataset item) =>
               item.matrixTransformation != null &&
               (selectedDatasetIds.isEmpty ||
                   selectedDatasetIds.contains(item.id)),
         )
-        .cast<Dataset?>()
-        .firstWhere((Dataset? item) => item != null, orElse: () => null);
-    final MatrixTransformationData? transform = dataset?.matrixTransformation;
-    final int componentCount = transform?.componentCount ?? 0;
-    final Set<int> excluded = excludedComponents(params);
-    if (transform == null || componentCount == 0) {
+        .toList(growable: false);
+    if (applicableDatasets.isEmpty) {
       return const Text(
         'Connect compatible signal data and a completed ICA transform.',
       );
@@ -69,25 +77,51 @@ class IcaComponentRejectionNodeType extends NodeType {
       children: <Widget>[
         const Text('Components excluded during sensor-space reconstruction.'),
         const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: List<Widget>.generate(componentCount, (int index) {
-            final String label = index < transform.componentLabels.length
-                ? transform.componentLabels[index]
-                : 'IC ${index + 1}';
-            return FilterChip(
-              label: Text(label),
-              selected: excluded.contains(index),
-              onSelected: (bool selected) {
-                setState(() {
-                  selected ? excluded.add(index) : excluded.remove(index);
-                  params['excludedComponents'] = excluded.toList()..sort();
-                });
-              },
-            );
-          }),
-        ),
+        for (final Dataset dataset in applicableDatasets) ...<Widget>[
+          Text(
+            dataset.label,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Builder(
+            builder: (BuildContext context) {
+              final MatrixTransformationData transform =
+                  dataset.matrixTransformation!;
+              final Set<int> excluded = excludedComponents(
+                params,
+                datasetId: dataset.id,
+              );
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: List<Widget>.generate(transform.componentCount, (
+                  int index,
+                ) {
+                  final String label = index < transform.componentLabels.length
+                      ? transform.componentLabels[index]
+                      : 'IC ${index + 1}';
+                  return FilterChip(
+                    label: Text(label),
+                    selected: excluded.contains(index),
+                    onSelected: (bool selected) {
+                      setState(() {
+                        selected ? excluded.add(index) : excluded.remove(index);
+                        final Map<String, dynamic> byDataset =
+                            Map<String, dynamic>.from(
+                              params['excludedComponentsByDataset'] as Map? ??
+                                  const <String, dynamic>{},
+                            );
+                        byDataset[dataset.id] = excluded.toList()..sort();
+                        params['excludedComponentsByDataset'] = byDataset;
+                      });
+                    },
+                  );
+                }),
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+        ],
       ],
     );
   }
@@ -102,7 +136,7 @@ class IcaComponentRejectionNodeType extends NodeType {
     if (transform == null || transform.mixingMatrix.isEmpty) {
       throw StateError('ICA reconstruction metadata is unavailable.');
     }
-    final Set<int> excluded = excludedComponents(params);
+    final Set<int> excluded = excludedComponents(params, datasetId: dataset.id);
     if (excluded.any((int index) => index >= transform.componentCount)) {
       throw RangeError('An excluded ICA component is out of range.');
     }

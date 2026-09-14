@@ -15,10 +15,12 @@ class IcaViewer extends StatefulWidget {
     super.key,
     required this.dataset,
     required this.onCreateNode,
+    this.initialExcludedComponents = const <int>{},
   });
 
   final Dataset dataset;
   final Future<void> Function(Set<int> excludedComponents) onCreateNode;
+  final Set<int> initialExcludedComponents;
 
   @override
   State<IcaViewer> createState() => _IcaViewerState();
@@ -56,6 +58,7 @@ class _IcaViewerState extends State<IcaViewer> {
   @override
   void initState() {
     super.initState();
+    _excluded.addAll(widget.initialExcludedComponents);
     _horizontalController = ScrollController(keepScrollOffset: false);
     _verticalController = ScrollController(keepScrollOffset: false);
   }
@@ -65,6 +68,27 @@ class _IcaViewerState extends State<IcaViewer> {
     _horizontalController.dispose();
     _verticalController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant IcaViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dataset.id != widget.dataset.id) {
+      _excluded
+        ..clear()
+        ..addAll(widget.initialExcludedComponents);
+      _previewing = false;
+      _verticalScale = 1;
+      _spacing = 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_horizontalController.hasClients) {
+          _horizontalController.jumpTo(0);
+        }
+        if (_verticalController.hasClients) {
+          _verticalController.jumpTo(0);
+        }
+      });
+    }
   }
 
   MatrixTransformationData? get _transform =>

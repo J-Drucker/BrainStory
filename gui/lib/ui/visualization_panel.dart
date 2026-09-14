@@ -554,6 +554,10 @@ class _VisualizationChart extends StatelessWidget {
       );
       return IcaViewer(
         dataset: activeDataset,
+        initialExcludedComponents: logic.icaComponentExclusionsForDataset(
+          viewerNodeId: nodeId,
+          dataset: activeDataset,
+        ),
         onCreateNode: (Set<int> excludedComponents) async {
           final String message = await logic.persistIcaComponentExclusions(
             viewerNodeId: nodeId,

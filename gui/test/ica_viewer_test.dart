@@ -230,6 +230,29 @@ void main() {
     expect(dataset.timeSeries!.channels[2], <double>[31, 32, 33]);
   });
 
+  test(
+    'ICA rejection applies independent exclusions to each dataset',
+    () async {
+      final Dataset first = _icaDataset(id: 'ica-first');
+      final Dataset second = _icaDataset(id: 'ica-second');
+      final Map<String, dynamic> params = <String, dynamic>{
+        'excludedComponents': <int>[],
+        'excludedComponentsByDataset': <String, List<int>>{
+          first.id: <int>[0],
+          second.id: <int>[2],
+        },
+      };
+
+      await IcaComponentRejectionNodeType().run(first, params);
+      await IcaComponentRejectionNodeType().run(second, params);
+
+      expect(first.timeSeries!.channels[0], <double>[10, 10, 10, 10]);
+      expect(first.timeSeries!.channels[2], <double>[35, 36, 37, 38]);
+      expect(second.timeSeries!.channels[0], <double>[11, 12, 13, 14]);
+      expect(second.timeSeries!.channels[2], <double>[30, 30, 30, 30]);
+    },
+  );
+
   test('ICA rejection refuses incompatible sensor metadata', () async {
     final Dataset dataset = _icaDataset();
     dataset.timeSeries = TimeSeriesData(
@@ -282,7 +305,7 @@ void main() {
       input.datasetStates[dataset.id] = DatasetState.done;
       source.datasetStates[dataset.id] = DatasetState.done;
       input.datasetStates[pendingDataset.id] = DatasetState.done;
-      source.datasetStates[pendingDataset.id] = DatasetState.ready;
+      source.datasetStates[pendingDataset.id] = DatasetState.done;
       logic.connections.add(<String, dynamic>{
         'fromNode': input.id,
         'fromPort': 0,
@@ -301,7 +324,13 @@ void main() {
       expect(created, 'Created Apply ICA.');
       expect(rejection.datasetStates[dataset.id], DatasetState.ready);
       expect(rejection.params['excludedComponents'], <int>[0]);
-      expect(rejection.params['selectedDatasetIds'], <String>[dataset.id]);
+      expect(
+        rejection.params['selectedDatasetIds'],
+        unorderedEquals(<String>[dataset.id, pendingDataset.id]),
+      );
+      expect(rejection.params['excludedComponentsByDataset'], <String, dynamic>{
+        dataset.id: <int>[0],
+      });
       expect(
         logic.connections,
         contains(
@@ -340,6 +369,40 @@ void main() {
         hasLength(1),
       );
       expect(rejection.params['excludedComponents'], <int>[1, 2]);
+      expect(rejection.params['excludedComponentsByDataset'], <String, dynamic>{
+        dataset.id: <int>[1, 2],
+      });
+
+      final String secondUpdated = await logic.persistIcaComponentExclusions(
+        viewerNodeId: source.id,
+        dataset: pendingDataset,
+        excludedComponents: <int>{2},
+      );
+      expect(secondUpdated, 'Updated Apply ICA.');
+      expect(
+        logic.nodes.where(
+          (NodeModel node) => node.type is IcaComponentRejectionNodeType,
+        ),
+        hasLength(1),
+      );
+      expect(rejection.params['excludedComponentsByDataset'], <String, dynamic>{
+        dataset.id: <int>[1, 2],
+        pendingDataset.id: <int>[2],
+      });
+      expect(
+        IcaComponentRejectionNodeType.excludedComponents(
+          rejection.params,
+          datasetId: dataset.id,
+        ),
+        <int>{1, 2},
+      );
+      expect(
+        IcaComponentRejectionNodeType.excludedComponents(
+          rejection.params,
+          datasetId: pendingDataset.id,
+        ),
+        <int>{2},
+      );
     },
   );
 

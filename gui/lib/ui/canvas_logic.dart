@@ -6231,6 +6231,9 @@ class CanvasLogic {
         datasetId: dataset.id,
         params: <String, dynamic>{
           'excludedComponents': sortedExcluded,
+          'excludedComponentsByDataset': <String, List<int>>{
+            dataset.id: sortedExcluded,
+          },
           'createdByIcaViewer': true,
           'icaSourceNodeId': sourceNode.id,
         },
@@ -6247,6 +6250,27 @@ class CanvasLogic {
       );
       _connectIcaTransform(sourceNode, rejectionNode);
     } else {
+      final Map<String, dynamic> byDataset = Map<String, dynamic>.from(
+        rejectionNode.params['excludedComponentsByDataset'] as Map? ??
+            const <String, dynamic>{},
+      );
+      if (byDataset.isEmpty) {
+        final List<int> legacyExcluded =
+            (rejectionNode.params['excludedComponents'] as List<dynamic>? ??
+                    const <dynamic>[])
+                .whereType<num>()
+                .map((num value) => value.toInt())
+                .toList(growable: false);
+        for (final Object? selectedId
+            in rejectionNode.params['selectedDatasetIds'] as List<dynamic>? ??
+                const <dynamic>[]) {
+          byDataset[selectedId.toString()] = List<int>.from(legacyExcluded);
+        }
+      }
+      byDataset[dataset.id] = sortedExcluded;
+      rejectionNode.params['excludedComponentsByDataset'] = byDataset;
+      // Retain the legacy field for old project readers. New execution uses
+      // the dataset-keyed map whenever it is present.
       rejectionNode.params['excludedComponents'] = sortedExcluded;
       final DatasetState state =
           rejectionNode.datasetStates[dataset.id] ?? DatasetState.ready;
@@ -6267,6 +6291,31 @@ class CanvasLogic {
       successDetail: () =>
           '${created ? 'Created' : 'Updated'} and ran ${nodeToRun.title}.',
     );
+  }
+
+  Set<int> icaComponentExclusionsForDataset({
+    required String viewerNodeId,
+    required Dataset dataset,
+  }) {
+    final NodeModel? sourceNode = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (sourceNode == null) return const <int>{};
+    for (final NodeModel child in _immediateChildren(sourceNode.id)) {
+      if (child.type is IcaComponentRejectionNodeType &&
+          child.params['createdByIcaViewer'] == true &&
+          child.params['icaSourceNodeId'] == sourceNode.id &&
+          (child.params['selectedDatasetIds'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .contains(dataset.id)) {
+        return IcaComponentRejectionNodeType.excludedComponents(
+          child.params,
+          datasetId: dataset.id,
+        );
+      }
+    }
+    return const <int>{};
   }
 
   NodeModel? _icaDefaultSignalSourceNode(NodeModel icaNode) {
