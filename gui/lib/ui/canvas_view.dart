@@ -42,7 +42,6 @@ class _CanvasViewState extends State<CanvasView> {
   _KeyboardPane _keyboardPane = _KeyboardPane.canvas;
   Timer? _recentJobsCollapseTimer;
   bool _recentJobsCollapsed = true;
-  bool _projectActionsCollapsed = true;
   bool _datasetPanelCollapsed = false;
 
   CanvasLogic get logic => widget.logic;
@@ -443,13 +442,6 @@ class _CanvasViewState extends State<CanvasView> {
                                             return;
                                           }
                                           setState(() => logic.clearAll());
-                                        },
-                                        collapsed: _projectActionsCollapsed,
-                                        onToggleCollapsed: () {
-                                          setState(() {
-                                            _projectActionsCollapsed =
-                                                !_projectActionsCollapsed;
-                                          });
                                         },
                                         update: () => setState(() {}),
                                       ),

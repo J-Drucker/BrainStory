@@ -424,7 +424,7 @@ void main() {
     );
   });
 
-  testWidgets('right rail hides datasets and keeps project below them', (
+  testWidgets('right rail keeps project open below the dataset panel', (
     WidgetTester tester,
   ) async {
     final CanvasLogic logic = CanvasLogic();
@@ -437,6 +437,7 @@ void main() {
 
     expect(find.text('Datasets'), findsOneWidget);
     expect(find.text('Project'), findsOneWidget);
+    expect(find.text('Publish'), findsOneWidget);
     expect(
       tester.getCenter(find.text('Project')).dy,
       greaterThan(tester.getCenter(find.text('Datasets')).dy),
@@ -1338,8 +1339,6 @@ void main() {
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Datasets'));
-      await tester.pumpAndSettle();
       expect(find.text('Unselect all'), findsOneWidget);
       await tester.tap(find.text('Unselect all'));
       await tester.pumpAndSettle();

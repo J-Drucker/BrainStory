@@ -789,8 +789,6 @@ class _ProcessingActionControlState extends State<_ProcessingActionControl> {
 
 class _ProjectActionsMenu extends StatelessWidget {
   const _ProjectActionsMenu({
-    required this.collapsed,
-    required this.onToggleCollapsed,
     required this.publish,
     required this.memory,
     required this.export,
@@ -800,8 +798,6 @@ class _ProjectActionsMenu extends StatelessWidget {
     required this.onProcessingResponsivenessChanged,
   });
 
-  final bool collapsed;
-  final VoidCallback onToggleCollapsed;
   final VoidCallback publish;
   final VoidCallback memory;
   final VoidCallback export;
@@ -823,89 +819,69 @@ class _ProjectActionsMenu extends StatelessWidget {
             thickness: 1,
             color: Colors.white.withValues(alpha: 0.18),
           ),
-          InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: onToggleCollapsed,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-              ),
-              child: Row(
-                children: <Widget>[
-                  Icon(
-                    collapsed ? Icons.chevron_right : Icons.expand_more,
-                    color: Colors.white70,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Project',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+            ),
+            child: const Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Project',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const Icon(Icons.more_horiz, color: Colors.white54, size: 18),
-                ],
-              ),
+                ),
+                Icon(Icons.more_horiz, color: Colors.white54, size: 18),
+              ],
             ),
           ),
-          AnimatedCrossFade(
-            duration: const Duration(milliseconds: 140),
-            firstCurve: Curves.easeOut,
-            secondCurve: Curves.easeOut,
-            sizeCurve: Curves.easeOut,
-            crossFadeState: collapsed
-                ? CrossFadeState.showFirst
-                : CrossFadeState.showSecond,
-            firstChild: const SizedBox(width: double.infinity),
-            secondChild: Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  _ProjectActionButton(
-                    label: 'Publish',
-                    icon: Icons.upload,
-                    onPressed: publish,
-                  ),
-                  const SizedBox(height: 10),
-                  _ProjectActionButton(
-                    label: 'Memory',
-                    icon: Icons.memory,
-                    onPressed: memory,
-                  ),
-                  const SizedBox(height: 10),
-                  _ProcessingActionControl(
-                    value: processingResponsiveness,
-                    onChanged: onProcessingResponsivenessChanged,
-                  ),
-                  const SizedBox(height: 10),
-                  _ProjectActionButton(
-                    label: 'Load BrainStory',
-                    icon: Icons.folder_open,
-                    onPressed: load,
-                  ),
-                  const SizedBox(height: 10),
-                  _ProjectActionButton(
-                    label: 'Export BrainStory',
-                    icon: Icons.save_alt,
-                    onPressed: export,
-                  ),
-                  const SizedBox(height: 10),
-                  _ProjectActionButton(
-                    label: 'Clear All',
-                    icon: Icons.delete_outline,
-                    onPressed: clear,
-                  ),
-                ],
-              ),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                _ProjectActionButton(
+                  label: 'Publish',
+                  icon: Icons.upload,
+                  onPressed: publish,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Memory',
+                  icon: Icons.memory,
+                  onPressed: memory,
+                ),
+                const SizedBox(height: 10),
+                _ProcessingActionControl(
+                  value: processingResponsiveness,
+                  onChanged: onProcessingResponsivenessChanged,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Load BrainStory',
+                  icon: Icons.folder_open,
+                  onPressed: load,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Export BrainStory',
+                  icon: Icons.save_alt,
+                  onPressed: export,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Clear All',
+                  icon: Icons.delete_outline,
+                  onPressed: clear,
+                ),
+              ],
             ),
           ),
         ],
@@ -2429,8 +2405,6 @@ class CanvasLogic {
     required VoidCallback export,
     required VoidCallback load,
     required VoidCallback clear,
-    required bool collapsed,
-    required VoidCallback onToggleCollapsed,
     required VoidCallback update,
   }) {
     return ColoredBox(
@@ -2438,8 +2412,6 @@ class CanvasLogic {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 20),
         child: _ProjectActionsMenu(
-          collapsed: collapsed,
-          onToggleCollapsed: onToggleCollapsed,
           publish: publish,
           memory: memory,
           export: export,

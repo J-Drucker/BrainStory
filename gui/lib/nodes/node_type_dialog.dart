@@ -907,7 +907,7 @@ class _StatusIndicator extends StatelessWidget {
   }
 }
 
-class _DatasetControlSection extends StatefulWidget {
+class _DatasetControlSection extends StatelessWidget {
   const _DatasetControlSection({
     required this.datasets,
     required this.selectedDatasetIds,
@@ -925,27 +925,20 @@ class _DatasetControlSection extends StatefulWidget {
   final ValueChanged<Set<String>> onChanged;
 
   @override
-  State<_DatasetControlSection> createState() => _DatasetControlSectionState();
-}
-
-class _DatasetControlSectionState extends State<_DatasetControlSection> {
-  bool _expanded = false;
-
-  @override
   Widget build(BuildContext context) {
-    if (widget.datasets.isEmpty) {
+    if (datasets.isEmpty) {
       return const Text('No datasets opened yet.');
     }
 
     final bool allChecked =
-        widget.datasets.isNotEmpty &&
-        widget.datasets.every((MapEntry<String, Dataset> entry) {
-          return widget.selectedDatasetIds.contains(entry.value.id);
+        datasets.isNotEmpty &&
+        datasets.every((MapEntry<String, Dataset> entry) {
+          return selectedDatasetIds.contains(entry.value.id);
         });
-    final int selectedCount = widget.datasets
+    final int selectedCount = datasets
         .where(
           (MapEntry<String, Dataset> entry) =>
-              widget.selectedDatasetIds.contains(entry.value.id),
+              selectedDatasetIds.contains(entry.value.id),
         )
         .length;
     return DecoratedBox(
@@ -959,103 +952,77 @@ class _DatasetControlSectionState extends State<_DatasetControlSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () {
-                setState(() {
-                  _expanded = !_expanded;
-                });
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      _expanded ? Icons.expand_more : Icons.chevron_right,
-                      size: 20,
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: <Widget>[
+                  const Text(
+                    'Datasets',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$selectedCount/${datasets.length}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'Datasets',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '$selectedCount/${widget.datasets.length}',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurface,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-            if (_expanded) ...<Widget>[
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () {
-                  widget.onChanged(
-                    allChecked
-                        ? <String>{}
-                        : widget.datasets
-                              .map(
-                                (MapEntry<String, Dataset> entry) =>
-                                    entry.value.id,
-                              )
-                              .toSet(),
-                  );
-                },
-                child: Text(allChecked ? 'Unselect all' : 'Select all'),
-              ),
-              const SizedBox(height: 10),
-              const _DatasetControlHeader(),
-              const SizedBox(height: 6),
-              for (
-                int index = 0;
-                index < widget.datasets.length;
-                index++
-              ) ...<Widget>[
-                if (index > 0) const Divider(height: 14),
-                _DatasetControlRow(
-                  dataset: widget.datasets[index].value,
-                  selected: widget.selectedDatasetIds.contains(
-                    widget.datasets[index].value.id,
-                  ),
-                  sourceLabels:
-                      widget.datasetSourceLabels[widget
-                          .datasets[index]
-                          .value
-                          .id] ??
-                      const <String>[],
-                  processingState:
-                      widget.statusSnapshot.processedDatasetStates[widget
-                          .datasets[index]
-                          .value
-                          .id] ??
-                      DatasetState.notReady,
-                  ramLoaded: widget.statusSnapshot.ramLoadedDatasetIds.contains(
-                    widget.datasets[index].value.id,
-                  ),
-                  diskSaved: widget.statusSnapshot.diskSavedDatasetIds.contains(
-                    widget.datasets[index].value.id,
-                  ),
-                  onDatasetNamePressed: () => widget.onDatasetNamePressed(
-                    widget.datasets[index].value.id,
-                  ),
-                  onCheckedChanged: (bool checked) {
-                    final Set<String> nextSelection = Set<String>.from(
-                      widget.selectedDatasetIds,
-                    );
-                    if (checked) {
-                      nextSelection.add(widget.datasets[index].value.id);
-                    } else {
-                      nextSelection.remove(widget.datasets[index].value.id);
-                    }
-                    widget.onChanged(nextSelection);
-                  },
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () {
+                onChanged(
+                  allChecked
+                      ? <String>{}
+                      : datasets
+                            .map(
+                              (MapEntry<String, Dataset> entry) =>
+                                  entry.value.id,
+                            )
+                            .toSet(),
+                );
+              },
+              child: Text(allChecked ? 'Unselect all' : 'Select all'),
+            ),
+            const SizedBox(height: 10),
+            const _DatasetControlHeader(),
+            const SizedBox(height: 6),
+            for (int index = 0; index < datasets.length; index++) ...<Widget>[
+              if (index > 0) const Divider(height: 14),
+              _DatasetControlRow(
+                dataset: datasets[index].value,
+                selected: selectedDatasetIds.contains(datasets[index].value.id),
+                sourceLabels:
+                    datasetSourceLabels[datasets[index].value.id] ??
+                    const <String>[],
+                processingState:
+                    statusSnapshot.processedDatasetStates[datasets[index]
+                        .value
+                        .id] ??
+                    DatasetState.notReady,
+                ramLoaded: statusSnapshot.ramLoadedDatasetIds.contains(
+                  datasets[index].value.id,
                 ),
-              ],
+                diskSaved: statusSnapshot.diskSavedDatasetIds.contains(
+                  datasets[index].value.id,
+                ),
+                onDatasetNamePressed: () =>
+                    onDatasetNamePressed(datasets[index].value.id),
+                onCheckedChanged: (bool checked) {
+                  final Set<String> nextSelection = Set<String>.from(
+                    selectedDatasetIds,
+                  );
+                  if (checked) {
+                    nextSelection.add(datasets[index].value.id);
+                  } else {
+                    nextSelection.remove(datasets[index].value.id);
+                  }
+                  onChanged(nextSelection);
+                },
+              ),
             ],
           ],
         ),
