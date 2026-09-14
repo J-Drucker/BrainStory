@@ -4313,7 +4313,9 @@ _SegmentPanelConfig _buildConditionDifferencePanelConfig({
     return _buildSegmentAggregatePlotData(<_SegmentAggregateSeriesInput>[
       _SegmentAggregateSeriesInput(
         traces: differenceForChannel(channelIndex),
-        lineColor: first.color,
+        lineColor:
+            rawSignalChannelPalette[channelIndex %
+                rawSignalChannelPalette.length],
         fillColor: Colors.transparent,
         showSpread: false,
       ),
@@ -4367,7 +4369,7 @@ _SegmentPanelConfig _buildConditionDifferencePanelConfig({
             baselineStopMs: baselineStopMs,
           ),
         ),
-        lineColor: first.color,
+        lineColor: rawSignalChannelPalette.first,
         fillColor: Colors.transparent,
         showSpread: false,
       ),
@@ -4379,7 +4381,7 @@ _SegmentPanelConfig _buildConditionDifferencePanelConfig({
     key: 'condition-difference',
     title: '${first.label} - ${second.label}',
     subtitle: 'Difference wave',
-    accentColor: first.color,
+    accentColor: rawSignalChannelPalette.first,
     rowSpecs: <_SegmentRowSpec>[
       _SegmentRowSpec(
         key: 'condition-difference:plot',
