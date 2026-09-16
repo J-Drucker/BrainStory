@@ -621,6 +621,26 @@ class _MetadataDialogBody extends StatelessWidget {
       );
     }
 
+    final GaussianMixtureData? gaussianMixture = dataset.gaussianMixture;
+    if (gaussianMixture != null) {
+      rows.add(
+        _metadataRow(
+          'Gaussian mixture',
+          '${gaussianMixture.componentCount} component(s), '
+              '${gaussianMixture.rowCount} row(s), '
+              '${gaussianMixture.converged ? 'converged' : 'not converged'} '
+              'after ${gaussianMixture.iterationCount} iteration(s)',
+        ),
+      );
+      rows.add(
+        _metadataRow(
+          'Model selection',
+          'AIC ${gaussianMixture.aic.toStringAsFixed(2)}, '
+              'BIC ${gaussianMixture.bic.toStringAsFixed(2)}',
+        ),
+      );
+    }
+
     final BridgeDetectionData? bridgeDetection = dataset.bridgeDetection;
     if (bridgeDetection != null) {
       rows.add(

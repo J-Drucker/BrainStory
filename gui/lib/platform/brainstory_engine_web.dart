@@ -116,3 +116,27 @@ NativeWaveletResult? computeWaveletNative(
         as Map,
   ),
 );
+
+NativeGaussianMixtureResult? computeGaussianMixtureNative(
+  List<List<double>> rows, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required double regularization,
+  required bool standardize,
+  required int seed,
+}) => NativeGaussianMixtureResult.fromJson(
+  Map<String, dynamic>.from(
+    _execute(<String, dynamic>{
+          'operation': 'gaussianMixture',
+          'rows': rows,
+          'components': componentCount,
+          'tolerance': tolerance,
+          'iterations': maxIterations,
+          'regularization': regularization,
+          'standardize': standardize,
+          'seed': seed,
+        })
+        as Map,
+  ),
+);

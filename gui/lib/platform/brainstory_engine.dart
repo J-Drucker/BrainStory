@@ -126,6 +126,60 @@ Future<NativeWaveletResult?> computeWaveletBackground(
   );
 }
 
+Future<NativeGaussianMixtureResult?> computeGaussianMixtureBackground(
+  List<List<double>> rows, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required double regularization,
+  required bool standardize,
+  required int seed,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'gaussianMixture',
+    'rows': rows,
+    'components': componentCount,
+    'tolerance': tolerance,
+    'iterations': maxIterations,
+    'regularization': regularization,
+    'standardize': standardize,
+    'seed': seed,
+  });
+  if (result is NativeGaussianMixtureResult) return result;
+  if (result != null) {
+    return NativeGaussianMixtureResult.fromJson(
+      Map<String, dynamic>.from(result as Map),
+    );
+  }
+  return computeGaussianMixtureNative(
+    rows,
+    componentCount: componentCount,
+    tolerance: tolerance,
+    maxIterations: maxIterations,
+    regularization: regularization,
+    standardize: standardize,
+    seed: seed,
+  );
+}
+
+NativeGaussianMixtureResult? computeGaussianMixtureNative(
+  List<List<double>> rows, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required double regularization,
+  required bool standardize,
+  required int seed,
+}) => impl.computeGaussianMixtureNative(
+  rows,
+  componentCount: componentCount,
+  tolerance: tolerance,
+  maxIterations: maxIterations,
+  regularization: regularization,
+  standardize: standardize,
+  seed: seed,
+);
+
 NativeWaveletResult? computeWaveletNative(
   List<double> samples, {
   required double sampleRate,

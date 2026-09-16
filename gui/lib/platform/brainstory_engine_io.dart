@@ -130,6 +130,31 @@ typedef _WaveletDart =
       double cycles,
     );
 
+typedef _GaussianMixtureNative =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> rows,
+      ffi.IntPtr rowCount,
+      ffi.IntPtr featureCount,
+      ffi.IntPtr componentCount,
+      ffi.Double tolerance,
+      ffi.IntPtr maxIterations,
+      ffi.Double regularization,
+      ffi.Int32 standardize,
+      ffi.Uint64 seed,
+    );
+typedef _GaussianMixtureDart =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> rows,
+      int rowCount,
+      int featureCount,
+      int componentCount,
+      double tolerance,
+      int maxIterations,
+      double regularization,
+      int standardize,
+      int seed,
+    );
+
 typedef _ApplyIcaNative =
     ffi.Int32 Function(
       ffi.Pointer<ffi.Double> samples,
@@ -153,6 +178,68 @@ typedef _ApplyIcaDart =
 
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
+
+NativeGaussianMixtureResult? computeGaussianMixtureNative(
+  List<List<double>> rows, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required double regularization,
+  required bool standardize,
+  required int seed,
+}) {
+  if (rows.isEmpty || rows.first.isEmpty) {
+    throw ArgumentError('Gaussian mixture requires a non-empty feature table.');
+  }
+  final int featureCount = rows.first.length;
+  if (rows.any((List<double> row) => row.length != featureCount)) {
+    throw ArgumentError('Gaussian mixture rows must have equal lengths.');
+  }
+  final _GaussianMixtureDart? fit = _engineLibrary.gaussianMixture;
+  if (fit == null || _nativeMemory.unavailable) return null;
+  final int valueCount = rows.length * featureCount;
+  final ffi.Pointer<ffi.Double> rowsPtr = _nativeMemory.callocDouble(
+    valueCount,
+  );
+  try {
+    int offset = 0;
+    for (final List<double> row in rows) {
+      rowsPtr
+          .asTypedList(valueCount)
+          .setRange(offset, offset + featureCount, row);
+      offset += featureCount;
+    }
+    final ffi.Pointer<ffi.Uint8> resultPointer = fit(
+      rowsPtr,
+      rows.length,
+      featureCount,
+      componentCount,
+      tolerance,
+      maxIterations,
+      regularization,
+      standardize ? 1 : 0,
+      seed,
+    );
+    if (resultPointer == ffi.nullptr) return null;
+    try {
+      final Map<String, dynamic> response = Map<String, dynamic>.from(
+        jsonDecode(_decodeNativeString(resultPointer)) as Map,
+      );
+      if (response['ok'] != true) {
+        throw StateError(
+          response['error']?.toString() ?? 'Gaussian mixture failed.',
+        );
+      }
+      return NativeGaussianMixtureResult.fromJson(
+        Map<String, dynamic>.from(response['result'] as Map),
+      );
+    } finally {
+      _engineLibrary.freeString(resultPointer);
+    }
+  } finally {
+    _nativeMemory.free(rowsPtr.cast<ffi.Void>());
+  }
+}
 
 NativeWaveletResult? computeWaveletNative(
   List<double> samples, {
@@ -615,6 +702,19 @@ class _BrainstoryEngineLibrary {
   _BrainstoryEngineLibrary() : _library = _tryLoadLibrary();
 
   final ffi.DynamicLibrary? _library;
+
+  _GaussianMixtureDart? get gaussianMixture {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) return null;
+    try {
+      return library
+          .lookupFunction<_GaussianMixtureNative, _GaussianMixtureDart>(
+            'brainstory_gaussian_mixture',
+          );
+    } catch (_) {
+      return null;
+    }
+  }
 
   _WaveletDart? get wavelet {
     final ffi.DynamicLibrary? library = _library;

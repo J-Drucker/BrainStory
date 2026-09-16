@@ -3,6 +3,7 @@ use std::os::raw::c_char;
 use std::slice;
 
 use crate::filtering::bandpass_filter;
+use crate::gaussian_mixture::fit_gaussian_mixture;
 use crate::ica::{apply_unmixing_flat_into, fast_ica, fit_fast_ica};
 use crate::spectrum::single_sided_spectrum;
 use crate::wavelet::morlet_power;
@@ -10,6 +11,45 @@ use serde_json::json;
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
+
+#[no_mangle]
+pub extern "C" fn brainstory_gaussian_mixture(
+    samples_ptr: *const f64,
+    row_count: usize,
+    feature_count: usize,
+    component_count: usize,
+    tolerance: f64,
+    max_iterations: usize,
+    regularization: f64,
+    standardize: i32,
+    seed: u64,
+) -> *mut c_char {
+    let result = if samples_ptr.is_null() || row_count == 0 || feature_count == 0 {
+        None
+    } else {
+        let flat = unsafe { slice::from_raw_parts(samples_ptr, row_count * feature_count) };
+        let rows: Vec<Vec<f64>> = flat
+            .chunks_exact(feature_count)
+            .map(|row| row.to_vec())
+            .collect();
+        fit_gaussian_mixture(
+            &rows,
+            component_count,
+            tolerance,
+            max_iterations,
+            regularization,
+            standardize != 0,
+            seed,
+        )
+    };
+    let payload = match result {
+        Some(result) => json!({"ok": true, "result": result}),
+        None => json!({"ok": false, "error": "Invalid Gaussian mixture input."}),
+    };
+    CString::new(payload.to_string())
+        .expect("JSON cannot contain NUL bytes")
+        .into_raw()
+}
 
 #[no_mangle]
 pub extern "C" fn brainstory_morlet_wavelet(
@@ -287,8 +327,8 @@ pub extern "C" fn brainstory_segment_mean_sd(
 mod tests {
     use super::{
         brainstory_apply_ica, brainstory_bandpass_filter, brainstory_fast_ica,
-        brainstory_fast_ica_fit, brainstory_morlet_wavelet, brainstory_segment_mean_sd,
-        brainstory_single_sided_spectrum, STATUS_OK,
+        brainstory_fast_ica_fit, brainstory_gaussian_mixture, brainstory_morlet_wavelet,
+        brainstory_segment_mean_sd, brainstory_single_sided_spectrum, STATUS_OK,
     };
     use crate::ant_cnt::brainstory_engine_free_string;
     use std::ffi::CStr;
@@ -370,6 +410,23 @@ mod tests {
         assert_eq!(value["result"]["frequencies"].as_array().unwrap().len(), 9);
         assert_eq!(value["result"]["times"].as_array().unwrap().len(), 41);
         assert_eq!(value["result"]["powerMatrix"].as_array().unwrap().len(), 9);
+    }
+
+    #[test]
+    fn fits_gaussian_mixture_through_the_c_api() {
+        let rows = [-3.0_f64, -2.9, -3.1, -3.0, 4.0, 4.1, 3.9, 4.0];
+        let pointer =
+            brainstory_gaussian_mixture(rows.as_ptr(), 4, 2, 2, 1.0e-6, 200, 1.0e-6, 1, 42);
+
+        assert!(!pointer.is_null());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        brainstory_engine_free_string(pointer);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["result"]["assignments"].as_array().unwrap().len(), 4);
+        assert_eq!(value["result"]["means"].as_array().unwrap().len(), 2);
     }
 
     #[test]

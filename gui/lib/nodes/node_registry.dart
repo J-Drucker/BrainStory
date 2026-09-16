@@ -6,6 +6,7 @@ import 'edit_channels_node.dart';
 import 'edit_channels_and_markers_node.dart';
 import 'bandpass_node.dart';
 import 'fooof_node.dart';
+import 'gaussian_mixture_node.dart';
 import 'impedances_node.dart';
 import 'ica_component_rejection_node.dart';
 import 'machine_learning_nodes.dart';
@@ -158,6 +159,10 @@ class NodeRegistry {
     ),
 
     // Machine learning
+    NodeRegistryEntry(
+      group: NodeGroup.machineLearning,
+      create: () => GaussianMixtureNodeType(),
+    ),
     NodeRegistryEntry(
       group: NodeGroup.machineLearning,
       create: () => KMeansNodeType(),

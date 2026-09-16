@@ -1,5 +1,7 @@
 #[path = "../../src/filtering.rs"]
 mod filtering;
+#[path = "../../src/gaussian_mixture.rs"]
+mod gaussian_mixture;
 #[path = "../../src/ica.rs"]
 mod ica;
 #[path = "../../src/spectrum.rs"]
@@ -36,6 +38,15 @@ enum Request {
         frequencies: usize,
         times: usize,
         cycles: f64,
+    },
+    GaussianMixture {
+        rows: Vec<Vec<f64>>,
+        components: usize,
+        tolerance: f64,
+        iterations: usize,
+        regularization: f64,
+        standardize: bool,
+        seed: u64,
     },
     Ica {
         channels: Vec<Vec<f64>>,
@@ -90,6 +101,25 @@ fn execute(request: Request) -> Result<Value, String> {
         )
         .and_then(|value| serde_json::to_value(value).ok())
         .ok_or("Invalid Morlet wavelet input".into()),
+        Request::GaussianMixture {
+            rows,
+            components,
+            tolerance,
+            iterations,
+            regularization,
+            standardize,
+            seed,
+        } => gaussian_mixture::fit_gaussian_mixture(
+            &rows,
+            components,
+            tolerance,
+            iterations,
+            regularization,
+            standardize,
+            seed,
+        )
+        .and_then(|value| serde_json::to_value(value).ok())
+        .ok_or("Invalid Gaussian mixture input".into()),
         Request::Ica {
             channels,
             components,

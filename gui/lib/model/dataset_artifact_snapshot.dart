@@ -9,6 +9,7 @@ class DatasetArtifactSnapshot {
     this.spectrum,
     this.fooofResult,
     this.featureTable,
+    this.gaussianMixture,
     this.bridgeDetection,
     this.timeFrequency,
     this.matrixTransformation,
@@ -24,6 +25,7 @@ class DatasetArtifactSnapshot {
   final FrequencySpectrumData? spectrum;
   final FooofResultData? fooofResult;
   final FeatureTableData? featureTable;
+  final GaussianMixtureData? gaussianMixture;
   final BridgeDetectionData? bridgeDetection;
   final TimeFrequencyData? timeFrequency;
   final MatrixTransformationData? matrixTransformation;
@@ -41,6 +43,7 @@ class DatasetArtifactSnapshot {
       spectrum == null &&
       fooofResult == null &&
       featureTable == null &&
+      gaussianMixture == null &&
       bridgeDetection == null &&
       timeFrequency == null &&
       matrixTransformation == null &&
@@ -92,6 +95,12 @@ class DatasetArtifactSnapshot {
               dataset.featureTable == null
           ? null
           : FeatureTableData.fromJson(dataset.featureTable!.toJson()),
+      gaussianMixture:
+          (kinds != null &&
+                  !kinds.contains(BrainStoryArtifactKind.gaussianMixture)) ||
+              dataset.gaussianMixture == null
+          ? null
+          : GaussianMixtureData.fromJson(dataset.gaussianMixture!.toJson()),
       bridgeDetection:
           (kinds != null &&
                   !kinds.contains(BrainStoryArtifactKind.bridgeDetection)) ||
@@ -160,6 +169,11 @@ class DatasetArtifactSnapshot {
           ? null
           : FeatureTableData.fromJson(featureTable!.toJson());
     }
+    if (ownsKind(BrainStoryArtifactKind.gaussianMixture)) {
+      dataset.gaussianMixture = gaussianMixture == null
+          ? null
+          : GaussianMixtureData.fromJson(gaussianMixture!.toJson());
+    }
     if (ownsKind(BrainStoryArtifactKind.bridgeDetection)) {
       dataset.bridgeDetection = bridgeDetection == null
           ? null
@@ -213,6 +227,7 @@ class DatasetArtifactSnapshot {
       if (spectrum != null) 'spectrum': spectrum!.toJson(),
       if (fooofResult != null) 'fooofResult': fooofResult!.toJson(),
       if (featureTable != null) 'featureTable': featureTable!.toJson(),
+      if (gaussianMixture != null) 'gaussianMixture': gaussianMixture!.toJson(),
       if (bridgeDetection != null) 'bridgeDetection': bridgeDetection!.toJson(),
       if (timeFrequency != null) 'timeFrequency': timeFrequency!.toJson(),
       if (matrixTransformation != null)
@@ -257,6 +272,11 @@ class DatasetArtifactSnapshot {
       featureTable: json['featureTable'] is Map<String, dynamic>
           ? FeatureTableData.fromJson(
               json['featureTable'] as Map<String, dynamic>,
+            )
+          : null,
+      gaussianMixture: json['gaussianMixture'] is Map<String, dynamic>
+          ? GaussianMixtureData.fromJson(
+              json['gaussianMixture'] as Map<String, dynamic>,
             )
           : null,
       bridgeDetection: json['bridgeDetection'] is Map<String, dynamic>
@@ -319,6 +339,7 @@ class DatasetArtifactSnapshot {
       spectrum: spectrum,
       fooofResult: fooofResult,
       featureTable: featureTable,
+      gaussianMixture: gaussianMixture,
       bridgeDetection: bridgeDetection,
       timeFrequency: timeFrequency,
       matrixTransformation: matrixTransformation,

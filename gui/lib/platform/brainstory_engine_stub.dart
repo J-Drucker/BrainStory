@@ -44,3 +44,13 @@ NativeWaveletResult? computeWaveletNative(
   required int timeCount,
   required double cycles,
 }) => null;
+
+NativeGaussianMixtureResult? computeGaussianMixtureNative(
+  List<List<double>> rows, {
+  required int componentCount,
+  required double tolerance,
+  required int maxIterations,
+  required double regularization,
+  required bool standardize,
+  required int seed,
+}) => null;

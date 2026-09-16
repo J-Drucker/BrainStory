@@ -161,6 +161,17 @@ class Dataset {
     ram['featureTable.csv'] = value.toCsv();
   }
 
+  GaussianMixtureData? get gaussianMixture =>
+      ram['artifact.gaussianMixture'] as GaussianMixtureData?;
+  set gaussianMixture(GaussianMixtureData? value) {
+    if (value == null) {
+      ram.remove('artifact.gaussianMixture');
+      clearArtifactIdentity(BrainStoryArtifactKind.gaussianMixture);
+      return;
+    }
+    ram['artifact.gaussianMixture'] = value;
+  }
+
   BridgeDetectionData? get bridgeDetection =>
       ram['artifact.bridgeDetection'] as BridgeDetectionData?;
   set bridgeDetection(BridgeDetectionData? value) {

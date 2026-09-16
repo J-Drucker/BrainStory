@@ -13,6 +13,7 @@ enum BrainStoryArtifactKind {
   spectrum,
   fooofResult,
   featureTable,
+  gaussianMixture,
   bridgeDetection,
   timeFrequency,
   matrixTransformation,
@@ -1282,6 +1283,97 @@ class FeatureTableData {
             ),
           )
           .toList(growable: false),
+      source: json['source']?.toString() ?? '',
+    );
+  }
+}
+
+class GaussianMixtureData {
+  const GaussianMixtureData({
+    required this.featureColumns,
+    required this.assignments,
+    required this.probabilities,
+    required this.weights,
+    required this.means,
+    required this.variances,
+    required this.converged,
+    required this.iterationCount,
+    required this.logLikelihood,
+    required this.aic,
+    required this.bic,
+    required this.standardized,
+    required this.normalizationMean,
+    required this.normalizationScale,
+    this.source = '',
+  });
+
+  final List<String> featureColumns;
+  final List<int> assignments;
+  final List<List<double>> probabilities;
+  final List<double> weights;
+  final List<List<double>> means;
+  final List<List<double>> variances;
+  final bool converged;
+  final int iterationCount;
+  final double logLikelihood;
+  final double aic;
+  final double bic;
+  final bool standardized;
+  final List<double> normalizationMean;
+  final List<double> normalizationScale;
+  final String source;
+
+  int get componentCount => weights.length;
+  int get rowCount => assignments.length;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'featureColumns': featureColumns,
+    'assignments': assignments,
+    'probabilities': probabilities,
+    'weights': weights,
+    'means': means,
+    'variances': variances,
+    'converged': converged,
+    'iterationCount': iterationCount,
+    'logLikelihood': logLikelihood,
+    'aic': aic,
+    'bic': bic,
+    'standardized': standardized,
+    'normalizationMean': normalizationMean,
+    'normalizationScale': normalizationScale,
+    'source': source,
+  };
+
+  static GaussianMixtureData fromJson(Map<String, dynamic> json) {
+    List<double> vector(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic item) => (item as num).toDouble())
+            .toList(growable: false);
+    List<List<double>> matrix(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map(vector)
+            .toList(growable: false);
+
+    return GaussianMixtureData(
+      featureColumns:
+          (json['featureColumns'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      assignments: (json['assignments'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => (value as num).toInt())
+          .toList(growable: false),
+      probabilities: matrix(json['probabilities']),
+      weights: vector(json['weights']),
+      means: matrix(json['means']),
+      variances: matrix(json['variances']),
+      converged: json['converged'] == true,
+      iterationCount: (json['iterationCount'] as num?)?.toInt() ?? 0,
+      logLikelihood: (json['logLikelihood'] as num?)?.toDouble() ?? 0.0,
+      aic: (json['aic'] as num?)?.toDouble() ?? 0.0,
+      bic: (json['bic'] as num?)?.toDouble() ?? 0.0,
+      standardized: json['standardized'] == true,
+      normalizationMean: vector(json['normalizationMean']),
+      normalizationScale: vector(json['normalizationScale']),
       source: json['source']?.toString() ?? '',
     );
   }

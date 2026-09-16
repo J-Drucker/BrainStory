@@ -6850,6 +6850,9 @@ class CanvasLogic {
         case BrainStoryArtifactKind.featureTable:
           dataset.featureTable = null;
           break;
+        case BrainStoryArtifactKind.gaussianMixture:
+          dataset.gaussianMixture = null;
+          break;
         case BrainStoryArtifactKind.bridgeDetection:
           dataset.bridgeDetection = null;
           break;
@@ -6965,6 +6968,13 @@ class CanvasLogic {
           if (outputName.contains('segment') &&
               dataset.segmentedTimeSeries != null) {
             kinds.add(BrainStoryArtifactKind.segmentedTimeSeries);
+          } else if ((outputName.contains('gaussian') ||
+                  outputName.contains('mixture')) &&
+              dataset.gaussianMixture != null) {
+            kinds.add(BrainStoryArtifactKind.gaussianMixture);
+          } else if (outputName.contains('table') &&
+              dataset.featureTable != null) {
+            kinds.add(BrainStoryArtifactKind.featureTable);
           } else if (dataset.fooofResult != null) {
             kinds.add(BrainStoryArtifactKind.fooofResult);
           } else if (dataset.featureTable != null) {
@@ -6998,6 +7008,8 @@ class CanvasLogic {
       if (dataset.spectrum != null) BrainStoryArtifactKind.spectrum,
       if (dataset.fooofResult != null) BrainStoryArtifactKind.fooofResult,
       if (dataset.featureTable != null) BrainStoryArtifactKind.featureTable,
+      if (dataset.gaussianMixture != null)
+        BrainStoryArtifactKind.gaussianMixture,
       if (dataset.bridgeDetection != null)
         BrainStoryArtifactKind.bridgeDetection,
       if (dataset.timeFrequency != null) BrainStoryArtifactKind.timeFrequency,
@@ -7037,6 +7049,13 @@ class CanvasLogic {
           if (outputName.contains('segment') &&
               snapshot.segmentedTimeSeries != null) {
             kinds.add(BrainStoryArtifactKind.segmentedTimeSeries);
+          } else if ((outputName.contains('gaussian') ||
+                  outputName.contains('mixture')) &&
+              snapshot.gaussianMixture != null) {
+            kinds.add(BrainStoryArtifactKind.gaussianMixture);
+          } else if (outputName.contains('table') &&
+              snapshot.featureTable != null) {
+            kinds.add(BrainStoryArtifactKind.featureTable);
           } else if (snapshot.fooofResult != null) {
             kinds.add(BrainStoryArtifactKind.fooofResult);
           } else if (snapshot.featureTable != null) {
@@ -7246,6 +7265,7 @@ class CanvasLogic {
         case BrainStoryArtifactKind.timeFrequency:
         case BrainStoryArtifactKind.matrixTransformation:
         case BrainStoryArtifactKind.channelCoordinates:
+        case BrainStoryArtifactKind.gaussianMixture:
           return true;
         case BrainStoryArtifactKind.markers:
         case BrainStoryArtifactKind.markerChange:
@@ -7813,6 +7833,8 @@ class CanvasLogic {
                   BrainStoryArtifactKind.fooofResult,
                 if (snapshot.featureTable != null)
                   BrainStoryArtifactKind.featureTable,
+                if (snapshot.gaussianMixture != null)
+                  BrainStoryArtifactKind.gaussianMixture,
                 if (snapshot.bridgeDetection != null)
                   BrainStoryArtifactKind.bridgeDetection,
                 if (snapshot.timeFrequency != null)
@@ -7829,6 +7851,7 @@ class CanvasLogic {
       spectrum: snapshot.spectrum,
       fooofResult: snapshot.fooofResult,
       featureTable: snapshot.featureTable,
+      gaussianMixture: snapshot.gaussianMixture,
       bridgeDetection: snapshot.bridgeDetection,
       timeFrequency: snapshot.timeFrequency,
       matrixTransformation: snapshot.matrixTransformation,
@@ -7901,6 +7924,9 @@ class CanvasLogic {
           : null,
       featureTable: kinds.contains(BrainStoryArtifactKind.featureTable)
           ? snapshot.featureTable
+          : null,
+      gaussianMixture: kinds.contains(BrainStoryArtifactKind.gaussianMixture)
+          ? snapshot.gaussianMixture
           : null,
       bridgeDetection: kinds.contains(BrainStoryArtifactKind.bridgeDetection)
           ? snapshot.bridgeDetection

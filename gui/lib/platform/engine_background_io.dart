@@ -5,6 +5,8 @@ import 'brainstory_engine_io.dart' as native;
 
 Future<dynamic> executeBrowserEngine(Map<String, dynamic> request) async {
   switch (request['operation']) {
+    case 'gaussianMixture':
+      return _gaussianMixture(request);
     case 'wavelet':
       return _wavelet(request);
     case 'ica':
@@ -14,6 +16,39 @@ Future<dynamic> executeBrowserEngine(Map<String, dynamic> request) async {
     default:
       return null;
   }
+}
+
+Future<dynamic> _gaussianMixture(Map<String, dynamic> request) async {
+  final List<List<double>> rows = _matrix(request['rows']);
+  if (rows.isEmpty || rows.first.isEmpty) return null;
+  final int featureCount = rows.first.length;
+  final TransferableTypedData transferred = _transferMatrix(rows, featureCount);
+  final int rowCount = rows.length;
+  final int componentCount = (request['components'] as num).toInt();
+  final double tolerance = (request['tolerance'] as num).toDouble();
+  final int maxIterations = (request['iterations'] as num).toInt();
+  final double regularization = (request['regularization'] as num).toDouble();
+  final bool standardize = request['standardize'] == true;
+  final int seed = (request['seed'] as num).toInt();
+  return Isolate.run(() {
+    final Float64List flat = _materializeDoubles(transferred);
+    final List<List<double>> materialized = List<List<double>>.generate(
+      rowCount,
+      (int row) => flat
+          .sublist(row * featureCount, (row + 1) * featureCount)
+          .toList(growable: false),
+      growable: false,
+    );
+    return native.computeGaussianMixtureNative(
+      materialized,
+      componentCount: componentCount,
+      tolerance: tolerance,
+      maxIterations: maxIterations,
+      regularization: regularization,
+      standardize: standardize,
+      seed: seed,
+    );
+  });
 }
 
 Future<dynamic> _wavelet(Map<String, dynamic> request) async {
