@@ -169,6 +169,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
       'ica',
       'hypnogram',
       'bridge',
+      'time_frequency',
     }.contains(logic.visualizationViewForNode(node));
     _syncSelectedDatasets(sourceRefs);
     final bool comparisonNode = logic.isVisualizationNode(node);
@@ -327,7 +328,8 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                             view == 'ica' ||
                             view == 'segments' ||
                             view == 'hypnogram' ||
-                            view == 'bridge') &&
+                            view == 'bridge' ||
+                            view == 'time_frequency') &&
                         selectedSourceRefs.length > 1;
                     return Column(
                       children: <Widget>[
@@ -515,10 +517,9 @@ class _VisualizationChart extends StatelessWidget {
     }
 
     if (view == 'time_frequency') {
-      return const _ChartMessage(
-        title: 'Time-frequency view is not implemented yet',
-        body:
-            'This visualizer can already infer the upstream output type, but the time-frequency renderer still needs to be built.',
+      return TimeFrequencyChart(
+        datasets: datasets,
+        activeDatasetId: activeDatasetId,
       );
     }
 
@@ -669,6 +670,215 @@ class _VisualizationChart extends StatelessWidget {
       },
       onChanged: onChanged,
     );
+  }
+}
+
+class TimeFrequencyChart extends StatefulWidget {
+  const TimeFrequencyChart({
+    super.key,
+    required this.datasets,
+    required this.activeDatasetId,
+  });
+
+  final List<Dataset> datasets;
+  final String? activeDatasetId;
+
+  @override
+  State<TimeFrequencyChart> createState() => _TimeFrequencyChartState();
+}
+
+class _TimeFrequencyChartState extends State<TimeFrequencyChart> {
+  int _channelIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final Dataset dataset = widget.datasets.firstWhere(
+      (Dataset item) =>
+          (item.ram['viewer.sourceKey']?.toString() ?? item.id) ==
+          widget.activeDatasetId,
+      orElse: () => widget.datasets.first,
+    );
+    final TimeFrequencyData? data = dataset.timeFrequency;
+    if (data == null || data.times.isEmpty || data.frequencies.isEmpty) {
+      return const _ChartMessage(
+        title: 'No wavelet data',
+        body: 'Run the Time-Frequency node before opening this view.',
+      );
+    }
+    final int channelCount = data.channelCount;
+    final int channelIndex = _channelIndex.clamp(0, channelCount - 1);
+    final List<String> labels = List<String>.generate(
+      channelCount,
+      (int index) => index < data.channelLabels.length
+          ? data.channelLabels[index]
+          : 'Channel ${index + 1}',
+      growable: false,
+    );
+    final List<List<double>> matrix = data.powerForChannel(channelIndex);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            SizedBox(
+              width: 220,
+              child: DropdownButtonFormField<int>(
+                initialValue: channelIndex,
+                decoration: const InputDecoration(labelText: 'Channel'),
+                items: List<DropdownMenuItem<int>>.generate(
+                  channelCount,
+                  (int index) => DropdownMenuItem<int>(
+                    value: index,
+                    child: Text(labels[index]),
+                  ),
+                ),
+                onChanged: (int? value) {
+                  if (value != null) setState(() => _channelIndex = value);
+                },
+              ),
+            ),
+            const SizedBox(width: 14),
+            Text(
+              '${data.frequencies.length} frequencies × ${data.times.length} time bins',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: RepaintBoundary(
+            child: CustomPaint(
+              key: const ValueKey<String>('time-frequency-heatmap'),
+              painter: _TimeFrequencyPainter(
+                times: data.times,
+                frequencies: data.frequencies,
+                powerMatrix: matrix,
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TimeFrequencyPainter extends CustomPainter {
+  const _TimeFrequencyPainter({
+    required this.times,
+    required this.frequencies,
+    required this.powerMatrix,
+  });
+
+  final List<double> times;
+  final List<double> frequencies;
+  final List<List<double>> powerMatrix;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double left = 58;
+    const double bottom = 32;
+    const double top = 8;
+    const double right = 10;
+    final Rect plot = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
+    canvas.drawRect(plot, Paint()..color = const Color(0xFF080A0E));
+    final List<double> logPower = <double>[
+      for (final List<double> row in powerMatrix)
+        for (final double value in row) math.log(math.max(value, 1e-12)),
+    ];
+    if (logPower.isEmpty || plot.width <= 0 || plot.height <= 0) return;
+    logPower.sort();
+    final double low = logPower[(logPower.length * 0.02).floor()];
+    final double high =
+        logPower[(logPower.length * 0.98).floor().clamp(
+          0,
+          logPower.length - 1,
+        )];
+    final double cellWidth = plot.width / times.length;
+    final double cellHeight = plot.height / frequencies.length;
+    final Paint paint = Paint();
+    for (int frequency = 0; frequency < powerMatrix.length; frequency++) {
+      final List<double> row = powerMatrix[frequency];
+      for (int time = 0; time < math.min(row.length, times.length); time++) {
+        final double value = math.log(math.max(row[time], 1e-12));
+        final double normalized = high <= low
+            ? 0.5
+            : ((value - low) / (high - low)).clamp(0.0, 1.0);
+        paint.color = _waveletColor(normalized);
+        canvas.drawRect(
+          Rect.fromLTWH(
+            plot.left + time * cellWidth,
+            plot.bottom - (frequency + 1) * cellHeight,
+            cellWidth + 0.5,
+            cellHeight + 0.5,
+          ),
+          paint,
+        );
+      }
+    }
+    canvas.drawRect(
+      plot,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Colors.white38,
+    );
+    _paintLabel(
+      canvas,
+      '${frequencies.last.toStringAsFixed(1)} Hz',
+      const Offset(4, top),
+    );
+    _paintLabel(
+      canvas,
+      '${frequencies.first.toStringAsFixed(1)} Hz',
+      Offset(4, plot.bottom - 14),
+    );
+    _paintLabel(
+      canvas,
+      '${times.first.toStringAsFixed(2)} s',
+      Offset(plot.left, plot.bottom + 8),
+    );
+    _paintLabel(
+      canvas,
+      '${times.last.toStringAsFixed(2)} s',
+      Offset(plot.right - 48, plot.bottom + 8),
+    );
+  }
+
+  void _paintLabel(Canvas canvas, String label, Offset offset) {
+    final TextPainter painter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(color: Colors.white70, fontSize: 11),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  Color _waveletColor(double value) {
+    const List<Color> colors = <Color>[
+      Color(0xFF15162B),
+      Color(0xFF334C6F),
+      Color(0xFF3F8A88),
+      Color(0xFFD3A84A),
+      Color(0xFFE8D9A5),
+    ];
+    final double scaled = value * (colors.length - 1);
+    final int lower = scaled.floor().clamp(0, colors.length - 1);
+    final int upper = scaled.ceil().clamp(0, colors.length - 1);
+    return Color.lerp(colors[lower], colors[upper], scaled - lower)!;
+  }
+
+  @override
+  bool shouldRepaint(covariant _TimeFrequencyPainter oldDelegate) {
+    return oldDelegate.powerMatrix != powerMatrix ||
+        oldDelegate.times != times ||
+        oldDelegate.frequencies != frequencies;
   }
 }
 

@@ -34,3 +34,13 @@ List<List<double>>? applyIcaNative(
   required List<List<double>> unmixingMatrix,
   required List<double> channelMeans,
 }) => null;
+
+NativeWaveletResult? computeWaveletNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+  required int frequencyCount,
+  required int timeCount,
+  required double cycles,
+}) => null;

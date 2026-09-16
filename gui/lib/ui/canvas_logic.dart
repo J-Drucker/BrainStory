@@ -30,6 +30,7 @@ import '../nodes/psd_node.dart';
 import '../nodes/realign_node.dart';
 import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
+import '../nodes/time_frequency_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/node_snapshot_codec.dart';
@@ -4665,6 +4666,9 @@ class CanvasLogic {
     }
     if (node.type is ICANodeType) {
       return 'ica';
+    }
+    if (node.type is TimeFrequencyNodeType) {
+      return 'time_frequency';
     }
     if (node.type is VisualizationNodeType) {
       final List<NodeModel> parents = _immediateParents(node.id);

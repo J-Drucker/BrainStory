@@ -21,6 +21,7 @@ import 'amplitude_features_node.dart';
 import 'segmentation_node.dart';
 import 'sleep_staging_node.dart';
 import 'spectral_features_node.dart';
+import 'time_frequency_node.dart';
 import 'debug_output_node.dart';
 import 'eye_blinks_node.dart';
 import 'export_edf_node.dart';
@@ -104,6 +105,10 @@ class NodeRegistry {
       create: () => AmplitudeFeaturesNodeType(),
     ),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => TimeFrequencyNodeType(),
+    ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => FooofNodeType(),

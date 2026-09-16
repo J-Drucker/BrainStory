@@ -4,6 +4,8 @@ mod filtering;
 mod ica;
 #[path = "../../src/spectrum.rs"]
 mod spectrum;
+#[path = "../../src/wavelet.rs"]
+mod wavelet;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -25,6 +27,15 @@ enum Request {
         rate: f64,
         low: f64,
         high: f64,
+    },
+    Wavelet {
+        samples: Vec<f64>,
+        rate: f64,
+        low: f64,
+        high: f64,
+        frequencies: usize,
+        times: usize,
+        cycles: f64,
     },
     Ica {
         channels: Vec<Vec<f64>>,
@@ -60,6 +71,25 @@ fn execute(request: Request) -> Result<Value, String> {
         } => spectrum::single_sided_spectrum(&samples, rate, low, high)
             .map(|s| json!({"frequencies": s.frequencies, "power": s.power}))
             .ok_or("Invalid spectrum input".into()),
+        Request::Wavelet {
+            samples,
+            rate,
+            low,
+            high,
+            frequencies,
+            times,
+            cycles,
+        } => wavelet::morlet_power(
+            &samples,
+            rate,
+            low,
+            high,
+            frequencies,
+            times,
+            cycles,
+        )
+        .and_then(|value| serde_json::to_value(value).ok())
+        .ok_or("Invalid Morlet wavelet input".into()),
         Request::Ica {
             channels,
             components,

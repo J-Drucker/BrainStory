@@ -92,3 +92,27 @@ List<List<double>>? applyIcaNative(
             as List)
         .map(_vector)
         .toList();
+
+NativeWaveletResult? computeWaveletNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+  required int frequencyCount,
+  required int timeCount,
+  required double cycles,
+}) => NativeWaveletResult.fromJson(
+  Map<String, dynamic>.from(
+    _execute(<String, dynamic>{
+          'operation': 'wavelet',
+          'samples': samples,
+          'rate': sampleRate,
+          'low': lowHz,
+          'high': highHz,
+          'frequencies': frequencyCount,
+          'times': timeCount,
+          'cycles': cycles,
+        })
+        as Map,
+  ),
+);

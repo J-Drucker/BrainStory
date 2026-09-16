@@ -1394,19 +1394,37 @@ class TimeFrequencyData {
     required this.times,
     required this.frequencies,
     required this.powerMatrix,
+    this.channelPowerMatrices = const <List<List<double>>>[],
+    this.channelLabels = const <String>[],
     this.source = '',
   });
 
   final List<double> times;
   final List<double> frequencies;
   final List<List<double>> powerMatrix;
+  final List<List<List<double>>> channelPowerMatrices;
+  final List<String> channelLabels;
   final String source;
+
+  int get channelCount => channelPowerMatrices.isEmpty
+      ? (powerMatrix.isEmpty ? 0 : 1)
+      : channelPowerMatrices.length;
+
+  List<List<double>> powerForChannel(int index) {
+    if (channelPowerMatrices.isEmpty) return powerMatrix;
+    return channelPowerMatrices[index.clamp(
+      0,
+      channelPowerMatrices.length - 1,
+    )];
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'times': times,
       'frequencies': frequencies,
       'powerMatrix': powerMatrix,
+      'channelPowerMatrices': channelPowerMatrices,
+      'channelLabels': channelLabels,
       'source': source,
     };
   }
@@ -1426,6 +1444,22 @@ class TimeFrequencyData {
                 .toList(growable: false),
           )
           .toList(growable: false),
+      channelPowerMatrices:
+          (json['channelPowerMatrices'] as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic matrix) => (matrix as List<dynamic>)
+                    .map(
+                      (dynamic row) => (row as List<dynamic>)
+                          .map((dynamic value) => (value as num).toDouble())
+                          .toList(growable: false),
+                    )
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
+      channelLabels:
+          (json['channelLabels'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
       source: json['source']?.toString() ?? '',
     );
   }

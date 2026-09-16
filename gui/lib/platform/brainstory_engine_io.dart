@@ -107,6 +107,29 @@ typedef _IcaDart =
       int seed,
     );
 
+typedef _WaveletNative =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      ffi.IntPtr sampleCount,
+      ffi.Double sampleRate,
+      ffi.Double lowHz,
+      ffi.Double highHz,
+      ffi.IntPtr frequencyCount,
+      ffi.IntPtr timeCount,
+      ffi.Double cycles,
+    );
+typedef _WaveletDart =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      int sampleCount,
+      double sampleRate,
+      double lowHz,
+      double highHz,
+      int frequencyCount,
+      int timeCount,
+      double cycles,
+    );
+
 typedef _ApplyIcaNative =
     ffi.Int32 Function(
       ffi.Pointer<ffi.Double> samples,
@@ -130,6 +153,53 @@ typedef _ApplyIcaDart =
 
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
+
+NativeWaveletResult? computeWaveletNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+  required int frequencyCount,
+  required int timeCount,
+  required double cycles,
+}) {
+  final _WaveletDart? wavelet = _engineLibrary.wavelet;
+  if (wavelet == null || _nativeMemory.unavailable || samples.isEmpty) {
+    return null;
+  }
+  final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
+    samples.length,
+  );
+  try {
+    samplesPtr.asTypedList(samples.length).setAll(0, samples);
+    final ffi.Pointer<ffi.Uint8> resultPointer = wavelet(
+      samplesPtr,
+      samples.length,
+      sampleRate,
+      lowHz,
+      highHz,
+      frequencyCount,
+      timeCount,
+      cycles,
+    );
+    if (resultPointer == ffi.nullptr) return null;
+    try {
+      final Map<String, dynamic> response = Map<String, dynamic>.from(
+        jsonDecode(_decodeNativeString(resultPointer)) as Map,
+      );
+      if (response['ok'] != true) {
+        throw StateError(response['error']?.toString() ?? 'Wavelet failed.');
+      }
+      return NativeWaveletResult.fromJson(
+        Map<String, dynamic>.from(response['result'] as Map),
+      );
+    } finally {
+      _engineLibrary.freeString(resultPointer);
+    }
+  } finally {
+    _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+  }
+}
 
 NativeIcaResult? computeIcaNative(
   List<List<double>> channels, {
@@ -545,6 +615,18 @@ class _BrainstoryEngineLibrary {
   _BrainstoryEngineLibrary() : _library = _tryLoadLibrary();
 
   final ffi.DynamicLibrary? _library;
+
+  _WaveletDart? get wavelet {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) return null;
+    try {
+      return library.lookupFunction<_WaveletNative, _WaveletDart>(
+        'brainstory_morlet_wavelet',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
   _IcaDart? get fastIcaFit {
     final ffi.DynamicLibrary? library = _library;

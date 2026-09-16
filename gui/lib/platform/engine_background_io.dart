@@ -5,6 +5,8 @@ import 'brainstory_engine_io.dart' as native;
 
 Future<dynamic> executeBrowserEngine(Map<String, dynamic> request) async {
   switch (request['operation']) {
+    case 'wavelet':
+      return _wavelet(request);
     case 'ica':
       return _fitIca(request);
     case 'applyIca':
@@ -12,6 +14,31 @@ Future<dynamic> executeBrowserEngine(Map<String, dynamic> request) async {
     default:
       return null;
   }
+}
+
+Future<dynamic> _wavelet(Map<String, dynamic> request) async {
+  final List<double> samples = _vector(request['samples']);
+  if (samples.isEmpty) return null;
+  final TransferableTypedData transferred = TransferableTypedData.fromList(
+    <TypedData>[Float64List.fromList(samples)],
+  );
+  final double sampleRate = (request['rate'] as num).toDouble();
+  final double lowHz = (request['low'] as num).toDouble();
+  final double highHz = (request['high'] as num).toDouble();
+  final int frequencyCount = (request['frequencies'] as num).toInt();
+  final int timeCount = (request['times'] as num).toInt();
+  final double cycles = (request['cycles'] as num).toDouble();
+  return Isolate.run(() {
+    return native.computeWaveletNative(
+      _materializeDoubles(transferred),
+      sampleRate: sampleRate,
+      lowHz: lowHz,
+      highHz: highHz,
+      frequencyCount: frequencyCount,
+      timeCount: timeCount,
+      cycles: cycles,
+    );
+  });
 }
 
 Future<dynamic> _fitIca(Map<String, dynamic> request) async {

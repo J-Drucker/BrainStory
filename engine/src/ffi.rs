@@ -5,10 +5,45 @@ use std::slice;
 use crate::filtering::bandpass_filter;
 use crate::ica::{apply_unmixing_flat_into, fast_ica, fit_fast_ica};
 use crate::spectrum::single_sided_spectrum;
+use crate::wavelet::morlet_power;
 use serde_json::json;
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
+
+#[no_mangle]
+pub extern "C" fn brainstory_morlet_wavelet(
+    samples_ptr: *const f64,
+    sample_count: usize,
+    sample_rate: f64,
+    low_hz: f64,
+    high_hz: f64,
+    frequency_count: usize,
+    time_count: usize,
+    cycles: f64,
+) -> *mut c_char {
+    let result = if samples_ptr.is_null() {
+        None
+    } else {
+        let samples = unsafe { slice::from_raw_parts(samples_ptr, sample_count) };
+        morlet_power(
+            samples,
+            sample_rate,
+            low_hz,
+            high_hz,
+            frequency_count,
+            time_count,
+            cycles,
+        )
+    };
+    let payload = match result {
+        Some(result) => json!({"ok": true, "result": result}),
+        None => json!({"ok": false, "error": "Invalid Morlet wavelet input."}),
+    };
+    CString::new(payload.to_string())
+        .expect("JSON cannot contain NUL bytes")
+        .into_raw()
+}
 
 #[no_mangle]
 pub extern "C" fn brainstory_fast_ica(
@@ -252,8 +287,8 @@ pub extern "C" fn brainstory_segment_mean_sd(
 mod tests {
     use super::{
         brainstory_apply_ica, brainstory_bandpass_filter, brainstory_fast_ica,
-        brainstory_fast_ica_fit, brainstory_segment_mean_sd, brainstory_single_sided_spectrum,
-        STATUS_OK,
+        brainstory_fast_ica_fit, brainstory_morlet_wavelet, brainstory_segment_mean_sd,
+        brainstory_single_sided_spectrum, STATUS_OK,
     };
     use crate::ant_cnt::brainstory_engine_free_string;
     use std::ffi::CStr;
@@ -317,6 +352,24 @@ mod tests {
         assert!(bin_count > 0);
         assert_eq!(frequencies[0], 1.0);
         assert!(power[..bin_count].iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn computes_wavelet_power_through_the_c_api() {
+        let input: Vec<f64> = (0..128).map(|index| (index as f64 / 4.0).sin()).collect();
+        let pointer =
+            brainstory_morlet_wavelet(input.as_ptr(), input.len(), 128.0, 4.0, 20.0, 9, 41, 6.0);
+
+        assert!(!pointer.is_null());
+        let json = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        brainstory_engine_free_string(pointer);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["result"]["frequencies"].as_array().unwrap().len(), 9);
+        assert_eq!(value["result"]["times"].as_array().unwrap().len(), 41);
+        assert_eq!(value["result"]["powerMatrix"].as_array().unwrap().len(), 9);
     }
 
     #[test]

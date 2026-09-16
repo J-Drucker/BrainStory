@@ -90,6 +90,60 @@ Future<NativeIcaResult?> computeIcaBackground(
   );
 }
 
+Future<NativeWaveletResult?> computeWaveletBackground(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+  required int frequencyCount,
+  required int timeCount,
+  required double cycles,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'wavelet',
+    'samples': samples,
+    'rate': sampleRate,
+    'low': lowHz,
+    'high': highHz,
+    'frequencies': frequencyCount,
+    'times': timeCount,
+    'cycles': cycles,
+  });
+  if (result is NativeWaveletResult) return result;
+  if (result != null) {
+    return NativeWaveletResult.fromJson(
+      Map<String, dynamic>.from(result as Map),
+    );
+  }
+  return computeWaveletNative(
+    samples,
+    sampleRate: sampleRate,
+    lowHz: lowHz,
+    highHz: highHz,
+    frequencyCount: frequencyCount,
+    timeCount: timeCount,
+    cycles: cycles,
+  );
+}
+
+NativeWaveletResult? computeWaveletNative(
+  List<double> samples, {
+  required double sampleRate,
+  required double lowHz,
+  required double highHz,
+  required int frequencyCount,
+  required int timeCount,
+  required double cycles,
+}) => impl.computeWaveletNative(
+  samples,
+  sampleRate: sampleRate,
+  lowHz: lowHz,
+  highHz: highHz,
+  frequencyCount: frequencyCount,
+  timeCount: timeCount,
+  cycles: cycles,
+);
+
 AggregateSeriesStats? computeAggregateSeriesStats(List<List<double>> traces) {
   return impl.computeAggregateSeriesStats(traces);
 }

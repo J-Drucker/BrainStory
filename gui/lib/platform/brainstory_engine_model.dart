@@ -15,6 +15,34 @@ class NativeSpectrumResult {
   final List<double> power;
 }
 
+class NativeWaveletResult {
+  const NativeWaveletResult({
+    required this.times,
+    required this.frequencies,
+    required this.powerMatrix,
+  });
+
+  final List<double> times;
+  final List<double> frequencies;
+  final List<List<double>> powerMatrix;
+
+  factory NativeWaveletResult.fromJson(Map<String, dynamic> json) {
+    List<double> vector(dynamic value) {
+      return (value as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic item) => (item as num).toDouble())
+          .toList(growable: false);
+    }
+
+    return NativeWaveletResult(
+      times: vector(json['times']),
+      frequencies: vector(json['frequencies']),
+      powerMatrix: (json['powerMatrix'] as List<dynamic>? ?? const <dynamic>[])
+          .map(vector)
+          .toList(growable: false),
+    );
+  }
+}
+
 class NativeIcaResult {
   const NativeIcaResult({
     required this.activations,
