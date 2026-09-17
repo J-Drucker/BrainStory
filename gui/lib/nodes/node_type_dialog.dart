@@ -44,14 +44,17 @@ class _NodeConfigDialog extends StatefulWidget {
   State<_NodeConfigDialog> createState() => _NodeConfigDialogState();
 }
 
-class _NodeConfigDialogState extends State<_NodeConfigDialog> {
+class _NodeConfigDialogState extends State<_NodeConfigDialog>
+    with SingleTickerProviderStateMixin {
   late Map<String, dynamic> localParams;
+  late final TabController _tabController;
   bool _fullscreen = false;
   NodeDatasetStatusSnapshot? _statusSnapshot;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     localParams = Map<String, dynamic>.from(widget.params);
     final Set<String> selectedDatasetIds = Set<String>.from(
       localParams['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[],
@@ -73,6 +76,12 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
       diskSavedDatasetIds: const <String>{},
     );
     unawaited(_refreshDatasetStatuses());
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
@@ -149,7 +158,11 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
           ),
         ],
       ),
-      content: SizedBox(width: 920, child: content),
+      content: SizedBox(
+        width: 920,
+        height: math.min(620, MediaQuery.sizeOf(context).height * 0.64),
+        child: content,
+      ),
       actions: actions,
     );
   }
@@ -168,41 +181,76 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
           diskSavedDatasetIds: const <String>{},
         );
 
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          widget.buildBody(
-            localParams,
-            datasets: widget.datasets,
-            setState: setState,
-          ),
-          const SizedBox(height: 12),
-          _DatasetControlSection(
-            datasets: datasetEntries,
-            selectedDatasetIds: selectedDatasetIds,
-            statusSnapshot: statusSnapshot,
-            datasetSourceLabels: widget.datasetSourceLabels,
-            onDatasetNamePressed: (String datasetId) {
-              showDialog<void>(
-                context: context,
-                builder: (_) => _MetadataDialog(
-                  datasets: widget.datasets,
-                  selectedDatasetIds: <String>{datasetId},
-                  processingSteps: widget.processingSteps,
-                  showSourceFiles: widget.showSourceFiles,
+    return Column(
+      children: <Widget>[
+        TabBar(
+          controller: _tabController,
+          tabs: const <Widget>[
+            Tab(text: 'Parameters'),
+            Tab(text: 'Persistence'),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: <Widget>[
+              SingleChildScrollView(
+                key: const ValueKey<String>('node-parameters-tab-content'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    widget.buildBody(
+                      localParams,
+                      datasets: widget.datasets,
+                      setState: setState,
+                    ),
+                    const SizedBox(height: 12),
+                    _DatasetControlSection(
+                      datasets: datasetEntries,
+                      selectedDatasetIds: selectedDatasetIds,
+                      statusSnapshot: statusSnapshot,
+                      datasetSourceLabels: widget.datasetSourceLabels,
+                      onDatasetNamePressed: (String datasetId) {
+                        showDialog<void>(
+                          context: context,
+                          builder: (_) => _MetadataDialog(
+                            datasets: widget.datasets,
+                            selectedDatasetIds: <String>{datasetId},
+                            processingSteps: widget.processingSteps,
+                            showSourceFiles: widget.showSourceFiles,
+                          ),
+                        );
+                      },
+                      onChanged: (Set<String> nextSelection) {
+                        setState(() {
+                          localParams['selectedDatasetIds'] = nextSelection
+                              .toList();
+                        });
+                      },
+                    ),
+                  ],
                 ),
-              );
-            },
-            onChanged: (Set<String> nextSelection) {
-              setState(() {
-                localParams['selectedDatasetIds'] = nextSelection.toList();
-              });
-            },
+              ),
+              _NodePersistenceTab(
+                datasets: datasetEntries,
+                selectedDatasetIds: selectedDatasetIds,
+                statusSnapshot: statusSnapshot,
+                storagePolicy: NodeStoragePolicyPresentation.fromWireValue(
+                  localParams['storagePolicy']?.toString(),
+                ),
+                datasetActions: widget.datasetActions,
+                onStoragePolicyChanged: (NodeStoragePolicy policy) {
+                  setState(() {
+                    localParams['storagePolicy'] = policy.wireValue;
+                  });
+                },
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -268,6 +316,31 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog> {
         child: const Text('Save'),
       ),
     ];
+  }
+}
+
+class _NodePersistenceTab extends StatelessWidget {
+  const _NodePersistenceTab({
+    required this.datasets,
+    required this.selectedDatasetIds,
+    required this.statusSnapshot,
+    required this.storagePolicy,
+    required this.datasetActions,
+    required this.onStoragePolicyChanged,
+  });
+
+  final List<MapEntry<String, Dataset>> datasets;
+  final Set<String> selectedDatasetIds;
+  final NodeDatasetStatusSnapshot statusSnapshot;
+  final NodeStoragePolicy storagePolicy;
+  final NodeDatasetActions? datasetActions;
+  final ValueChanged<NodeStoragePolicy> onStoragePolicyChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox.expand(
+      key: ValueKey<String>('node-persistence-tab-content'),
+    );
   }
 }
 

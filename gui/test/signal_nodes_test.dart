@@ -1327,6 +1327,22 @@ void main() {
     await tester.tap(find.text('Open editor'));
     await tester.pumpAndSettle();
     expect(find.text('Save & Run'), findsOneWidget);
+    expect(find.text('Parameters'), findsOneWidget);
+    expect(find.text('Persistence'), findsOneWidget);
+
+    await tester.tap(find.text('Persistence'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('node-persistence-tab-content')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Parameters'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey<String>('node-parameters-tab-content')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Save & Run'));
     await tester.pumpAndSettle();
