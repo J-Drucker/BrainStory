@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
-import 'node_type.dart';
 import 'visualization_node.dart';
 
 class ImpedancesNodeType extends VisualizationNodeType {
@@ -12,10 +11,7 @@ class ImpedancesNodeType extends VisualizationNodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'display_mode': 'window',
-    'impedance_channel': '',
-    'impedance_quantity': 'impedance',
-    'impedance_y_scale': 'linear',
-    'impedance_line_mode': 'line',
+    'impedance_measurement_index': -1,
   };
 
   @override
@@ -27,104 +23,42 @@ class ImpedancesNodeType extends VisualizationNodeType {
     for (final MapEntry<String, dynamic> entry in defaultParams.entries) {
       params.putIfAbsent(entry.key, () => entry.value);
     }
-    final List<String> channelLabels =
-        datasets.values
-            .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
-            .whereType<ImpedanceData>()
-            .where((ImpedanceData data) => data.measurementCount > 0)
-            .expand((ImpedanceData data) => data.channelLabels)
-            .where((String label) => label.trim().isNotEmpty)
-            .toSet()
-            .toList()
-          ..sort();
-    final String selectedChannel =
-        params['impedance_channel']?.toString() ?? '';
-    if (selectedChannel.isNotEmpty &&
-        !channelLabels.contains(selectedChannel)) {
-      params['impedance_channel'] = '';
-    }
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        NodeParamDropdownField<String>(
-          params: params,
-          paramKey: 'impedance_channel',
-          labelText: 'Channel',
-          options: <NodeDropdownOption<String>>[
-            const NodeDropdownOption<String>(
-              value: '',
-              label: 'First available channel',
-            ),
-            ...channelLabels.map(
-              (String label) =>
-                  NodeDropdownOption<String>(value: label, label: label),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: <Widget>[
-            SizedBox(
-              width: 150,
-              child: NodeParamDropdownField<String>(
-                params: params,
-                paramKey: 'impedance_quantity',
-                labelText: 'Quantity',
-                options: const <NodeDropdownOption<String>>[
-                  NodeDropdownOption<String>(
-                    value: 'impedance',
-                    label: 'Impedance',
-                  ),
-                  NodeDropdownOption<String>(
-                    value: 'admittance',
-                    label: 'Admittance',
-                  ),
-                ],
-              ),
-            ),
-            SizedBox(
-              width: 128,
-              child: NodeParamDropdownField<String>(
-                params: params,
-                paramKey: 'impedance_y_scale',
-                labelText: 'Y axis',
-                options: const <NodeDropdownOption<String>>[
-                  NodeDropdownOption<String>(value: 'linear', label: 'Linear'),
-                  NodeDropdownOption<String>(value: 'log', label: 'Log10'),
-                ],
-              ),
-            ),
-            SizedBox(
-              width: 176,
-              child: NodeParamDropdownField<String>(
-                params: params,
-                paramKey: 'impedance_line_mode',
-                labelText: 'Line',
-                options: const <NodeDropdownOption<String>>[
-                  NodeDropdownOption<String>(
-                    value: 'none',
-                    label: 'Points only',
-                  ),
-                  NodeDropdownOption<String>(value: 'line', label: 'Straight'),
-                  NodeDropdownOption<String>(
-                    value: 'smooth',
-                    label: 'Smooth spline',
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ],
+    return RadioGroup<String>(
+      groupValue: params['display_mode']?.toString() ?? 'window',
+      onChanged: (String? value) {
+        if (value == null) {
+          return;
+        }
+        setState(() {
+          params['display_mode'] = value;
+        });
+      },
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            title: Text('Show in panel'),
+            value: 'panel',
+          ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            title: Text('New window'),
+            value: 'window',
+          ),
+        ],
+      ),
     );
   }
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    final ImpedanceData? impedanceData = dataset.timeSeries?.impedanceData;
+    if (impedanceData == null ||
+        impedanceData.channelCount == 0 ||
+        impedanceData.measurementCount == 0) {
+      throw StateError('Impedances requires upstream impedance data.');
+    }
     dataset.ram['impedances.config'] = Map<String, dynamic>.from(params);
   }
 }

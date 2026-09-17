@@ -39,6 +39,7 @@ import 'package:brainstory_gui/ui/artifact_template_preview.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/canvas_view.dart';
 import 'package:brainstory_gui/ui/connection_painter.dart';
+import 'package:brainstory_gui/ui/impedance_layout.dart';
 import 'package:brainstory_gui/ui/node_card.dart';
 import 'package:brainstory_gui/ui/raw_signal_browser.dart';
 import 'package:brainstory_gui/ui/topomap_view.dart';
@@ -1172,64 +1173,116 @@ void main() {
     expect(logic.visualizationSourceRefsForNode(node.id), hasLength(1));
   });
 
-  testWidgets('impedance visualization exposes scientific display controls', (
-    WidgetTester tester,
-  ) async {
-    final CanvasLogic logic = CanvasLogic();
-    logic.addNode(ImpedancesNodeType());
-    final NodeModel node = logic.nodes.single;
-    final Dataset dataset = Dataset('dataset-1', label: 'PVT');
-    dataset.timeSeries = TimeSeriesData(
-      samples: const <double>[0.0],
-      sampleRate: 256.0,
-      channelLabels: const <String>['Cz'],
-      impedanceData: ImpedanceData(
+  test('impedance grid wraps at the nearest square-root column count', () {
+    final ImpedanceLayout layout = layoutImpedanceCircles(
+      channelLabels: List<String>.generate(8, (int index) => 'Ch$index'),
+      coordinates: const <String, ChannelCoordinate>{},
+      viewportSize: const Size(500, 500),
+    );
+
+    expect(layout.usesCoordinates, isFalse);
+    expect(layout.positions[0].dy, layout.positions[2].dy);
+    expect(layout.positions[3].dx, layout.positions[0].dx);
+    expect(layout.positions[3].dy, greaterThan(layout.positions[0].dy));
+  });
+
+  test(
+    'impedance coordinate layout preserves direction and avoids overlap',
+    () {
+      const Map<String, ChannelCoordinate> coordinates =
+          <String, ChannelCoordinate>{
+            'a': ChannelCoordinate(label: 'A', x: 1, y: 1, z: 0),
+            'b': ChannelCoordinate(label: 'B', x: -1, y: 2, z: 0),
+            'c': ChannelCoordinate(label: 'C', x: 2, y: -1, z: 0),
+          };
+      final ImpedanceLayout layout = layoutImpedanceCircles(
+        channelLabels: const <String>['A', 'B', 'C'],
+        coordinates: coordinates,
+        viewportSize: const Size(500, 400),
+      );
+      final Offset origin = Offset(
+        layout.surfaceSize.width / 2,
+        layout.surfaceSize.height / 2,
+      );
+
+      expect(layout.usesCoordinates, isTrue);
+      expect(
+        (layout.positions[0] - origin).dy / (layout.positions[0] - origin).dx,
+        closeTo(-1, 1e-9),
+      );
+      for (int first = 0; first < layout.positions.length; first++) {
+        for (
+          int second = first + 1;
+          second < layout.positions.length;
+          second++
+        ) {
+          expect(
+            (layout.positions[first] - layout.positions[second]).distance,
+            greaterThanOrEqualTo(layout.circleRadius * 2),
+          );
+        }
+      }
+    },
+  );
+
+  test('impedance neighbors reject a pair when either side is closer', () {
+    const List<ChannelCoordinate> coordinates = <ChannelCoordinate>[
+      ChannelCoordinate(label: 'A', x: 0, y: 0, z: 0),
+      ChannelCoordinate(label: 'B', x: 2, y: 0, z: 0),
+      ChannelCoordinate(label: 'C', x: -1, y: 0, z: 0),
+    ];
+    final List<ImpedanceNeighborPair> pairs = impedanceNeighborPairs(
+      coordinates,
+    );
+
+    expect(
+      pairs.map((ImpedanceNeighborPair pair) => '${pair.first}-${pair.second}'),
+      <String>['0-2'],
+    );
+  });
+
+  test(
+    'impedance node accepts impedance data with optional coordinates',
+    () async {
+      final ImpedancesNodeType nodeType = ImpedancesNodeType();
+      final Dataset dataset = Dataset('dataset-1', label: 'PVT');
+      dataset.timeSeries = TimeSeriesData(
+        samples: const <double>[0.0],
+        sampleRate: 256.0,
         channelLabels: const <String>['Cz'],
-        measurementTimesMicros: const <int>[0, 2000000],
-        ohmsByChannel: const <List<double?>>[
-          <double?>[10000.0, 12000.0],
-        ],
-      ),
-    );
-    logic.datasets[dataset.id] = dataset;
-    node.datasetStates[dataset.id] = DatasetState.done;
-    final VisualizationSourceRef sourceRef = logic
-        .visualizationSourceRefsForNode(node.id)
-        .single;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: VisualizationSurface(
-            logic: logic,
-            nodeId: node.id,
-            onChanged: null,
-          ),
+        channelCoordinates: const <String, ChannelCoordinate>{
+          'cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+        },
+        impedanceData: ImpedanceData(
+          channelLabels: const <String>['Cz'],
+          measurementTimesMicros: const <int>[0, 2000000],
+          ohmsByChannel: const <List<double?>>[
+            <double?>[10000.0, 12000.0],
+          ],
         ),
-      ),
+      );
+      await nodeType.run(
+        dataset,
+        Map<String, dynamic>.from(nodeType.defaultParams),
+      );
+
+      expect(dataset.ram['impedances.config'], isA<Map<String, dynamic>>());
+      expect(
+        dataset.timeSeries!.impedanceData!.ohmsByChannel.single.last,
+        12000,
+      );
+      expect(dataset.timeSeries!.channelCoordinates, contains('cz'));
+    },
+  );
+
+  test('impedance node requires impedance input', () async {
+    final ImpedancesNodeType nodeType = ImpedancesNodeType();
+    final Dataset dataset = Dataset('no-impedance');
+
+    await expectLater(
+      nodeType.run(dataset, Map<String, dynamic>.from(nodeType.defaultParams)),
+      throwsA(isA<StateError>()),
     );
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilterChip, sourceRef.displayLabel));
-    await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.text('Channel: Cz'), findsOneWidget);
-    expect(find.text('Quantity: Impedance'), findsOneWidget);
-    expect(find.text('Y Axis: Linear'), findsOneWidget);
-    expect(find.text('Line: Straight'), findsOneWidget);
-
-    await tester.tap(find.text('Quantity: Impedance'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Admittance'));
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(node.params['impedance_quantity'], 'admittance');
-    expect(find.text('Quantity: Admittance'), findsOneWidget);
   });
 
   testWidgets('node dialog exposes its save and run callback', (
@@ -1279,8 +1332,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(runParams, isNotNull);
-    expect(runParams!['impedance_quantity'], 'impedance');
-    expect(runParams!['impedance_line_mode'], 'line');
+    expect(runParams!['display_mode'], 'window');
+    expect(runParams!['impedance_measurement_index'], -1);
   });
 
   testWidgets(

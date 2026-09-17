@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../model/node.dart';
+import '../nodes/channel_coordinates_node.dart';
 import '../platform/brainstory_engine.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/edit_channels_node.dart';
@@ -15,6 +16,7 @@ import '../nodes/segmentation_node.dart';
 import 'canvas_logic.dart';
 import 'channel_positions_dialog.dart';
 import 'ica_viewer.dart';
+import 'impedance_layout.dart';
 import 'raw_signal_browser.dart';
 
 class VisualizationPanel extends StatelessWidget {
@@ -170,6 +172,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
       'hypnogram',
       'bridge',
       'time_frequency',
+      'impedances',
     }.contains(logic.visualizationViewForNode(node));
     _syncSelectedDatasets(sourceRefs);
     final bool comparisonNode = logic.isVisualizationNode(node);
@@ -329,7 +332,8 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                             view == 'segments' ||
                             view == 'hypnogram' ||
                             view == 'bridge' ||
-                            view == 'time_frequency') &&
+                            view == 'time_frequency' ||
+                            view == 'impedances') &&
                         selectedSourceRefs.length > 1;
                     return Column(
                       children: <Widget>[
@@ -2658,7 +2662,7 @@ class _HypnogramChart extends StatelessWidget {
   }
 }
 
-class _ImpedanceChart extends StatelessWidget {
+class _ImpedanceChart extends StatefulWidget {
   const _ImpedanceChart({
     required this.datasets,
     required this.params,
@@ -2669,262 +2673,290 @@ class _ImpedanceChart extends StatelessWidget {
   final Map<String, dynamic> params;
   final VoidCallback onChanged;
 
-  static const List<Color> _datasetColors = <Color>[
-    Color(0xFF71D4CE),
-    Color(0xFFE3A25A),
-    Color(0xFFC589C8),
-    Color(0xFF8DBB66),
-    Color(0xFF78A8D8),
-    Color(0xFFD97979),
-  ];
+  @override
+  State<_ImpedanceChart> createState() => _ImpedanceChartState();
+}
+
+class _ImpedanceChartState extends State<_ImpedanceChart> {
+  static const double _circleRadius = 30;
 
   @override
   Widget build(BuildContext context) {
-    params.putIfAbsent('impedance_channel', () => '');
-    params.putIfAbsent('impedance_quantity', () => 'impedance');
-    params.putIfAbsent('impedance_y_scale', () => 'linear');
-    params.putIfAbsent('impedance_line_mode', () => 'line');
-
-    final List<ImpedanceData> available = datasets
-        .map((Dataset dataset) => dataset.timeSeries?.impedanceData)
-        .whereType<ImpedanceData>()
-        .where(
-          (ImpedanceData data) =>
-              data.measurementCount > 0 && data.channelCount > 0,
-        )
-        .toList(growable: false);
-    if (available.isEmpty) {
+    final Dataset? dataset = widget.datasets.cast<Dataset?>().firstWhere((
+      Dataset? item,
+    ) {
+      final ImpedanceData? data = item?.timeSeries?.impedanceData;
+      return data != null && data.measurementCount > 0 && data.channelCount > 0;
+    }, orElse: () => null);
+    final ImpedanceData? data = dataset?.timeSeries?.impedanceData;
+    if (dataset == null || data == null) {
       return const _ChartMessage(
         title: 'No impedance measurements',
         body: 'Import a recording that contains impedance measurements.',
       );
     }
 
-    final List<String> channelLabels =
-        available
-            .expand((ImpedanceData data) => data.channelLabels)
-            .where((String label) => label.trim().isNotEmpty)
-            .toSet()
-            .toList(growable: true)
-          ..sort();
-    if (channelLabels.isEmpty) {
-      return const _ChartMessage(
-        title: 'No impedance channels',
-        body: 'The selected datasets do not contain named impedance channels.',
-      );
+    int measurementIndex =
+        (widget.params['impedance_measurement_index'] as num?)?.round() ?? -1;
+    if (measurementIndex < 0) {
+      measurementIndex = data.measurementCount - 1;
     }
-
-    String channel = params['impedance_channel']?.toString() ?? '';
-    if (!channelLabels.contains(channel)) {
-      channel = channelLabels.first;
-      params['impedance_channel'] = channel;
-    }
-    final bool admittance = params['impedance_quantity'] == 'admittance';
-    final bool logY = params['impedance_y_scale'] == 'log';
-    final String lineMode =
-        <String>{
-          'none',
-          'line',
-          'smooth',
-        }.contains(params['impedance_line_mode'])
-        ? params['impedance_line_mode'].toString()
-        : 'line';
-    params['impedance_line_mode'] = lineMode;
-
-    final List<_SeriesData> series = <_SeriesData>[];
-    for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
-      final Dataset dataset = datasets[datasetIndex];
-      final ImpedanceData? data = dataset.timeSeries?.impedanceData;
-      if (data == null) {
-        continue;
-      }
-      final int channelIndex = data.channelLabels.indexOf(channel);
-      if (channelIndex < 0) {
-        continue;
-      }
-      final List<FlSpot> points = <FlSpot>[];
-      for (int timeIndex = 0; timeIndex < data.measurementCount; timeIndex++) {
-        final double? ohms = data.ohmsByChannel[channelIndex][timeIndex];
-        if (ohms == null || !ohms.isFinite || ohms <= 0) {
-          continue;
-        }
-        final double displayValue = admittance
-            ? 1000000.0 / ohms
-            : ohms / 1000.0;
-        if (!displayValue.isFinite || displayValue <= 0) {
-          continue;
-        }
-        points.add(
-          FlSpot(
-            data.measurementTimesMicros[timeIndex] / 1000000.0,
-            logY ? math.log(displayValue) / math.ln10 : displayValue,
-          ),
-        );
-      }
-      if (points.isNotEmpty) {
-        series.add(
-          _SeriesData(
-            label: dataset.label,
-            color: _datasetColors[datasetIndex % _datasetColors.length],
-            points: points,
-            subtitle:
-                '$channel, ${points.length} measurement${points.length == 1 ? '' : 's'}',
-          ),
-        );
-      }
-    }
-    if (series.isEmpty) {
-      return _ChartMessage(
-        title: 'No readings for $channel',
-        body:
-            'Choose a channel that has impedance measurements in the selected datasets.',
-      );
-    }
-
-    final List<FlSpot> allPoints = series
-        .expand((_SeriesData item) => item.points)
-        .toList(growable: false);
-    final double rawMinX = allPoints
-        .map((FlSpot point) => point.x)
-        .reduce(math.min);
-    final double rawMaxX = allPoints
-        .map((FlSpot point) => point.x)
-        .reduce(math.max);
-    final double rawMinY = allPoints
-        .map((FlSpot point) => point.y)
-        .reduce(math.min);
-    final double rawMaxY = allPoints
-        .map((FlSpot point) => point.y)
-        .reduce(math.max);
-    final double xPadding = math.max(1.0, (rawMaxX - rawMinX).abs() * 0.06);
-    final double yRange = (rawMaxY - rawMinY).abs();
-    final double yPadding = yRange == 0
-        ? math.max(logY ? 0.08 : 0.001, rawMinY.abs() * 0.08)
-        : math.max(logY ? 0.04 : 0.001, yRange * 0.1);
-    final double minX = rawMinX == rawMaxX ? rawMinX - 1 : rawMinX - xPadding;
-    final double maxX = rawMinX == rawMaxX ? rawMaxX + 1 : rawMaxX + xPadding;
-    final double minY = logY
-        ? rawMinY - yPadding
-        : math.max(0.0, rawMinY - yPadding);
-    final double maxY = rawMaxY + yPadding;
-    final String unit = admittance ? 'uS' : 'kOhm';
-    final String yAxisLabel = logY
-        ? 'log10($unit)'
-        : '${admittance ? 'Admittance' : 'Impedance'} ($unit)';
+    measurementIndex = measurementIndex.clamp(0, data.measurementCount - 1);
+    widget.params['impedance_measurement_index'] = measurementIndex;
+    final int timeMicros = data.measurementTimesMicros[measurementIndex];
+    final Map<String, ChannelCoordinate> coordinates =
+        dataset.timeSeries?.channelCoordinates ??
+        const <String, ChannelCoordinate>{};
+    final bool completeCoordinates = data.channelLabels.every(
+      (String label) =>
+          _impedanceCoordinateForLabel(coordinates, label) != null,
+    );
+    final Map<String, ChannelCoordinate> matchedCoordinates =
+        <String, ChannelCoordinate>{
+          for (final String label in data.channelLabels)
+            if (_impedanceCoordinateForLabel(coordinates, label)
+                case final ChannelCoordinate coordinate)
+              label: coordinate,
+        };
 
     return _ChartCard(
-      title: '${admittance ? 'Admittance' : 'Impedance'}: $channel',
+      title: 'Impedance map',
       subtitle:
-          '${series.length} dataset overlay${series.length == 1 ? '' : 's'}; markers are measured values.',
-      legend: series,
-      toolbar: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+          '${dataset.label} • ${data.channelCount} channels • ${completeCoordinates ? 'Coordinate layout' : 'Grid layout'}',
+      toolbar: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          _PsdMenuChip<String>(
-            label: 'Channel',
-            valueLabel: channel,
-            options: channelLabels,
-            itemLabel: (String value) => value,
-            onSelected: (String value) {
-              params['impedance_channel'] = value;
-              onChanged();
-            },
-          ),
-          _PsdMenuChip<String>(
-            label: 'Quantity',
-            valueLabel: admittance ? 'Admittance' : 'Impedance',
-            options: const <String>['impedance', 'admittance'],
-            itemLabel: (String value) =>
-                value == 'admittance' ? 'Admittance' : 'Impedance',
-            onSelected: (String value) {
-              params['impedance_quantity'] = value;
-              onChanged();
-            },
-          ),
-          _PsdMenuChip<String>(
-            label: 'Y Axis',
-            valueLabel: logY ? 'Log10' : 'Linear',
-            options: const <String>['linear', 'log'],
-            itemLabel: (String value) => value == 'log' ? 'Log10' : 'Linear',
-            onSelected: (String value) {
-              params['impedance_y_scale'] = value;
-              onChanged();
-            },
-          ),
-          _PsdMenuChip<String>(
-            label: 'Line',
-            valueLabel: switch (lineMode) {
-              'none' => 'Points',
-              'smooth' => 'Smooth',
-              _ => 'Straight',
-            },
-            options: const <String>['none', 'line', 'smooth'],
-            itemLabel: (String value) => switch (value) {
-              'none' => 'Points only',
-              'smooth' => 'Smooth spline',
-              _ => 'Straight',
-            },
-            onSelected: (String value) {
-              params['impedance_line_mode'] = value;
-              onChanged();
-            },
-          ),
+          if (data.measurementCount > 1)
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 4,
+              children: <Widget>[
+                Text(
+                  'Measurement ${measurementIndex + 1} of ${data.measurementCount} • ${_formatImpedanceTime(timeMicros)}',
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                SizedBox(
+                  width: 260,
+                  child: Slider(
+                    value: measurementIndex.toDouble(),
+                    min: 0,
+                    max: (data.measurementCount - 1).toDouble(),
+                    divisions: data.measurementCount - 1,
+                    onChanged: (double value) {
+                      setState(() {
+                        widget.params['impedance_measurement_index'] = value
+                            .round();
+                      });
+                      widget.onChanged();
+                    },
+                  ),
+                ),
+              ],
+            )
+          else
+            Text(
+              'Measurement 1 of 1 • ${_formatImpedanceTime(timeMicros)}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          const SizedBox(height: 8),
+          const _ImpedanceColorLegend(),
+          if (coordinates.isNotEmpty && !completeCoordinates) ...<Widget>[
+            const SizedBox(height: 8),
+            const Text(
+              'Coordinates are incomplete for these channels; using grid layout.',
+              style: TextStyle(color: Colors.white60, fontSize: 12),
+            ),
+          ],
         ],
       ),
-      child: LineChart(
-        LineChartData(
-          minX: minX,
-          maxX: maxX,
-          minY: minY,
-          maxY: maxY,
-          gridData: FlGridData(
-            show: true,
-            horizontalInterval: _niceAxisStep(maxY - minY),
-            verticalInterval: _niceAxisStep(maxX - minX),
-          ),
-          borderData: FlBorderData(show: false),
-          lineTouchData: const LineTouchData(enabled: false),
-          titlesData: _chartTitles(
-            minX: minX,
-            maxX: maxX,
-            minY: minY,
-            maxY: maxY,
-            logY: logY,
-            xAxisLabel: 'Time (s)',
-            yAxisLabel: yAxisLabel,
-            yAxisReservedSize: 64,
-          ),
-          lineBarsData: series
-              .map((_SeriesData item) {
-                final bool drawLine =
-                    lineMode != 'none' && item.points.length > 1;
-                return LineChartBarData(
-                  spots: item.points,
-                  isCurved: lineMode == 'smooth' && item.points.length > 2,
-                  preventCurveOverShooting: true,
-                  curveSmoothness: 0.22,
-                  barWidth: drawLine ? 2.2 : 0,
-                  color: item.color,
-                  dotData: FlDotData(
-                    show: true,
-                    getDotPainter:
-                        (FlSpot _, double __, LineChartBarData ___, int ____) =>
-                            FlDotCirclePainter(
-                              radius: 4.2,
-                              color: item.color,
-                              strokeWidth: 1.4,
-                              strokeColor: Colors.white,
-                            ),
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final Size viewportSize = Size(
+            math.max(1, constraints.maxWidth),
+            math.max(1, constraints.maxHeight),
+          );
+          final ImpedanceLayout layout = layoutImpedanceCircles(
+            channelLabels: data.channelLabels,
+            coordinates: matchedCoordinates,
+            viewportSize: viewportSize,
+            preferredRadius: _circleRadius,
+          );
+          return ClipRect(
+            child: InteractiveViewer(
+              constrained: false,
+              minScale: 0.25,
+              maxScale: 4,
+              boundaryMargin: const EdgeInsets.all(80),
+              child: SizedBox(
+                width: layout.surfaceSize.width,
+                height: layout.surfaceSize.height,
+                child: Stack(
+                  children: List<Widget>.generate(data.channelCount, (
+                    int channelIndex,
+                  ) {
+                    final double? ohms =
+                        data.ohmsByChannel[channelIndex][measurementIndex];
+                    final Offset center = layout.positions[channelIndex];
+                    return Positioned(
+                      left: center.dx - layout.circleRadius,
+                      top: center.dy - layout.circleRadius,
+                      width: layout.circleRadius * 2,
+                      height: layout.circleRadius * 2,
+                      child: _ImpedanceCircle(
+                        label: data.channelLabels[channelIndex],
+                        ohms: ohms,
+                      ),
+                    );
+                  }, growable: false),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ImpedanceCircle extends StatelessWidget {
+  const _ImpedanceCircle({required this.label, required this.ohms});
+
+  final String label;
+  final double? ohms;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = _impedanceColor(ohms);
+    final Color textColor = color.computeLuminance() > 0.38
+        ? Colors.black
+        : Colors.white;
+    final String value = _formatImpedanceValue(ohms);
+    return Tooltip(
+      message: '$label: $value',
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white70, width: 1.5),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 5,
+              offset: Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
                   ),
-                );
-              })
-              .toList(growable: false),
-          clipData: const FlClipData.all(),
+                ),
+                Text(value, style: TextStyle(color: textColor, fontSize: 10)),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
+}
+
+class _ImpedanceColorLegend extends StatelessWidget {
+  const _ImpedanceColorLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 360),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Impedance (kΩ)',
+            style: TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          Container(
+            height: 12,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              gradient: const LinearGradient(
+                colors: <Color>[
+                  Color(0xFF1F716B),
+                  Color(0xFF77843F),
+                  Color(0xFFAA7134),
+                  Color(0xFF9C3F4F),
+                ],
+              ),
+            ),
+          ),
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              Text('1', style: TextStyle(color: Colors.white60, fontSize: 10)),
+              Text('5', style: TextStyle(color: Colors.white60, fontSize: 10)),
+              Text('10', style: TextStyle(color: Colors.white60, fontSize: 10)),
+              Text('20', style: TextStyle(color: Colors.white60, fontSize: 10)),
+              Text('50', style: TextStyle(color: Colors.white60, fontSize: 10)),
+              Text(
+                '100+',
+                style: TextStyle(color: Colors.white60, fontSize: 10),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+ChannelCoordinate? _impedanceCoordinateForLabel(
+  Map<String, ChannelCoordinate> coordinates,
+  String label,
+) => ChannelCoordinatesNodeType.coordinateForChannelLabel(coordinates, label);
+
+Color _impedanceColor(double? ohms) {
+  if (ohms == null || !ohms.isFinite || ohms <= 0) {
+    return const Color(0xFF4A4A50);
+  }
+  final double normalized = ((math.log(ohms / 1000) / math.ln10) / 2).clamp(
+    0.0,
+    1.0,
+  );
+  const List<Color> colors = <Color>[
+    Color(0xFF1F716B),
+    Color(0xFF77843F),
+    Color(0xFFAA7134),
+    Color(0xFF9C3F4F),
+  ];
+  final double scaled = normalized * (colors.length - 1);
+  final int first = scaled.floor().clamp(0, colors.length - 1);
+  final int second = math.min(first + 1, colors.length - 1);
+  return Color.lerp(colors[first], colors[second], scaled - first)!;
+}
+
+String _formatImpedanceValue(double? ohms) {
+  if (ohms == null || !ohms.isFinite || ohms <= 0) {
+    return 'No data';
+  }
+  final double kiloOhms = ohms / 1000;
+  return '${kiloOhms >= 100 ? kiloOhms.toStringAsFixed(0) : kiloOhms.toStringAsFixed(1)} kΩ';
+}
+
+String _formatImpedanceTime(int micros) {
+  final double seconds = micros / 1000000;
+  return 't = ${seconds.toStringAsFixed(seconds.abs() >= 100 ? 1 : 3)} s';
 }
 
 Map<String, List<double>> _psdConditionPowers(
