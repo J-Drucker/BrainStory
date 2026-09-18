@@ -18,6 +18,7 @@ import '../nodes/bridge_detector_node.dart';
 import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
 import '../nodes/edit_channels_node.dart';
+import '../nodes/export_edf_node.dart';
 import '../nodes/import_node.dart';
 import '../nodes/ica_component_rejection_node.dart';
 import '../nodes/impedances_node.dart';
@@ -34,11 +35,13 @@ import '../nodes/time_frequency_node.dart';
 import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/node_snapshot_codec.dart';
+import '../platform/node_artifact_export.dart';
 import '../platform/browser_source_files.dart';
 import '../platform/project_file_save.dart';
 import '../platform/recent_project_path.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
+import 'node_export_dialog.dart';
 
 enum _OutputHandleKind {
   timeSeries,
@@ -2968,6 +2971,7 @@ class CanvasLogic {
           value: 'memory',
           child: Text('Memory management'),
         ),
+        const PopupMenuItem<String>(value: 'export', child: Text('Export')),
         if (selectedCombination != null)
           PopupMenuItem<String>(
             value: 'combine_selected',
@@ -3088,6 +3092,15 @@ class CanvasLogic {
         return;
       case 'memory':
         await showMemoryManagerDialog(context, update: update, node: node);
+        return;
+      case 'export':
+        _openNodeEditor(
+          context: context,
+          node: node,
+          update: update,
+          initialTabIndex: 1,
+          startInExportMode: true,
+        );
         return;
       case 'edit':
         _openNodeEditor(context: context, node: node, update: update);
@@ -3648,6 +3661,8 @@ class CanvasLogic {
     required BuildContext context,
     required NodeModel node,
     required VoidCallback update,
+    int initialTabIndex = 0,
+    bool startInExportMode = false,
   }) {
     final Map<String, dynamic> editorParams = Map<String, dynamic>.from(
       node.params,
@@ -3698,6 +3713,8 @@ class CanvasLogic {
         processedDatasetStates: _processedDatasetStatesForNode(node),
         portStatusSummary: _portStatusSummaryForNode(node),
         processingSteps: processingStepsForNode(node.id),
+        initialTabIndex: initialTabIndex,
+        startInExportMode: startInExportMode,
       ),
     );
   }
@@ -6740,7 +6757,125 @@ class CanvasLogic {
             datasetIds: datasetIds,
             update: update,
           ),
+      exportArtifacts:
+          (BuildContext context, Set<NodeArtifactExportSelection> selections) =>
+              _exportNodeArtifacts(
+                context: context,
+                node: node,
+                selections: selections,
+                update: update,
+              ),
     );
+  }
+
+  Future<void> _exportNodeArtifacts({
+    required BuildContext context,
+    required NodeModel node,
+    required Set<NodeArtifactExportSelection> selections,
+    required VoidCallback update,
+  }) async {
+    final NodeArtifactExportOptions? options =
+        await showNodeArtifactExportOptionsDialog(context);
+    if (options == null || !context.mounted) return;
+
+    try {
+      final Map<String, Dataset> sourceDatasets = _datasetsById();
+      final Set<String> selectedDatasetIds = selections
+          .map((NodeArtifactExportSelection item) => item.datasetId)
+          .toSet();
+      final List<Dataset> views = <Dataset>[];
+      for (final String datasetId in selectedDatasetIds) {
+        final Dataset? source = sourceDatasets[datasetId];
+        if (source == null) continue;
+        final Dataset view = await materializedDatasetViewForNode(
+          node.id,
+          source,
+        );
+        view.path = source.path;
+        views.add(view);
+      }
+      if (views.isEmpty) {
+        throw StateError('No selected datasets are available to export.');
+      }
+
+      final NodeArtifactExportResult result = await exportNodeArtifacts(
+        nodeTitle: node.title,
+        datasets: views,
+        selections: selections,
+        options: options,
+      );
+      if (result.locations.isEmpty) {
+        throw StateError('No export files were created.');
+      }
+
+      _recordUndo('export ${node.title}');
+      final ExportNodeType exportType = ExportNodeType();
+      final NodeModel exportNode = _buildNode(
+        type: exportType,
+        position: _nearestAvailablePosition(
+          Offset(node.position.dx + _cardWidth + _spawnGap, node.position.dy),
+        ),
+        params: <String, dynamic>{
+          ...exportType.defaultParams,
+          '_artifactExportRecord': true,
+          'sourceNodeId': node.id,
+          'selectedDatasetIds': selectedDatasetIds.toList(growable: false),
+          'artifacts': selections
+              .map((NodeArtifactExportSelection item) => item.artifact.name)
+              .toSet()
+              .toList(growable: false),
+          'formats': options.formats
+              .map((NodeArtifactExportFormat format) => format.name)
+              .toList(growable: false),
+          'separateDatasets': options.separateDatasets,
+          'separateArtifacts': options.separateArtifacts,
+          'shape': options.shape.name,
+          'exportedLocations': result.locations,
+          'completedAt': DateTime.now().toIso8601String(),
+        },
+      );
+      nodes.add(exportNode);
+      final _PortConnection? portConnection = _firstMatchingPortConnection(
+        node,
+        exportNode,
+      );
+      if (portConnection != null) {
+        connections.add(<String, dynamic>{
+          'fromNode': node.id,
+          'fromPort': portConnection.fromPortIndex,
+          'toNode': exportNode.id,
+          'toPort': portConnection.toPortIndex,
+        });
+      }
+      for (final Dataset dataset in datasets.values) {
+        exportNode.datasetStates[dataset.id] =
+            selectedDatasetIds.contains(dataset.id)
+            ? DatasetState.done
+            : DatasetState.notReady;
+      }
+      selectedNodeId = exportNode.id;
+      selectedNodeIds
+        ..clear()
+        ..add(exportNode.id);
+      selectedConnectionIndex = null;
+      keyboardFocusedNodeId = exportNode.id;
+      update();
+      if (context.mounted) {
+        final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+        Navigator.of(context).pop();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Exported ${result.locations.length} file(s) and created an Export node.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        _showStatusSnackBar(context, 'Export failed: $error');
+      }
+    }
   }
 
   Future<void> _materializeNodeOutput(
@@ -7157,6 +7292,9 @@ class CanvasLogic {
     final Set<String> datasetIds = <String>{
       for (final NodeModel parent in parents) ..._datasetsForNode(parent),
     };
+    if (parents.isEmpty) {
+      datasetIds.addAll(_datasetsForNode(node));
+    }
     final Map<String, Dataset> datasetsById = _datasetsById();
     final List<Dataset> tableDatasets =
         datasetIds
@@ -7232,6 +7370,9 @@ class CanvasLogic {
 
     final Set<NodePersistenceArtifact> ownOutputArtifacts =
         <NodePersistenceArtifact>{};
+    for (final PortSpec input in node.inputPorts) {
+      ownOutputArtifacts.addAll(_persistenceArtifactsForPort(input));
+    }
     for (final PortSpec output in node.outputPorts) {
       ownOutputArtifacts.addAll(_persistenceArtifactsForPort(output));
     }
@@ -7244,6 +7385,7 @@ class CanvasLogic {
           connectedNodeId: node.id,
           connectedNodeLabel: '${_nodeDescriptor(node)} output',
           artifact: artifact,
+          selectedNodeOutput: true,
         ),
         statusNode: node,
         providesArtifact: true,
@@ -7395,6 +7537,19 @@ class CanvasLogic {
     final bool materialized =
         snapshot != null &&
         _snapshotContainsPersistenceArtifact(snapshot, build.column.artifact);
+    final bool artifactAvailable =
+        onDisk ||
+        materialized ||
+        _persistenceArtifactAvailableFromNode(
+          statusNode,
+          dataset,
+          build.column.artifact,
+        );
+    if (!artifactAvailable) {
+      return const NodePersistenceCell(
+        status: NodePersistenceStatus.outputNotReady,
+      );
+    }
     return NodePersistenceCell(
       status: NodePersistenceStatus.outputDone,
       active: materialized || (!onDisk && !passThrough),
@@ -9694,6 +9849,23 @@ class CanvasLogic {
         _EffectiveOutputPort(
           portIndex: node.outputPorts.length,
           port: const PortSpec(name: 'markers', type: PortType.markers),
+        ),
+      );
+    }
+    final Set<PortType> exposedTypes = ports
+        .map((_EffectiveOutputPort item) => item.port.type)
+        .toSet();
+    int nextSyntheticPortIndex = ports.fold<int>(
+      0,
+      (int next, _EffectiveOutputPort item) =>
+          math.max(next, item.portIndex + 1),
+    );
+    for (final PortSpec input in node.inputPorts) {
+      if (!exposedTypes.add(input.type)) continue;
+      ports.add(
+        _EffectiveOutputPort(
+          portIndex: nextSyntheticPortIndex++,
+          port: PortSpec(name: '${input.name} pass-through', type: input.type),
         ),
       );
     }

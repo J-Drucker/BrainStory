@@ -220,6 +220,7 @@ class NodePersistenceColumn {
     required this.artifact,
     this.connectedNodeId,
     this.synthetic = false,
+    this.selectedNodeOutput = false,
   });
 
   final String id;
@@ -228,6 +229,7 @@ class NodePersistenceColumn {
   final String connectedNodeLabel;
   final NodePersistenceArtifact artifact;
   final bool synthetic;
+  final bool selectedNodeOutput;
 }
 
 class NodePersistenceCell {
@@ -266,6 +268,36 @@ class NodePersistenceTableSnapshot {
   final List<NodePersistenceRow> rows;
 }
 
+class NodeArtifactExportSelection {
+  const NodeArtifactExportSelection({
+    required this.datasetId,
+    required this.artifact,
+  });
+
+  final String datasetId;
+  final NodePersistenceArtifact artifact;
+
+  String get key => '$datasetId:${artifact.name}';
+}
+
+enum NodeArtifactExportFormat { csv, json }
+
+enum NodeArtifactExportShape { long, wide }
+
+class NodeArtifactExportOptions {
+  const NodeArtifactExportOptions({
+    required this.formats,
+    required this.separateDatasets,
+    required this.separateArtifacts,
+    required this.shape,
+  });
+
+  final Set<NodeArtifactExportFormat> formats;
+  final bool separateDatasets;
+  final bool separateArtifacts;
+  final NodeArtifactExportShape shape;
+}
+
 class NodePortStatusSummary {
   const NodePortStatusSummary({required this.inputs, required this.outputs});
 
@@ -299,6 +331,7 @@ class NodeDatasetActions {
     required this.purgeActiveMemory,
     required this.saveToDisk,
     required this.purgeFromDisk,
+    this.exportArtifacts,
   });
 
   final bool supportsDisk;
@@ -344,6 +377,11 @@ class NodeDatasetActions {
     Set<String> datasetIds,
   )
   purgeFromDisk;
+  final Future<void> Function(
+    BuildContext context,
+    Set<NodeArtifactExportSelection> selections,
+  )?
+  exportArtifacts;
 }
 
 class NodeExecutionContext {
@@ -437,6 +475,8 @@ abstract class NodeType {
     required Map<String, DatasetState> processedDatasetStates,
     required NodePortStatusSummary portStatusSummary,
     required List<String> processingSteps,
+    int initialTabIndex = 0,
+    bool startInExportMode = false,
   }) {
     return _NodeConfigDialog(
       title: title,
@@ -454,6 +494,8 @@ abstract class NodeType {
       datasetActions: datasetActions,
       defaultStoragePolicy: defaultStoragePolicy,
       showSourceFiles: title == 'Import',
+      initialTabIndex: initialTabIndex,
+      startInExportMode: startInExportMode,
     );
   }
 

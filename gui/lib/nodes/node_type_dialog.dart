@@ -17,6 +17,8 @@ class _NodeConfigDialog extends StatefulWidget {
     required this.datasetActions,
     required this.defaultStoragePolicy,
     required this.showSourceFiles,
+    required this.initialTabIndex,
+    required this.startInExportMode,
   });
 
   final String title;
@@ -39,6 +41,8 @@ class _NodeConfigDialog extends StatefulWidget {
   final NodeDatasetActions? datasetActions;
   final NodeStoragePolicy defaultStoragePolicy;
   final bool showSourceFiles;
+  final int initialTabIndex;
+  final bool startInExportMode;
 
   @override
   State<_NodeConfigDialog> createState() => _NodeConfigDialogState();
@@ -54,7 +58,11 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(
+      length: 2,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, 1),
+    );
     localParams = Map<String, dynamic>.from(widget.params);
     final Set<String> selectedDatasetIds = Set<String>.from(
       localParams['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[],
@@ -246,6 +254,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
                     localParams['storagePolicy'] = policy.wireValue;
                   });
                 },
+                startInExportMode: widget.startInExportMode,
               ),
             ],
           ),
@@ -319,7 +328,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
   }
 }
 
-class _NodePersistenceTab extends StatelessWidget {
+class _NodePersistenceTab extends StatefulWidget {
   const _NodePersistenceTab({
     required this.datasets,
     required this.selectedDatasetIds,
@@ -327,6 +336,7 @@ class _NodePersistenceTab extends StatelessWidget {
     required this.storagePolicy,
     required this.datasetActions,
     required this.onStoragePolicyChanged,
+    required this.startInExportMode,
   });
 
   final List<MapEntry<String, Dataset>> datasets;
@@ -335,10 +345,40 @@ class _NodePersistenceTab extends StatelessWidget {
   final NodeStoragePolicy storagePolicy;
   final NodeDatasetActions? datasetActions;
   final ValueChanged<NodeStoragePolicy> onStoragePolicyChanged;
+  final bool startInExportMode;
+
+  @override
+  State<_NodePersistenceTab> createState() => _NodePersistenceTabState();
+}
+
+class _NodePersistenceTabState extends State<_NodePersistenceTab> {
+  late bool _exportMode;
+  final Set<String> _selected = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _exportMode = widget.startInExportMode;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final NodePersistenceTableSnapshot table = statusSnapshot.persistenceTable;
+    final NodePersistenceTableSnapshot table =
+        widget.statusSnapshot.persistenceTable;
+    final List<NodePersistenceColumn> exportColumns = table.columns
+        .where(
+          (NodePersistenceColumn column) =>
+              column.direction == NodePersistenceDirection.output &&
+              column.selectedNodeOutput,
+        )
+        .toList(growable: false);
+    final Set<String> eligible = <String>{
+      for (final NodePersistenceRow row in table.rows)
+        for (final NodePersistenceColumn column in exportColumns)
+          if (row.cells[column.id]?.status == NodePersistenceStatus.outputDone)
+            '${row.datasetId}:${column.artifact.name}',
+    };
+    _selected.removeWhere((String key) => !eligible.contains(key));
     return Column(
       key: const ValueKey<String>('node-persistence-tab-content'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -351,10 +391,10 @@ class _NodePersistenceTab extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             DropdownButton<NodeStoragePolicy>(
-              value: storagePolicy,
+              value: widget.storagePolicy,
               onChanged: (NodeStoragePolicy? policy) {
                 if (policy != null) {
-                  onStoragePolicyChanged(policy);
+                  widget.onStoragePolicyChanged(policy);
                 }
               },
               items: NodeStoragePolicy.values
@@ -367,6 +407,64 @@ class _NodePersistenceTab extends StatelessWidget {
                   )
                   .toList(growable: false),
             ),
+            const Spacer(),
+            if (!_exportMode)
+              OutlinedButton.icon(
+                onPressed: widget.datasetActions?.exportArtifacts == null
+                    ? null
+                    : () => setState(() => _exportMode = true),
+                icon: const Icon(Icons.download),
+                label: const Text('Export'),
+              )
+            else ...<Widget>[
+              TextButton(
+                onPressed: eligible.isEmpty
+                    ? null
+                    : () => setState(() {
+                        if (_selected.length == eligible.length) {
+                          _selected.clear();
+                        } else {
+                          _selected
+                            ..clear()
+                            ..addAll(eligible);
+                        }
+                      }),
+                child: Text(
+                  _selected.length == eligible.length && eligible.isNotEmpty
+                      ? 'Clear all'
+                      : 'Select all',
+                ),
+              ),
+              TextButton(
+                onPressed: () => setState(() {
+                  _exportMode = false;
+                  _selected.clear();
+                }),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: _selected.isEmpty
+                    ? null
+                    : () async {
+                        final Set<NodeArtifactExportSelection>
+                        selections = _selected.map((String key) {
+                          final int separator = key.lastIndexOf(':');
+                          return NodeArtifactExportSelection(
+                            datasetId: key.substring(0, separator),
+                            artifact: NodePersistenceArtifact.values.firstWhere(
+                              (NodePersistenceArtifact artifact) =>
+                                  artifact.name == key.substring(separator + 1),
+                            ),
+                          );
+                        }).toSet();
+                        await widget.datasetActions?.exportArtifacts?.call(
+                          context,
+                          selections,
+                        );
+                      },
+                child: const Text('Continue'),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 12),
@@ -378,7 +476,17 @@ class _NodePersistenceTab extends StatelessWidget {
                     style: TextStyle(color: Colors.black54),
                   ),
                 )
-              : _NodePersistenceTable(table: table),
+              : _NodePersistenceTable(
+                  table: table,
+                  exportMode: _exportMode,
+                  selected: _selected,
+                  eligible: eligible,
+                  onSelectionChanged: (String key, bool selected) {
+                    setState(() {
+                      selected ? _selected.add(key) : _selected.remove(key);
+                    });
+                  },
+                ),
         ),
       ],
     );
@@ -386,7 +494,13 @@ class _NodePersistenceTab extends StatelessWidget {
 }
 
 class _NodePersistenceTable extends StatelessWidget {
-  const _NodePersistenceTable({required this.table});
+  const _NodePersistenceTable({
+    required this.table,
+    required this.exportMode,
+    required this.selected,
+    required this.eligible,
+    required this.onSelectionChanged,
+  });
 
   static const double _datasetWidth = 180;
   static const double _columnWidth = 148;
@@ -394,6 +508,10 @@ class _NodePersistenceTable extends StatelessWidget {
   static const double _rowHeight = 50;
 
   final NodePersistenceTableSnapshot table;
+  final bool exportMode;
+  final Set<String> selected;
+  final Set<String> eligible;
+  final void Function(String key, bool selected) onSelectionChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -468,6 +586,8 @@ class _NodePersistenceTable extends StatelessWidget {
                                             status: NodePersistenceStatus
                                                 .outputNotReady,
                                           ),
+                                      row: row,
+                                      column: column,
                                     );
                                   })
                                   .toList(growable: false),
@@ -581,8 +701,14 @@ class _NodePersistenceTable extends StatelessWidget {
     );
   }
 
-  Widget _statusCell(NodePersistenceCell cell) {
+  Widget _statusCell(
+    NodePersistenceCell cell, {
+    required NodePersistenceRow row,
+    required NodePersistenceColumn column,
+  }) {
     final List<_PersistenceBadgeSpec> badges = _persistenceBadges(cell);
+    final String selectionKey = '${row.datasetId}:${column.artifact.name}';
+    final bool canSelect = eligible.contains(selectionKey);
     return Container(
       width: _columnWidth,
       height: _rowHeight,
@@ -594,36 +720,54 @@ class _NodePersistenceTable extends StatelessWidget {
           bottom: BorderSide(color: Colors.black12),
         ),
       ),
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        runAlignment: WrapAlignment.center,
-        spacing: 4,
-        runSpacing: 3,
-        children: badges
-            .map(
-              (_PersistenceBadgeSpec badge) => DecoratedBox(
-                decoration: BoxDecoration(
-                  color: badge.color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: badge.color.withValues(alpha: 0.5)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 2,
-                  ),
-                  child: Text(
-                    badge.label,
-                    style: TextStyle(
-                      color: badge.color,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          if (exportMode && column.selectedNodeOutput)
+            Checkbox(
+              value: selected.contains(selectionKey),
+              onChanged: canSelect
+                  ? (bool? value) =>
+                        onSelectionChanged(selectionKey, value == true)
+                  : null,
+              visualDensity: VisualDensity.compact,
+            ),
+          Flexible(
+            child: Wrap(
+              alignment: WrapAlignment.center,
+              runAlignment: WrapAlignment.center,
+              spacing: 4,
+              runSpacing: 3,
+              children: badges
+                  .map(
+                    (_PersistenceBadgeSpec badge) => DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: badge.color.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: badge.color.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
+                        child: Text(
+                          badge.label,
+                          style: TextStyle(
+                            color: badge.color,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            )
-            .toList(growable: false),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -30,6 +30,8 @@ class ExportNodeType extends NodeType {
   @override
   List<PortSpec> get inputs => const [
     PortSpec(name: 'signal', type: PortType.signal),
+    PortSpec(name: 'markers', type: PortType.markers),
+    PortSpec(name: 'matrix', type: PortType.matrixTransformation),
     PortSpec(name: 'table', type: PortType.metadata),
   ];
 
@@ -38,10 +40,41 @@ class ExportNodeType extends NodeType {
 
   @override
   Widget buildBody(
-      Map<String, dynamic> params, {
-        required Map<String, Dataset> datasets,
-        required void Function(void Function()) setState,
-      }) {
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) {
+    if (params['_artifactExportRecord'] == true) {
+      final List<String> artifacts =
+          (params['artifacts'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false);
+      final List<String> formats =
+          (params['formats'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString().toUpperCase())
+              .toList(growable: false);
+      final List<String> locations =
+          (params['exportedLocations'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const Text(
+            'Completed export',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          Text('Artifacts: ${artifacts.join(', ')}'),
+          Text('Formats: ${formats.join(', ')}'),
+          Text('Layout: ${params['shape'] ?? 'long'}'),
+          const SizedBox(height: 8),
+          for (final String location in locations)
+            SelectableText(location, style: const TextStyle(fontSize: 12)),
+        ],
+      );
+    }
     params.putIfAbsent('fileType', () => 'edf');
     final _ExportCapabilities capabilities = _visibleExportCapabilities(
       datasets: datasets,
@@ -50,24 +83,24 @@ class ExportNodeType extends NodeType {
     );
     final List<NodeDropdownOption<String>> fileTypeOptions =
         <NodeDropdownOption<String>>[
-      NodeDropdownOption<String>(
-        value: 'edf',
-        label: capabilities.hasSignal ? 'EDF' : 'EDF (needs signal input)',
-        enabled: capabilities.hasSignal,
-      ),
-      NodeDropdownOption<String>(
-        value: 'csv',
-        label: capabilities.hasFeatureTable
-            ? 'CSV'
-            : 'CSV (needs table output)',
-        enabled: capabilities.hasFeatureTable,
-      ),
-      const NodeDropdownOption<String>(
-        value: 'json',
-        label: 'JSON (coming soon)',
-        enabled: false,
-      ),
-    ];
+          NodeDropdownOption<String>(
+            value: 'edf',
+            label: capabilities.hasSignal ? 'EDF' : 'EDF (needs signal input)',
+            enabled: capabilities.hasSignal,
+          ),
+          NodeDropdownOption<String>(
+            value: 'csv',
+            label: capabilities.hasFeatureTable
+                ? 'CSV'
+                : 'CSV (needs table output)',
+            enabled: capabilities.hasFeatureTable,
+          ),
+          const NodeDropdownOption<String>(
+            value: 'json',
+            label: 'JSON (coming soon)',
+            enabled: false,
+          ),
+        ];
     final String currentFileType = params['fileType']?.toString() ?? 'edf';
     final bool currentEnabled = fileTypeOptions.any(
       (NodeDropdownOption<String> option) =>
@@ -115,27 +148,28 @@ class ExportNodeType extends NodeType {
           parser: (String value, dynamic _) => value.trim(),
         ),
         const SizedBox(height: 8),
-        Text(
-          switch ((params['fileType']?.toString() ?? 'edf')) {
-            'edf' =>
-              'Exports the incoming signal for each selected dataset as an EDF. Multi-channel signals are preserved.',
-            'csv' =>
-              'Exports the incoming table artifact for each selected dataset as a CSV file.',
-            _ => 'This export type is not implemented yet.',
-          },
-        ),
+        Text(switch ((params['fileType']?.toString() ?? 'edf')) {
+          'edf' =>
+            'Exports the incoming signal for each selected dataset as an EDF. Multi-channel signals are preserved.',
+          'csv' =>
+            'Exports the incoming table artifact for each selected dataset as a CSV file.',
+          _ => 'This export type is not implemented yet.',
+        }),
       ],
     );
   }
 
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    if (params['_artifactExportRecord'] == true) return;
     final String fileType = params['fileType']?.toString() ?? 'edf';
     final TimeSeriesData? timeSeries = dataset.timeSeries;
-    final String suffix = (params['filenameSuffix']?.toString().trim().isEmpty ?? true)
+    final String suffix =
+        (params['filenameSuffix']?.toString().trim().isEmpty ?? true)
         ? '_brainstory'
         : params['filenameSuffix'].toString().trim();
-    final String outputDirectory = params['outputDirectory']?.toString().trim() ?? '';
+    final String outputDirectory =
+        params['outputDirectory']?.toString().trim() ?? '';
     late final SavedFileResult result;
 
     switch (fileType) {
@@ -149,7 +183,8 @@ class ExportNodeType extends NodeType {
           labels: timeSeries.channelLabels.isEmpty
               ? List<String>.generate(
                   timeSeries.channels.length,
-                  (int index) => '${dataset.label.isEmpty ? 'Signal' : dataset.label} ${index + 1}',
+                  (int index) =>
+                      '${dataset.label.isEmpty ? 'Signal' : dataset.label} ${index + 1}',
                   growable: false,
                 )
               : timeSeries.channelLabels,
@@ -170,7 +205,9 @@ class ExportNodeType extends NodeType {
         }
         result = await saveTextFile(
           text: featureTable.toCsv(),
-          suggestedBaseName: dataset.label.isEmpty ? 'brainstory_table' : dataset.label,
+          suggestedBaseName: dataset.label.isEmpty
+              ? 'brainstory_table'
+              : dataset.label,
           filenameSuffix: suffix,
           fileExtension: 'csv',
           datasetPath: dataset.path,
@@ -197,7 +234,9 @@ String resolveEdfExportFile({
     datasetPath: dataset.path,
     outputDirectory: outputDirectory,
     filenameSuffix: filenameSuffix,
-    suggestedBaseName: dataset.label.isEmpty ? 'brainstory_signal' : dataset.label,
+    suggestedBaseName: dataset.label.isEmpty
+        ? 'brainstory_signal'
+        : dataset.label,
   );
 }
 
@@ -211,7 +250,9 @@ String resolveTextExportFile({
     datasetPath: dataset.path,
     outputDirectory: outputDirectory,
     filenameSuffix: filenameSuffix,
-    suggestedBaseName: dataset.label.isEmpty ? 'brainstory_export' : dataset.label,
+    suggestedBaseName: dataset.label.isEmpty
+        ? 'brainstory_export'
+        : dataset.label,
     fileExtension: fileExtension,
   );
 }
@@ -230,14 +271,19 @@ _ExportCapabilities _visibleExportCapabilities({
   required Map<String, Dataset> datasets,
   required List<dynamic> selectedDatasetIds,
 }) {
-  final Iterable<Dataset> visibleDatasets = datasets.values.where((Dataset dataset) {
-    return selectedDatasetIds.isEmpty || selectedDatasetIds.contains(dataset.id);
+  final Iterable<Dataset> visibleDatasets = datasets.values.where((
+    Dataset dataset,
+  ) {
+    return selectedDatasetIds.isEmpty ||
+        selectedDatasetIds.contains(dataset.id);
   });
   bool hasSignal = false;
   bool hasFeatureTable = false;
   for (final Dataset dataset in visibleDatasets) {
-    hasSignal = hasSignal ||
-        (dataset.timeSeries != null && dataset.timeSeries!.primaryChannel.isNotEmpty);
+    hasSignal =
+        hasSignal ||
+        (dataset.timeSeries != null &&
+            dataset.timeSeries!.primaryChannel.isNotEmpty);
     hasFeatureTable = hasFeatureTable || dataset.featureTable != null;
   }
   return _ExportCapabilities(
@@ -277,29 +323,39 @@ List<int> buildEdfBytes({
       .reduce((int left, int right) => left > right ? left : right);
   final int numDataRecords = (maxChannelLength / samplesPerRecord).ceil();
   final int channelCount = channelSamples.length;
-  final List<List<double>> paddedChannels = channelSamples.map((List<double> samples) {
-    final List<double> padded = List<double>.filled(
-      numDataRecords * samplesPerRecord,
-      0.0,
-    );
-    for (int i = 0; i < samples.length; i++) {
-      padded[i] = samples[i];
-    }
-    return padded;
-  }).toList(growable: false);
+  final List<List<double>> paddedChannels = channelSamples
+      .map((List<double> samples) {
+        final List<double> padded = List<double>.filled(
+          numDataRecords * samplesPerRecord,
+          0.0,
+        );
+        for (int i = 0; i < samples.length; i++) {
+          padded[i] = samples[i];
+        }
+        return padded;
+      })
+      .toList(growable: false);
 
   final List<double> physicalMins = paddedChannels
-      .map((List<double> samples) => samples.reduce((double a, double b) => a < b ? a : b))
+      .map(
+        (List<double> samples) =>
+            samples.reduce((double a, double b) => a < b ? a : b),
+      )
       .toList(growable: false);
   final List<double> physicalMaxs = paddedChannels
-      .map((List<double> samples) => samples.reduce((double a, double b) => a > b ? a : b))
+      .map(
+        (List<double> samples) =>
+            samples.reduce((double a, double b) => a > b ? a : b),
+      )
       .toList(growable: false);
 
   const int digitalMin = -32768;
   const int digitalMax = 32767;
 
   String field(String value, int length) {
-    final String trimmed = value.length > length ? value.substring(0, length) : value;
+    final String trimmed = value.length > length
+        ? value.substring(0, length)
+        : value;
     return trimmed.padRight(length);
   }
 
@@ -316,7 +372,9 @@ List<int> buildEdfBytes({
     ..write(field(channelCount.toString(), 4));
 
   for (int index = 0; index < channelCount; index++) {
-    final String label = index < labels.length ? labels[index] : 'Ch ${index + 1}';
+    final String label = index < labels.length
+        ? labels[index]
+        : 'Ch ${index + 1}';
     header.write(field(label, 16));
   }
   for (int index = 0; index < channelCount; index++) {
@@ -359,7 +417,8 @@ List<int> buildEdfBytes({
   builder.add(header.toString().codeUnits);
 
   final List<double> scales = List<double>.generate(channelCount, (int index) {
-    return (digitalMax - digitalMin) / (physicalMaxs[index] - physicalMins[index]);
+    return (digitalMax - digitalMin) /
+        (physicalMaxs[index] - physicalMins[index]);
   }, growable: false);
 
   for (int record = 0; record < numDataRecords; record++) {
@@ -371,10 +430,12 @@ List<int> buildEdfBytes({
           physicalMins[channelIndex],
           physicalMaxs[channelIndex],
         );
-        final int digital = (digitalMin +
-                ((clamped - physicalMins[channelIndex]) * scales[channelIndex]))
-            .round()
-            .clamp(digitalMin, digitalMax);
+        final int digital =
+            (digitalMin +
+                    ((clamped - physicalMins[channelIndex]) *
+                        scales[channelIndex]))
+                .round()
+                .clamp(digitalMin, digitalMax);
         final int unsigned = digital & 0xFFFF;
         builder.add(<int>[unsigned & 0xFF, (unsigned >> 8) & 0xFF]);
       }
