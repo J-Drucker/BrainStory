@@ -7,8 +7,9 @@ Data Wrangling,Metadata,Channel Coordinates,dart,no
 Signal Processing,Frequency Domain,Bandpass Filter,rust,yes
 Signal Processing,Time Domain,Amplitude Features,dart,yes
 Signal Processing,Frequency Domain,PSD,rust,yes
+Signal Processing,Frequency Domain,Time-Frequency (Wavelet),rust,yes
 Signal Processing,Frequency Domain,Average Spectra,dart,yes
-Signal Processing,Frequency Domain,FOOOF,toy,yes
+Signal Processing,Frequency Domain,FOOOF,toy,no
 Signal Processing,Frequency Domain,Spectral Features,dart,yes
 Signal Processing,Matrix Transformation,Microstates,toy,no
 Signal Processing,Matrix Transformation,PCA,toy,no
@@ -16,18 +17,19 @@ Signal Processing,Matrix Transformation,ICA,rust,yes
 Signal Processing,Matrix Transformation,Apply ICA,dart,yes
 Signal Processing,Matrix Transformation,Eigenvalue Decomposition,toy,no
 Signal Processing,Matrix Transformation,Source Reconstruction,toy,no
-Multimodal,Electrocardiography (EKG),Detect Peaks,toy,yes
-Multimodal,Electrocardiography (EKG),Interbeat-interval (IBI),toy,yes
-Multimodal,Electrocardiography (EKG),Heart rate variability (HRV),toy,yes
+Multimodal,Electrocardiography (EKG),Detect Peaks,toy,no
+Multimodal,Electrocardiography (EKG),Interbeat-interval (IBI),toy,no
+Multimodal,Electrocardiography (EKG),Heart rate variability (HRV),toy,no
+Machine Learning,Clustering,Gaussian Mixture,rust,yes
 Machine Learning,Subcategory 1,K-Means,toy,no
 Machine Learning,Subcategory 1,CNN,toy,no
 Markers and Metadata,Subcategory 1,Edit Markers,dart,yes
 Markers and Metadata,Subcategory 1,Edit Channels and Markers,dart,yes
 Markers and Metadata,Subcategory 1,Recode Markers,dart,yes
 Markers and Metadata,Subcategory 1,Segmentation,dart,yes
-Markers and Metadata,Subcategory 1,Eye Blinks,pass-through (no change),yes
+Markers and Metadata,Subcategory 1,Eye Blinks,pass-through (no change),no
 Markers and Metadata,Subcategory 1,Interactive Artifact Detection,dart,yes
-Markers and Metadata,Subcategory 1,Sleep Staging,toy,yes
+Markers and Metadata,Subcategory 1,Sleep Staging,toy,no
 Markers and Metadata,Subcategory 1,Realign,dart,yes
 Endpoints,Visualize,Impedances,dart,yes
 Endpoints,Visualize,EEG Visualization,pass-through (no change),no

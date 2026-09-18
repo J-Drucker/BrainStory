@@ -25,6 +25,7 @@ import 'package:brainstory_gui/nodes/impedances_node.dart';
 import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
+import 'package:brainstory_gui/nodes/node_registry.dart';
 import 'package:brainstory_gui/nodes/psd_average_node.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
 import 'package:brainstory_gui/nodes/recode_markers_node.dart';
@@ -50,6 +51,26 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('node palette hides unfinished implementations', () {
+    final Set<String> visibleTitles = NodeRegistry.entries
+        .where((NodeRegistryEntry entry) => entry.visible)
+        .map((NodeRegistryEntry entry) => entry.create().title)
+        .toSet();
+
+    for (final String title in <String>{
+      'FOOOF',
+      'Detect Peaks',
+      'Interbeat-interval (IBI)',
+      'Heart rate variability (HRV)',
+      'Eye Blinks',
+      'Sleep Staging',
+    }) {
+      expect(visibleTitles, isNot(contains(title)));
+    }
+    expect(visibleTitles, contains('Time-Frequency (Wavelet)'));
+    expect(visibleTitles, contains('Gaussian Mixture'));
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('canvas undo reverses node creation', () {

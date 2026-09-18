@@ -113,6 +113,7 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => FooofNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
@@ -148,14 +149,17 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.multimodal,
       create: () => DetectPeaksNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.multimodal,
       create: () => InterbeatIntervalNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.multimodal,
       create: () => HeartRateVariabilityNodeType(),
+      visible: false,
     ),
 
     // Machine learning
@@ -194,10 +198,12 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
       create: () => EyeBlinksNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
       create: () => SleepStagingNodeType(),
+      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.markerFunctions,
