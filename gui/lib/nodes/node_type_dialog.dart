@@ -338,10 +338,390 @@ class _NodePersistenceTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox.expand(
-      key: ValueKey<String>('node-persistence-tab-content'),
+    final NodePersistenceTableSnapshot table = statusSnapshot.persistenceTable;
+    return Column(
+      key: const ValueKey<String>('node-persistence-tab-content'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Text(
+              'Storage policy',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(width: 12),
+            DropdownButton<NodeStoragePolicy>(
+              value: storagePolicy,
+              onChanged: (NodeStoragePolicy? policy) {
+                if (policy != null) {
+                  onStoragePolicyChanged(policy);
+                }
+              },
+              items: NodeStoragePolicy.values
+                  .map(
+                    (NodeStoragePolicy policy) =>
+                        DropdownMenuItem<NodeStoragePolicy>(
+                          value: policy,
+                          child: Text(policy.label),
+                        ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: table.rows.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No datasets are exposed by this node\'s parents.',
+                    style: TextStyle(color: Colors.black54),
+                  ),
+                )
+              : _NodePersistenceTable(table: table),
+        ),
+      ],
     );
   }
+}
+
+class _NodePersistenceTable extends StatelessWidget {
+  const _NodePersistenceTable({required this.table});
+
+  static const double _datasetWidth = 180;
+  static const double _columnWidth = 148;
+  static const double _headerHeight = 36;
+  static const double _rowHeight = 50;
+
+  final NodePersistenceTableSnapshot table;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: SizedBox(
+        height: _headerHeight * 3 + _rowHeight * table.rows.length,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.black12),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Row(
+              children: <Widget>[
+                SizedBox(
+                  width: _datasetWidth,
+                  child: Column(
+                    children: <Widget>[
+                      _stubHeader('Input / Output'),
+                      _stubHeader('Connected node'),
+                      _stubHeader('Artifact'),
+                      for (final NodePersistenceRow row in table.rows)
+                        _datasetCell(row.datasetLabel),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: table.columns.length * _columnWidth,
+                      child: Column(
+                        children: <Widget>[
+                          _headerRow(
+                            _headerSpans(
+                              table.columns,
+                              (NodePersistenceColumn column) =>
+                                  column.direction,
+                            ),
+                            (Object value) =>
+                                (value as NodePersistenceDirection) ==
+                                    NodePersistenceDirection.input
+                                ? 'Input'
+                                : 'Output',
+                            emphasized: true,
+                          ),
+                          _headerRow(
+                            _headerSpans(
+                              table.columns,
+                              (NodePersistenceColumn column) =>
+                                  '${column.direction.name}:${column.connectedNodeLabel}',
+                            ),
+                            (Object value) => value.toString().split(':').last,
+                          ),
+                          Row(
+                            children: table.columns
+                                .map(
+                                  (NodePersistenceColumn column) => _leafHeader(
+                                    _persistenceArtifactLabel(column.artifact),
+                                  ),
+                                )
+                                .toList(growable: false),
+                          ),
+                          for (final NodePersistenceRow row in table.rows)
+                            Row(
+                              children: table.columns
+                                  .map((NodePersistenceColumn column) {
+                                    return _statusCell(
+                                      row.cells[column.id] ??
+                                          const NodePersistenceCell(
+                                            status: NodePersistenceStatus
+                                                .outputNotReady,
+                                          ),
+                                    );
+                                  })
+                                  .toList(growable: false),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _stubHeader(String label) {
+    return Container(
+      width: _datasetWidth,
+      height: _headerHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.055),
+        border: const Border(bottom: BorderSide(color: Colors.black12)),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _datasetCell(String label) {
+    return Container(
+      width: _datasetWidth,
+      height: _rowHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      alignment: Alignment.centerLeft,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.black12)),
+      ),
+      child: Text(
+        label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  Widget _headerRow(
+    List<_PersistenceHeaderSpan> spans,
+    String Function(Object value) labelFor, {
+    bool emphasized = false,
+  }) {
+    return Row(
+      children: spans
+          .map((_PersistenceHeaderSpan span) {
+            return Container(
+              width: span.length * _columnWidth,
+              height: _headerHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(
+                  alpha: emphasized ? 0.08 : 0.055,
+                ),
+                border: const Border(
+                  right: BorderSide(color: Colors.black12),
+                  bottom: BorderSide(color: Colors.black12),
+                ),
+              ),
+              child: Text(
+                labelFor(span.value),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: emphasized ? FontWeight.w800 : FontWeight.w700,
+                ),
+              ),
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Widget _leafHeader(String label) {
+    return Container(
+      width: _columnWidth,
+      height: _headerHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.04),
+        border: const Border(
+          right: BorderSide(color: Colors.black12),
+          bottom: BorderSide(color: Colors.black12),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  Widget _statusCell(NodePersistenceCell cell) {
+    final List<_PersistenceBadgeSpec> badges = _persistenceBadges(cell);
+    return Container(
+      width: _columnWidth,
+      height: _rowHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        border: Border(
+          right: BorderSide(color: Colors.black12),
+          bottom: BorderSide(color: Colors.black12),
+        ),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        runAlignment: WrapAlignment.center,
+        spacing: 4,
+        runSpacing: 3,
+        children: badges
+            .map(
+              (_PersistenceBadgeSpec badge) => DecoratedBox(
+                decoration: BoxDecoration(
+                  color: badge.color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: badge.color.withValues(alpha: 0.5)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    badge.label,
+                    style: TextStyle(
+                      color: badge.color,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            )
+            .toList(growable: false),
+      ),
+    );
+  }
+}
+
+class _PersistenceHeaderSpan {
+  const _PersistenceHeaderSpan({required this.value, required this.length});
+
+  final Object value;
+  final int length;
+}
+
+class _PersistenceBadgeSpec {
+  const _PersistenceBadgeSpec(this.label, this.color);
+
+  final String label;
+  final Color color;
+}
+
+List<_PersistenceHeaderSpan> _headerSpans(
+  List<NodePersistenceColumn> columns,
+  Object Function(NodePersistenceColumn column) valueFor,
+) {
+  final List<_PersistenceHeaderSpan> spans = <_PersistenceHeaderSpan>[];
+  for (final NodePersistenceColumn column in columns) {
+    final Object value = valueFor(column);
+    if (spans.isNotEmpty && spans.last.value == value) {
+      final _PersistenceHeaderSpan previous = spans.removeLast();
+      spans.add(
+        _PersistenceHeaderSpan(value: value, length: previous.length + 1),
+      );
+    } else {
+      spans.add(_PersistenceHeaderSpan(value: value, length: 1));
+    }
+  }
+  return spans;
+}
+
+List<_PersistenceBadgeSpec> _persistenceBadges(NodePersistenceCell cell) {
+  final _PersistenceBadgeSpec primary = switch (cell.status) {
+    NodePersistenceStatus.absent => const _PersistenceBadgeSpec(
+      'Absent',
+      Colors.red,
+    ),
+    NodePersistenceStatus.wired => const _PersistenceBadgeSpec(
+      'Wired',
+      Colors.blueGrey,
+    ),
+    NodePersistenceStatus.stale => const _PersistenceBadgeSpec(
+      'Stale',
+      Colors.orange,
+    ),
+    NodePersistenceStatus.inputReady => const _PersistenceBadgeSpec(
+      'Ready',
+      Colors.green,
+    ),
+    NodePersistenceStatus.outputNotReady => const _PersistenceBadgeSpec(
+      'Not ready',
+      Colors.blueGrey,
+    ),
+    NodePersistenceStatus.outputReady => const _PersistenceBadgeSpec(
+      'Ready',
+      Colors.indigo,
+    ),
+    NodePersistenceStatus.outputDone => const _PersistenceBadgeSpec(
+      'Done',
+      Colors.green,
+    ),
+  };
+  if (cell.status != NodePersistenceStatus.outputDone) {
+    return <_PersistenceBadgeSpec>[primary];
+  }
+  return <_PersistenceBadgeSpec>[
+    primary,
+    if (cell.active) const _PersistenceBadgeSpec('Active', Colors.blue),
+    if (cell.onDisk) const _PersistenceBadgeSpec('On disk', Colors.brown),
+    if (cell.passThrough)
+      const _PersistenceBadgeSpec('Pass-through', Colors.teal),
+  ];
+}
+
+String _persistenceArtifactLabel(NodePersistenceArtifact artifact) {
+  return switch (artifact) {
+    NodePersistenceArtifact.timeSeries => 'Time series',
+    NodePersistenceArtifact.channelNames => 'Channel names',
+    NodePersistenceArtifact.channelCoordinates => 'Channel coordinates',
+    NodePersistenceArtifact.impedance => 'Impedance',
+    NodePersistenceArtifact.markers => 'Markers',
+    NodePersistenceArtifact.segmentedTimeSeries => 'Segments',
+    NodePersistenceArtifact.spectrum => 'Spectrum',
+    NodePersistenceArtifact.fooofResult => 'FOOOF result',
+    NodePersistenceArtifact.featureTable => 'Feature table',
+    NodePersistenceArtifact.gaussianMixture => 'Gaussian mixture',
+    NodePersistenceArtifact.bridgeDetection => 'Bridge detection',
+    NodePersistenceArtifact.timeFrequency => 'Time-frequency',
+    NodePersistenceArtifact.matrixTransformation => 'Transformation matrix',
+    NodePersistenceArtifact.metadata => 'Metadata',
+  };
 }
 
 class _NodeHelpDialog extends StatelessWidget {

@@ -7109,7 +7109,455 @@ class CanvasLogic {
       ramLoadedDatasetIds:
           _nodeRamSnapshots[node.id]?.keys.toSet() ?? const <String>{},
       diskSavedDatasetIds: diskSavedDatasetIds,
+      persistenceTable: await _persistenceTableForNode(configuredNode),
     );
+  }
+
+  Future<NodeDatasetStatusSnapshot> datasetStatusSnapshotForNode(
+    String nodeId, {
+    Map<String, dynamic>? params,
+  }) async {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null) {
+      return const NodeDatasetStatusSnapshot(
+        availableDatasetIds: <String>{},
+        processedDatasetStates: <String, DatasetState>{},
+        ramLoadedDatasetIds: <String>{},
+        diskSavedDatasetIds: <String>{},
+      );
+    }
+    return _datasetStatusSnapshotForNode(
+      node: node,
+      params: params ?? node.params,
+    );
+  }
+
+  Future<NodePersistenceTableSnapshot> _persistenceTableForNode(
+    NodeModel node,
+  ) async {
+    final List<Map<String, dynamic>> inputConnections = connections
+        .where(
+          (Map<String, dynamic> connection) => connection['toNode'] == node.id,
+        )
+        .toList(growable: false);
+    final List<Map<String, dynamic>> outputConnections = connections
+        .where(
+          (Map<String, dynamic> connection) =>
+              connection['fromNode'] == node.id,
+        )
+        .toList(growable: false);
+    final List<NodeModel> parents = inputConnections
+        .map(
+          (Map<String, dynamic> connection) =>
+              _findNode(connection['fromNode']?.toString() ?? ''),
+        )
+        .whereType<NodeModel>()
+        .toSet()
+        .toList(growable: false);
+    final Set<String> datasetIds = <String>{
+      for (final NodeModel parent in parents) ..._datasetsForNode(parent),
+    };
+    final Map<String, Dataset> datasetsById = _datasetsById();
+    final List<Dataset> tableDatasets =
+        datasetIds
+            .map((String id) => datasetsById[id])
+            .whereType<Dataset>()
+            .toList(growable: false)
+          ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+
+    final Map<String, _PersistenceColumnBuild> builds =
+        <String, _PersistenceColumnBuild>{};
+    for (
+      int inputIndex = 0;
+      inputIndex < node.inputPorts.length;
+      inputIndex++
+    ) {
+      final Set<NodePersistenceArtifact> requiredArtifacts =
+          _persistenceArtifactsForPort(node.inputPorts[inputIndex]);
+      final List<Map<String, dynamic>> portConnections = inputConnections
+          .where(
+            (Map<String, dynamic> connection) =>
+                (connection['toPort'] as int? ?? -1) == inputIndex,
+          )
+          .toList(growable: false);
+      if (portConnections.isEmpty) {
+        for (final NodePersistenceArtifact artifact in requiredArtifacts) {
+          final String id = 'input:unconnected:${artifact.name}';
+          builds.putIfAbsent(
+            id,
+            () => _PersistenceColumnBuild(
+              column: NodePersistenceColumn(
+                id: id,
+                direction: NodePersistenceDirection.input,
+                connectedNodeLabel: 'Unconnected requirements',
+                artifact: artifact,
+                synthetic: true,
+              ),
+            ),
+          );
+        }
+        continue;
+      }
+      for (final Map<String, dynamic> connection in portConnections) {
+        final NodeModel? parent = _findNode(
+          connection['fromNode']?.toString() ?? '',
+        );
+        if (parent == null) {
+          continue;
+        }
+        final int sourcePortIndex = connection['fromPort'] as int? ?? -1;
+        final Set<NodePersistenceArtifact> providedArtifacts =
+            sourcePortIndex >= 0 && sourcePortIndex < parent.outputPorts.length
+            ? _persistenceArtifactsForPort(parent.outputPorts[sourcePortIndex])
+            : const <NodePersistenceArtifact>{};
+        for (final NodePersistenceArtifact artifact in requiredArtifacts) {
+          final String id = 'input:${parent.id}:${artifact.name}';
+          final _PersistenceColumnBuild build = builds.putIfAbsent(
+            id,
+            () => _PersistenceColumnBuild(
+              column: NodePersistenceColumn(
+                id: id,
+                direction: NodePersistenceDirection.input,
+                connectedNodeId: parent.id,
+                connectedNodeLabel: _nodeDescriptor(parent),
+                artifact: artifact,
+              ),
+              statusNode: parent,
+            ),
+          );
+          build.providesArtifact |= providedArtifacts.contains(artifact);
+        }
+      }
+    }
+
+    final Set<NodePersistenceArtifact> ownOutputArtifacts =
+        <NodePersistenceArtifact>{};
+    for (final PortSpec output in node.outputPorts) {
+      ownOutputArtifacts.addAll(_persistenceArtifactsForPort(output));
+    }
+    for (final NodePersistenceArtifact artifact in ownOutputArtifacts) {
+      final String id = 'output:${node.id}:${artifact.name}';
+      builds[id] = _PersistenceColumnBuild(
+        column: NodePersistenceColumn(
+          id: id,
+          direction: NodePersistenceDirection.output,
+          connectedNodeId: node.id,
+          connectedNodeLabel: '${_nodeDescriptor(node)} output',
+          artifact: artifact,
+        ),
+        statusNode: node,
+        providesArtifact: true,
+      );
+    }
+    for (final Map<String, dynamic> connection in outputConnections) {
+      final NodeModel? child = _findNode(
+        connection['toNode']?.toString() ?? '',
+      );
+      if (child == null) {
+        continue;
+      }
+      final int sourcePortIndex = connection['fromPort'] as int? ?? -1;
+      final Set<NodePersistenceArtifact> artifacts =
+          sourcePortIndex >= 0 && sourcePortIndex < node.outputPorts.length
+          ? _persistenceArtifactsForPort(node.outputPorts[sourcePortIndex])
+          : const <NodePersistenceArtifact>{};
+      for (final NodePersistenceArtifact artifact in artifacts) {
+        final String id = 'output:${child.id}:${artifact.name}';
+        builds.putIfAbsent(
+          id,
+          () => _PersistenceColumnBuild(
+            column: NodePersistenceColumn(
+              id: id,
+              direction: NodePersistenceDirection.output,
+              connectedNodeId: child.id,
+              connectedNodeLabel: _nodeDescriptor(child),
+              artifact: artifact,
+            ),
+            statusNode: child,
+            providesArtifact: true,
+          ),
+        );
+      }
+    }
+
+    final Set<String> relevantNodeIds = builds.values
+        .map((_PersistenceColumnBuild build) => build.statusNode?.id)
+        .whereType<String>()
+        .toSet();
+    final Map<String, Set<String>> diskDatasetsByNode = <String, Set<String>>{};
+    for (final String nodeId in relevantNodeIds) {
+      final Set<String> diskIds = <String>{};
+      if (supportsNodeSnapshotDiskStore) {
+        final List<bool> flags = await Future.wait(
+          tableDatasets.map(
+            (Dataset dataset) =>
+                hasNodeSnapshotOnDisk(nodeId: nodeId, datasetId: dataset.id),
+          ),
+        );
+        for (int index = 0; index < tableDatasets.length; index++) {
+          if (flags[index]) {
+            diskIds.add(tableDatasets[index].id);
+          }
+        }
+      }
+      diskDatasetsByNode[nodeId] = diskIds;
+    }
+
+    final List<NodePersistenceColumn> columns = builds.values
+        .map((_PersistenceColumnBuild build) => build.column)
+        .toList(growable: false);
+    return NodePersistenceTableSnapshot(
+      columns: columns,
+      rows: tableDatasets
+          .map((Dataset dataset) {
+            return NodePersistenceRow(
+              datasetId: dataset.id,
+              datasetLabel: dataset.label,
+              cells: <String, NodePersistenceCell>{
+                for (final _PersistenceColumnBuild build in builds.values)
+                  build.column.id: _persistenceCellForBuild(
+                    selectedNode: node,
+                    build: build,
+                    dataset: dataset,
+                    diskDatasetsByNode: diskDatasetsByNode,
+                  ),
+              },
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+
+  NodePersistenceCell _persistenceCellForBuild({
+    required NodeModel selectedNode,
+    required _PersistenceColumnBuild build,
+    required Dataset dataset,
+    required Map<String, Set<String>> diskDatasetsByNode,
+  }) {
+    if (build.column.direction == NodePersistenceDirection.input) {
+      if (build.column.synthetic) {
+        return const NodePersistenceCell(status: NodePersistenceStatus.absent);
+      }
+      final NodeModel? parent = build.statusNode;
+      if (parent == null ||
+          !_datasetsForNode(parent).contains(dataset.id) ||
+          !build.providesArtifact) {
+        return const NodePersistenceCell(status: NodePersistenceStatus.wired);
+      }
+      final DatasetState state = _effectiveDatasetStateForNode(
+        parent,
+        dataset.id,
+      );
+      if (state == DatasetState.stale || state == DatasetState.partial) {
+        return const NodePersistenceCell(status: NodePersistenceStatus.stale);
+      }
+      return NodePersistenceCell(
+        status:
+            state == DatasetState.done &&
+                _persistenceArtifactAvailableFromNode(
+                  parent,
+                  dataset,
+                  build.column.artifact,
+                )
+            ? NodePersistenceStatus.inputReady
+            : NodePersistenceStatus.wired,
+      );
+    }
+
+    final NodeModel statusNode = build.statusNode ?? selectedNode;
+    final DatasetState state = _effectiveDatasetStateForNode(
+      statusNode,
+      dataset.id,
+    );
+    if (state == DatasetState.notReady) {
+      return const NodePersistenceCell(
+        status: NodePersistenceStatus.outputNotReady,
+      );
+    }
+    if (state != DatasetState.done) {
+      return const NodePersistenceCell(
+        status: NodePersistenceStatus.outputReady,
+      );
+    }
+    final DatasetArtifactSnapshot? snapshot =
+        _nodeRamSnapshots[statusNode.id]?[dataset.id];
+    final BrainStoryArtifactKind? identityKind = _brainStoryKindForPersistence(
+      build.column.artifact,
+    );
+    final ArtifactIdentity? identity = identityKind == null
+        ? null
+        : snapshot?.artifactIdentities[identityKind] ??
+              dataset.artifactIdentityFor(identityKind);
+    final bool onDisk =
+        diskDatasetsByNode[statusNode.id]?.contains(dataset.id) == true;
+    final bool passThrough =
+        identity != null && identity.producerNodeId != statusNode.id;
+    final bool materialized =
+        snapshot != null &&
+        _snapshotContainsPersistenceArtifact(snapshot, build.column.artifact);
+    return NodePersistenceCell(
+      status: NodePersistenceStatus.outputDone,
+      active: materialized || (!onDisk && !passThrough),
+      onDisk: onDisk,
+      passThrough: passThrough,
+    );
+  }
+
+  bool _persistenceArtifactAvailableFromNode(
+    NodeModel node,
+    Dataset dataset,
+    NodePersistenceArtifact artifact,
+  ) {
+    final DatasetArtifactSnapshot? snapshot =
+        _nodeRamSnapshots[node.id]?[dataset.id];
+    if (snapshot != null) {
+      return _snapshotContainsPersistenceArtifact(snapshot, artifact);
+    }
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    return switch (artifact) {
+      NodePersistenceArtifact.timeSeries => timeSeries != null,
+      NodePersistenceArtifact.channelNames =>
+        timeSeries?.channelLabels.isNotEmpty == true,
+      NodePersistenceArtifact.channelCoordinates =>
+        timeSeries?.channelCoordinates.isNotEmpty == true,
+      NodePersistenceArtifact.impedance => timeSeries?.impedanceData != null,
+      NodePersistenceArtifact.markers => timeSeries != null,
+      NodePersistenceArtifact.segmentedTimeSeries =>
+        dataset.segmentedTimeSeries != null,
+      NodePersistenceArtifact.spectrum => dataset.spectrum != null,
+      NodePersistenceArtifact.fooofResult => dataset.fooofResult != null,
+      NodePersistenceArtifact.featureTable => dataset.featureTable != null,
+      NodePersistenceArtifact.gaussianMixture =>
+        dataset.gaussianMixture != null,
+      NodePersistenceArtifact.bridgeDetection =>
+        dataset.bridgeDetection != null,
+      NodePersistenceArtifact.timeFrequency => dataset.timeFrequency != null,
+      NodePersistenceArtifact.matrixTransformation =>
+        dataset.matrixTransformation != null,
+      NodePersistenceArtifact.metadata => true,
+    };
+  }
+
+  Set<NodePersistenceArtifact> _persistenceArtifactsForPort(PortSpec port) {
+    final String name = port.name.toLowerCase();
+    switch (port.type) {
+      case PortType.signal:
+        if (name.contains('psd') || name.contains('spectrum')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.spectrum,
+          };
+        }
+        return const <NodePersistenceArtifact>{
+          NodePersistenceArtifact.timeSeries,
+          NodePersistenceArtifact.channelNames,
+        };
+      case PortType.markers:
+        return const <NodePersistenceArtifact>{NodePersistenceArtifact.markers};
+      case PortType.matrixTransformation:
+        return const <NodePersistenceArtifact>{
+          NodePersistenceArtifact.matrixTransformation,
+        };
+      case PortType.metadata:
+        if (name.contains('segment')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.segmentedTimeSeries,
+          };
+        }
+        if (name.contains('gaussian') || name.contains('mixture')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.gaussianMixture,
+          };
+        }
+        if (name.contains('feature') || name.contains('table')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.featureTable,
+          };
+        }
+        if (name.contains('fooof')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.fooofResult,
+          };
+        }
+        if (name.contains('bridge')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.bridgeDetection,
+          };
+        }
+        if (name.contains('time') && name.contains('frequency')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.timeFrequency,
+          };
+        }
+        if (name.contains('coordinate') || name.contains('position')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.channelCoordinates,
+          };
+        }
+        if (name.contains('impedance')) {
+          return const <NodePersistenceArtifact>{
+            NodePersistenceArtifact.impedance,
+          };
+        }
+        return const <NodePersistenceArtifact>{
+          NodePersistenceArtifact.metadata,
+        };
+    }
+  }
+
+  BrainStoryArtifactKind? _brainStoryKindForPersistence(
+    NodePersistenceArtifact artifact,
+  ) {
+    return switch (artifact) {
+      NodePersistenceArtifact.timeSeries ||
+      NodePersistenceArtifact.channelNames ||
+      NodePersistenceArtifact.impedance => BrainStoryArtifactKind.timeSeries,
+      NodePersistenceArtifact.channelCoordinates =>
+        BrainStoryArtifactKind.channelCoordinates,
+      NodePersistenceArtifact.markers => BrainStoryArtifactKind.markers,
+      NodePersistenceArtifact.segmentedTimeSeries =>
+        BrainStoryArtifactKind.segmentedTimeSeries,
+      NodePersistenceArtifact.spectrum => BrainStoryArtifactKind.spectrum,
+      NodePersistenceArtifact.fooofResult => BrainStoryArtifactKind.fooofResult,
+      NodePersistenceArtifact.featureTable =>
+        BrainStoryArtifactKind.featureTable,
+      NodePersistenceArtifact.gaussianMixture =>
+        BrainStoryArtifactKind.gaussianMixture,
+      NodePersistenceArtifact.bridgeDetection =>
+        BrainStoryArtifactKind.bridgeDetection,
+      NodePersistenceArtifact.timeFrequency =>
+        BrainStoryArtifactKind.timeFrequency,
+      NodePersistenceArtifact.matrixTransformation =>
+        BrainStoryArtifactKind.matrixTransformation,
+      NodePersistenceArtifact.metadata => null,
+    };
+  }
+
+  bool _snapshotContainsPersistenceArtifact(
+    DatasetArtifactSnapshot snapshot,
+    NodePersistenceArtifact artifact,
+  ) {
+    return switch (artifact) {
+      NodePersistenceArtifact.timeSeries ||
+      NodePersistenceArtifact.channelNames ||
+      NodePersistenceArtifact.impedance => snapshot.timeSeries != null,
+      NodePersistenceArtifact.channelCoordinates =>
+        snapshot.timeSeries?.channelCoordinates.isNotEmpty == true,
+      NodePersistenceArtifact.markers =>
+        snapshot.markers != null || snapshot.timeSeries != null,
+      NodePersistenceArtifact.segmentedTimeSeries =>
+        snapshot.segmentedTimeSeries != null,
+      NodePersistenceArtifact.spectrum => snapshot.spectrum != null,
+      NodePersistenceArtifact.fooofResult => snapshot.fooofResult != null,
+      NodePersistenceArtifact.featureTable => snapshot.featureTable != null,
+      NodePersistenceArtifact.gaussianMixture =>
+        snapshot.gaussianMixture != null,
+      NodePersistenceArtifact.bridgeDetection =>
+        snapshot.bridgeDetection != null,
+      NodePersistenceArtifact.timeFrequency => snapshot.timeFrequency != null,
+      NodePersistenceArtifact.matrixTransformation =>
+        snapshot.matrixTransformation != null,
+      NodePersistenceArtifact.metadata => !snapshot.isEmpty,
+    };
   }
 
   Future<String> _runNodeDatasetAction({
@@ -9490,6 +9938,18 @@ class _PortConnection {
 
   final int fromPortIndex;
   final int toPortIndex;
+}
+
+class _PersistenceColumnBuild {
+  _PersistenceColumnBuild({
+    required this.column,
+    this.statusNode,
+    this.providesArtifact = false,
+  });
+
+  final NodePersistenceColumn column;
+  final NodeModel? statusNode;
+  bool providesArtifact;
 }
 
 class _CanvasNodeGroupOutline extends StatelessWidget {

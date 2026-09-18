@@ -947,6 +947,118 @@ void main() {
     );
   });
 
+  test(
+    'persistence table follows direct parent datasets and connections',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      logic.addNode(ImportNodeType());
+      logic.addNode(BandpassNodeType());
+      logic.addNode(VisualizationNodeType());
+      final NodeModel importNode = logic.nodes[0];
+      final NodeModel bandpassNode = logic.nodes[1];
+      final NodeModel viewerNode = logic.nodes[2];
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': importNode.id,
+          'fromPort': 0,
+          'toNode': bandpassNode.id,
+          'toPort': 0,
+        },
+        <String, dynamic>{
+          'fromNode': bandpassNode.id,
+          'fromPort': 0,
+          'toNode': viewerNode.id,
+          'toPort': 0,
+        },
+      ]);
+      final Dataset dataset = Dataset('persistence-dataset', label: 'PVT')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[0, 1, 0],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+        );
+      logic.datasets[dataset.id] = dataset;
+      importNode.datasetStates[dataset.id] = DatasetState.done;
+      bandpassNode.datasetStates[dataset.id] = DatasetState.ready;
+
+      final NodePersistenceTableSnapshot table =
+          (await logic.datasetStatusSnapshotForNode(
+            bandpassNode.id,
+          )).persistenceTable;
+
+      expect(
+        table.rows.map((NodePersistenceRow row) => row.datasetId),
+        <String>[dataset.id],
+      );
+      expect(
+        table.columns.map(
+          (NodePersistenceColumn column) =>
+              '${column.direction.name}:${column.connectedNodeLabel}:${column.artifact.name}',
+        ),
+        containsAll(<Matcher>[
+          contains('input:'),
+          contains('output:'),
+          contains(':timeSeries'),
+          contains(':channelNames'),
+        ]),
+      );
+      final NodePersistenceColumn inputSignal = table.columns.firstWhere(
+        (NodePersistenceColumn column) =>
+            column.direction == NodePersistenceDirection.input &&
+            column.artifact == NodePersistenceArtifact.timeSeries,
+      );
+      final NodePersistenceColumn ownOutput = table.columns.firstWhere(
+        (NodePersistenceColumn column) =>
+            column.direction == NodePersistenceDirection.output &&
+            column.connectedNodeId == bandpassNode.id &&
+            column.artifact == NodePersistenceArtifact.timeSeries,
+      );
+      expect(
+        table.rows.single.cells[inputSignal.id]!.status,
+        NodePersistenceStatus.inputReady,
+      );
+      expect(
+        table.rows.single.cells[ownOutput.id]!.status,
+        NodePersistenceStatus.outputReady,
+      );
+    },
+  );
+
+  test('persistence table represents unconnected required artifacts', () async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(VisualizationNodeType());
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel viewerNode = logic.nodes[1];
+    logic.connections.add(<String, dynamic>{
+      'fromNode': importNode.id,
+      'fromPort': 0,
+      'toNode': viewerNode.id,
+      'toPort': 0,
+    });
+    final Dataset dataset = Dataset(
+      'missing-marker-dataset',
+      label: 'PVT',
+    )..timeSeries = TimeSeriesData(samples: const <double>[0], sampleRate: 100);
+    logic.datasets[dataset.id] = dataset;
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+
+    final NodePersistenceTableSnapshot table =
+        (await logic.datasetStatusSnapshotForNode(
+          viewerNode.id,
+        )).persistenceTable;
+    final NodePersistenceColumn missingMarkers = table.columns.singleWhere(
+      (NodePersistenceColumn column) =>
+          column.synthetic &&
+          column.artifact == NodePersistenceArtifact.markers,
+    );
+
+    expect(
+      table.rows.single.cells[missingMarkers.id]!.status,
+      NodePersistenceStatus.absent,
+    );
+  });
+
   testWidgets('visualization surface starts with no datasets selected', (
     WidgetTester tester,
   ) async {
@@ -1290,6 +1402,49 @@ void main() {
   ) async {
     final ImpedancesNodeType nodeType = ImpedancesNodeType();
     Map<String, dynamic>? runParams;
+    final Dataset dataset = Dataset('dialog-dataset', label: 'PVT');
+    Future<String> action(Map<String, dynamic> _, Set<String> __) async => 'ok';
+    final NodeDatasetActions datasetActions = NodeDatasetActions(
+      supportsDisk: true,
+      refresh: (_) async => const NodeDatasetStatusSnapshot(
+        availableDatasetIds: <String>{'dialog-dataset'},
+        processedDatasetStates: <String, DatasetState>{
+          'dialog-dataset': DatasetState.done,
+        },
+        ramLoadedDatasetIds: <String>{'dialog-dataset'},
+        diskSavedDatasetIds: <String>{'dialog-dataset'},
+        persistenceTable: NodePersistenceTableSnapshot(
+          columns: <NodePersistenceColumn>[
+            NodePersistenceColumn(
+              id: 'input:source:timeSeries',
+              direction: NodePersistenceDirection.input,
+              connectedNodeId: 'source',
+              connectedNodeLabel: '#1 Import',
+              artifact: NodePersistenceArtifact.timeSeries,
+            ),
+          ],
+          rows: <NodePersistenceRow>[
+            NodePersistenceRow(
+              datasetId: 'dialog-dataset',
+              datasetLabel: 'PVT',
+              cells: <String, NodePersistenceCell>{
+                'input:source:timeSeries': NodePersistenceCell(
+                  status: NodePersistenceStatus.inputReady,
+                ),
+              },
+            ),
+          ],
+        ),
+      ),
+      hasLoadableDiskCache: (_, __) async => true,
+      runAllPrevious: action,
+      runThisNode: action,
+      clearResults: action,
+      loadFromDisk: action,
+      purgeActiveMemory: action,
+      saveToDisk: action,
+      purgeFromDisk: action,
+    );
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1305,8 +1460,9 @@ void main() {
                     onSaveAndRun: (Map<String, dynamic> params) {
                       runParams = params;
                     },
-                    datasets: const <String, Dataset>{},
-                    availableDatasetIds: const <String>{},
+                    datasetActions: datasetActions,
+                    datasets: <String, Dataset>{dataset.id: dataset},
+                    availableDatasetIds: <String>{dataset.id},
                     datasetSourceLabels: const <String, List<String>>{},
                     processedDatasetStates: const <String, DatasetState>{},
                     portStatusSummary: const NodePortStatusSummary(
@@ -1336,6 +1492,9 @@ void main() {
       find.byKey(const ValueKey<String>('node-persistence-tab-content')),
       findsOneWidget,
     );
+    expect(find.text('Connected node'), findsOneWidget);
+    expect(find.text('Time series'), findsOneWidget);
+    expect(find.text('Ready'), findsOneWidget);
 
     await tester.tap(find.text('Parameters'));
     await tester.pumpAndSettle();

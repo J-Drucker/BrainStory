@@ -173,12 +173,97 @@ class NodeDatasetStatusSnapshot {
     required this.processedDatasetStates,
     required this.ramLoadedDatasetIds,
     required this.diskSavedDatasetIds,
+    this.persistenceTable = const NodePersistenceTableSnapshot(),
   });
 
   final Set<String> availableDatasetIds;
   final Map<String, DatasetState> processedDatasetStates;
   final Set<String> ramLoadedDatasetIds;
   final Set<String> diskSavedDatasetIds;
+  final NodePersistenceTableSnapshot persistenceTable;
+}
+
+enum NodePersistenceDirection { input, output }
+
+enum NodePersistenceArtifact {
+  timeSeries,
+  channelNames,
+  channelCoordinates,
+  impedance,
+  markers,
+  segmentedTimeSeries,
+  spectrum,
+  fooofResult,
+  featureTable,
+  gaussianMixture,
+  bridgeDetection,
+  timeFrequency,
+  matrixTransformation,
+  metadata,
+}
+
+enum NodePersistenceStatus {
+  absent,
+  wired,
+  stale,
+  inputReady,
+  outputNotReady,
+  outputReady,
+  outputDone,
+}
+
+class NodePersistenceColumn {
+  const NodePersistenceColumn({
+    required this.id,
+    required this.direction,
+    required this.connectedNodeLabel,
+    required this.artifact,
+    this.connectedNodeId,
+    this.synthetic = false,
+  });
+
+  final String id;
+  final NodePersistenceDirection direction;
+  final String? connectedNodeId;
+  final String connectedNodeLabel;
+  final NodePersistenceArtifact artifact;
+  final bool synthetic;
+}
+
+class NodePersistenceCell {
+  const NodePersistenceCell({
+    required this.status,
+    this.active = false,
+    this.onDisk = false,
+    this.passThrough = false,
+  });
+
+  final NodePersistenceStatus status;
+  final bool active;
+  final bool onDisk;
+  final bool passThrough;
+}
+
+class NodePersistenceRow {
+  const NodePersistenceRow({
+    required this.datasetId,
+    required this.datasetLabel,
+    required this.cells,
+  });
+
+  final String datasetId;
+  final String datasetLabel;
+  final Map<String, NodePersistenceCell> cells;
+}
+
+class NodePersistenceTableSnapshot {
+  const NodePersistenceTableSnapshot({
+    this.columns = const <NodePersistenceColumn>[],
+    this.rows = const <NodePersistenceRow>[],
+  });
+
+  final List<NodePersistenceColumn> columns;
+  final List<NodePersistenceRow> rows;
 }
 
 class NodePortStatusSummary {
