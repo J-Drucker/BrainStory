@@ -2896,6 +2896,95 @@ Mk2=Response,Response,4,1,0
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('interactive artifact review uses sortable candidate tables', (
+    WidgetTester tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1600, 1000);
+    addTearDown(tester.view.reset);
+    final Dataset dataset = Dataset('artifact-review', label: 'Review')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: <List<double>>[
+          List<double>.generate(500, (int index) => math.sin(index / 10)),
+          List<double>.generate(500, (int index) => math.cos(index / 12)),
+          List<double>.generate(500, (int index) => math.sin(index / 8)),
+        ],
+        sampleRate: 100,
+        channelLabels: const <String>['Fp1', 'Fp2', 'Cz'],
+        channelCoordinates: const <String, ChannelCoordinate>{
+          'Fp1': ChannelCoordinate(label: 'Fp1', x: -0.5, y: 0.7, z: 0.5),
+          'Fp2': ChannelCoordinate(label: 'Fp2', x: 0.5, y: 0.7, z: 0.5),
+          'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+        },
+      );
+    final Map<String, dynamic> params = <String, dynamic>{
+      'interactiveArtifactDetection': true,
+      'interaction_mode': 'edit',
+      'artifactExemplars': <Map<String, dynamic>>[
+        const ArtifactExemplarData(
+          id: 'exemplar-1',
+          datasetId: 'artifact-review',
+          label: 'blink',
+          onsetMicros: 1000000,
+          durationMicros: 200000,
+        ).toJson(),
+      ],
+      'artifactCandidates': <Map<String, dynamic>>[
+        const ArtifactCandidateData(
+          id: 'candidate-1',
+          datasetId: 'artifact-review',
+          label: 'blink',
+          onsetMicros: 2000000,
+          durationMicros: 200000,
+          score: 0.94,
+          status: InteractiveArtifactDetectionNodeType.pendingStatus,
+        ).toJson(),
+      ],
+      'artifactTemplates': <Map<String, dynamic>>[
+        const ArtifactTemplateSummary(
+          datasetId: 'artifact-review',
+          label: 'blink',
+          exemplarCount: 1,
+          sampleCount: 3,
+          durationMicros: 200000,
+          previewSamples: <double>[0, 1, 0],
+          previewChannels: <List<double>>[
+            <double>[0, 1, 0],
+            <double>[0, -1, 0],
+            <double>[0, 0.5, 0],
+          ],
+          peakTopomapValues: <double>[1, -1, 0.5],
+        ).toJson(),
+      ],
+    };
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 1400,
+            height: 900,
+            child: RawSignalBrowser(dataset: dataset, params: params),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Candidates (1)'), findsOneWidget);
+    expect(find.text('Exemplars (1)'), findsOneWidget);
+    expect(find.text('Score >'), findsOneWidget);
+    expect(find.text('Accept all'), findsOneWidget);
+    expect(find.text('R'), findsWidgets);
+    expect(find.text('A'), findsWidgets);
+    expect(
+      tester.getTopLeft(find.text('Candidates (1)')).dy,
+      lessThan(tester.getTopLeft(find.text('Exemplars (1)')).dy),
+    );
+    expect(find.byType(InterpolatedTopomap), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   test('interactive detection stores multiple files in one node', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset first = Dataset('dataset-1', label: 'First')

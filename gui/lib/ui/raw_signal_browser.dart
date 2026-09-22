@@ -14,6 +14,7 @@ import '../nodes/edit_channels_node.dart';
 import '../nodes/interactive_artifact_detection_node.dart';
 import 'artifact_template_preview.dart';
 import 'channel_positions_dialog.dart';
+import 'topomap_view.dart';
 
 const List<Color> rawSignalChannelPalette = <Color>[
   Color(0xFF7FDBFF),
@@ -888,15 +889,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     if (interactiveArtifactDetection) ...<Widget>[
-                      _InteractiveArtifactReviewSection(
+                      _InteractiveArtifactReviewTable(
                         labelChoices: InteractiveArtifactDetectionNodeType
                             .supportedLabels,
-                        channelLabels:
-                            widget.dataset.timeSeries?.channelLabels ??
-                            const <String>[],
-                        channelCoordinates:
-                            widget.dataset.timeSeries?.channelCoordinates ??
-                            const <String, ChannelCoordinate>{},
+                        timeSeries: widget.dataset.timeSeries,
                         pixelsPerSecond: pixelsPerSecond,
                         exemplarsExpanded:
                             (widget.params['artifact_exemplars_expanded']
@@ -923,7 +919,23 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                         onRejectCandidate: _rejectInteractiveArtifactCandidate,
                         onUndoAccepted:
                             _undoAcceptedInteractiveArtifactCandidate,
+                        acceptAllThreshold:
+                            (widget.params['artifact_accept_all_threshold']
+                                    as num?)
+                                ?.toDouble() ??
+                            0.90,
+                        candidateSort:
+                            (widget.params['artifact_candidate_sort'] ??
+                                    'timestamp')
+                                .toString(),
                         onAcceptAll: _acceptAllInteractiveArtifactCandidates,
+                        onAcceptAllThresholdChanged: (double value) =>
+                            _updateParam(
+                              'artifact_accept_all_threshold',
+                              value,
+                            ),
+                        onCandidateSortChanged: (String value) =>
+                            _updateParam('artifact_candidate_sort', value),
                         onFocusExemplar: (ArtifactExemplarData exemplar) {
                           _jumpToTimeRange(
                             onsetMicros: exemplar.onsetMicros,
@@ -1905,12 +1917,17 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     );
   }
 
-  void _acceptAllInteractiveArtifactCandidates() {
-    final List<ArtifactCandidateData> pendingCandidates = _artifactCandidates(
-      statuses: const <String>{
-        InteractiveArtifactDetectionNodeType.pendingStatus,
-      },
-    );
+  void _acceptAllInteractiveArtifactCandidates(double threshold) {
+    final List<ArtifactCandidateData> pendingCandidates =
+        _artifactCandidates(
+              statuses: const <String>{
+                InteractiveArtifactDetectionNodeType.pendingStatus,
+              },
+            )
+            .where(
+              (ArtifactCandidateData candidate) => candidate.score > threshold,
+            )
+            .toList(growable: false);
     final List<ArtifactExemplarData> exemplars = <ArtifactExemplarData>[
       ..._artifactExemplars(),
       ...pendingCandidates.map(
@@ -2924,6 +2941,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 
   double _defaultRightPanelWidth(List<TimeMarker> markers) {
+    if (_interactionMode() == 'edit' &&
+        _interactiveArtifactDetectionEnabled()) {
+      return 600;
+    }
     double measure(
       String text, {
       double fontSize = 12,
@@ -2968,7 +2989,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   double _resolvedRightPanelWidth(double defaultWidth) {
     return ((widget.params['right_panel_width'] as num?)?.toDouble() ??
             defaultWidth)
-        .clamp(188.0, 420.0);
+        .clamp(188.0, 720.0);
   }
 
   String _interactionMode() {
@@ -4390,6 +4411,599 @@ void _drawMarkerGuideLine({
   canvas.drawLine(Offset(x, top), Offset(x, bottom), paint);
 }
 
+class _InteractiveArtifactReviewTable extends StatefulWidget {
+  const _InteractiveArtifactReviewTable({
+    required this.labelChoices,
+    required this.timeSeries,
+    required this.pixelsPerSecond,
+    required this.templates,
+    required this.exemplars,
+    required this.pendingCandidates,
+    required this.acceptedCandidates,
+    required this.acceptAllThreshold,
+    required this.candidateSort,
+    required this.onDeleteExemplar,
+    required this.onAcceptCandidate,
+    required this.onRejectCandidate,
+    required this.onUndoAccepted,
+    required this.onAcceptAll,
+    required this.onAcceptAllThresholdChanged,
+    required this.onCandidateSortChanged,
+    required this.onFocusExemplar,
+    required this.onFocusPendingCandidate,
+    required this.onFocusAcceptedCandidate,
+    required this.exemplarsExpanded,
+    required this.candidatesExpanded,
+    required this.onToggleExemplars,
+    required this.onToggleCandidates,
+  });
+
+  final List<String> labelChoices;
+  final TimeSeriesData? timeSeries;
+  final double pixelsPerSecond;
+  final List<ArtifactTemplateSummary> templates;
+  final List<ArtifactExemplarData> exemplars;
+  final List<ArtifactCandidateData> pendingCandidates;
+  final List<ArtifactCandidateData> acceptedCandidates;
+  final double acceptAllThreshold;
+  final String candidateSort;
+  final ValueChanged<ArtifactExemplarData> onDeleteExemplar;
+  final ValueChanged<ArtifactCandidateData> onAcceptCandidate;
+  final ValueChanged<ArtifactCandidateData> onRejectCandidate;
+  final ValueChanged<ArtifactCandidateData> onUndoAccepted;
+  final ValueChanged<double> onAcceptAll;
+  final ValueChanged<double> onAcceptAllThresholdChanged;
+  final ValueChanged<String> onCandidateSortChanged;
+  final ValueChanged<ArtifactExemplarData> onFocusExemplar;
+  final ValueChanged<ArtifactCandidateData> onFocusPendingCandidate;
+  final ValueChanged<ArtifactCandidateData> onFocusAcceptedCandidate;
+  final bool exemplarsExpanded;
+  final bool candidatesExpanded;
+  final ValueChanged<bool> onToggleExemplars;
+  final ValueChanged<bool> onToggleCandidates;
+
+  @override
+  State<_InteractiveArtifactReviewTable> createState() =>
+      _InteractiveArtifactReviewTableState();
+}
+
+class _InteractiveArtifactReviewTableState
+    extends State<_InteractiveArtifactReviewTable> {
+  late final TextEditingController _thresholdController;
+  String? _selectedId;
+  int? _selectedOnsetMicros;
+  int? _selectedDurationMicros;
+  String? _selectedLabel;
+
+  @override
+  void initState() {
+    super.initState();
+    _thresholdController = TextEditingController(
+      text: widget.acceptAllThreshold.toStringAsFixed(2),
+    );
+    _selectInitialInstance();
+  }
+
+  @override
+  void didUpdateWidget(covariant _InteractiveArtifactReviewTable oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.acceptAllThreshold != widget.acceptAllThreshold &&
+        !FocusScope.of(context).hasFocus) {
+      _thresholdController.text = widget.acceptAllThreshold.toStringAsFixed(2);
+    }
+    final bool selectedStillExists = <String>{
+      ...widget.exemplars.map((ArtifactExemplarData item) => item.id),
+      ...widget.pendingCandidates.map((ArtifactCandidateData item) => item.id),
+      ...widget.acceptedCandidates.map((ArtifactCandidateData item) => item.id),
+    }.contains(_selectedId);
+    if (!selectedStillExists) _selectInitialInstance();
+  }
+
+  @override
+  void dispose() {
+    _thresholdController.dispose();
+    super.dispose();
+  }
+
+  void _selectInitialInstance() {
+    if (widget.pendingCandidates.isNotEmpty) {
+      _selectCandidate(widget.pendingCandidates.first, focus: false);
+    } else if (widget.exemplars.isNotEmpty) {
+      _selectExemplar(widget.exemplars.first, focus: false);
+    } else if (widget.acceptedCandidates.isNotEmpty) {
+      _selectCandidate(widget.acceptedCandidates.first, focus: false);
+    }
+  }
+
+  void _selectCandidate(ArtifactCandidateData candidate, {bool focus = true}) {
+    setState(() {
+      _selectedId = candidate.id;
+      _selectedOnsetMicros = candidate.onsetMicros;
+      _selectedDurationMicros = candidate.durationMicros;
+      _selectedLabel = candidate.label;
+    });
+    if (!focus) return;
+    if (candidate.status ==
+        InteractiveArtifactDetectionNodeType.acceptedStatus) {
+      widget.onFocusAcceptedCandidate(candidate);
+    } else {
+      widget.onFocusPendingCandidate(candidate);
+    }
+  }
+
+  void _selectExemplar(ArtifactExemplarData exemplar, {bool focus = true}) {
+    setState(() {
+      _selectedId = exemplar.id;
+      _selectedOnsetMicros = exemplar.onsetMicros;
+      _selectedDurationMicros = exemplar.durationMicros;
+      _selectedLabel = exemplar.label;
+    });
+    if (focus) widget.onFocusExemplar(exemplar);
+  }
+
+  double get _threshold =>
+      (double.tryParse(_thresholdController.text) ?? widget.acceptAllThreshold)
+          .clamp(-1.0, 1.0);
+
+  List<ArtifactCandidateData> get _orderedCandidates {
+    final List<ArtifactCandidateData> result = <ArtifactCandidateData>[
+      ...widget.pendingCandidates,
+      ...widget.acceptedCandidates,
+    ];
+    if (widget.candidateSort == 'score') {
+      result.sort(
+        (ArtifactCandidateData a, ArtifactCandidateData b) =>
+            b.score.compareTo(a.score),
+      );
+    } else {
+      result.sort(
+        (ArtifactCandidateData a, ArtifactCandidateData b) =>
+            a.onsetMicros.compareTo(b.onsetMicros),
+      );
+    }
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<TopomapPointValue> instancePoints = _artifactInstanceTopomap(
+      widget.timeSeries,
+      onsetMicros: _selectedOnsetMicros,
+      durationMicros: _selectedDurationMicros,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const Text(
+          'Interactive artifact detection',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Select a row to inspect that instance. Alt+drag adds ${widget.labelChoices.where((String label) => label != 'blink').join(', ')}.',
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+        if (widget.templates.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 220,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Expanded(
+                  child: ArtifactTemplatePreview(
+                    templates: widget.templates,
+                    channelLabels:
+                        widget.timeSeries?.channelLabels ?? const <String>[],
+                    channelCoordinates:
+                        widget.timeSeries?.channelCoordinates ??
+                        const <String, ChannelCoordinate>{},
+                    pixelsPerSecond: widget.pixelsPerSecond,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 180,
+                  child: _ArtifactInstanceTopomap(
+                    label: _selectedLabel ?? 'Selected instance',
+                    points: instancePoints,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        _SectionHeader(
+          title: 'Candidates',
+          count: _orderedCandidates.length,
+          expanded: widget.candidatesExpanded,
+          onToggle: () => widget.onToggleCandidates(!widget.candidatesExpanded),
+        ),
+        const SizedBox(height: 6),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: <Widget>[
+              SizedBox(
+                width: 140,
+                child: DropdownButtonFormField<String>(
+                  initialValue: widget.candidateSort,
+                  isExpanded: true,
+                  isDense: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Sort',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: const <DropdownMenuItem<String>>[
+                    DropdownMenuItem(value: 'timestamp', child: Text('Time')),
+                    DropdownMenuItem(value: 'score', child: Text('Score')),
+                  ],
+                  onChanged: (String? value) {
+                    if (value != null) widget.onCandidateSortChanged(value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 90,
+                child: TextField(
+                  controller: _thresholdController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                    signed: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Score >',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  onChanged: (String value) {
+                    final double? parsed = double.tryParse(value);
+                    if (parsed != null) {
+                      widget.onAcceptAllThresholdChanged(
+                        parsed.clamp(-1.0, 1.0),
+                      );
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed:
+                    widget.pendingCandidates.any(
+                      (ArtifactCandidateData item) => item.score > _threshold,
+                    )
+                    ? () => widget.onAcceptAll(_threshold)
+                    : null,
+                child: const Text('Accept all'),
+              ),
+            ],
+          ),
+        ),
+        if (widget.candidatesExpanded) ...<Widget>[
+          const SizedBox(height: 6),
+          _ArtifactReviewTable(
+            height: 210,
+            rows: _orderedCandidates
+                .map(
+                  (ArtifactCandidateData candidate) => _ArtifactReviewRow(
+                    id: candidate.id,
+                    type:
+                        candidate.status ==
+                            InteractiveArtifactDetectionNodeType.acceptedStatus
+                        ? '${candidate.label} (accepted)'
+                        : candidate.label,
+                    onsetMicros: candidate.onsetMicros,
+                    score: candidate.score,
+                    selected: candidate.id == _selectedId,
+                    onTap: () => _selectCandidate(candidate),
+                    onReject: () =>
+                        candidate.status ==
+                            InteractiveArtifactDetectionNodeType.acceptedStatus
+                        ? widget.onUndoAccepted(candidate)
+                        : widget.onRejectCandidate(candidate),
+                    onAccept:
+                        candidate.status ==
+                            InteractiveArtifactDetectionNodeType.acceptedStatus
+                        ? null
+                        : () => widget.onAcceptCandidate(candidate),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        ],
+        const SizedBox(height: 10),
+        _SectionHeader(
+          title: 'Exemplars',
+          count: widget.exemplars.length,
+          expanded: widget.exemplarsExpanded,
+          onToggle: () => widget.onToggleExemplars(!widget.exemplarsExpanded),
+        ),
+        if (widget.exemplarsExpanded) ...<Widget>[
+          const SizedBox(height: 6),
+          _ArtifactReviewTable(
+            height: 170,
+            rows:
+                (widget.exemplars.toList()..sort(
+                      (ArtifactExemplarData a, ArtifactExemplarData b) =>
+                          a.onsetMicros.compareTo(b.onsetMicros),
+                    ))
+                    .map(
+                      (ArtifactExemplarData exemplar) => _ArtifactReviewRow(
+                        id: exemplar.id,
+                        type: exemplar.label,
+                        onsetMicros: exemplar.onsetMicros,
+                        score: null,
+                        selected: exemplar.id == _selectedId,
+                        onTap: () => _selectExemplar(exemplar),
+                        onReject: () => widget.onDeleteExemplar(exemplar),
+                        onAccept: null,
+                      ),
+                    )
+                    .toList(growable: false),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ArtifactReviewRow {
+  const _ArtifactReviewRow({
+    required this.id,
+    required this.type,
+    required this.onsetMicros,
+    required this.score,
+    required this.selected,
+    required this.onTap,
+    required this.onReject,
+    required this.onAccept,
+  });
+
+  final String id;
+  final String type;
+  final int onsetMicros;
+  final double? score;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback onReject;
+  final VoidCallback? onAccept;
+}
+
+class _ArtifactReviewTable extends StatelessWidget {
+  const _ArtifactReviewTable({required this.height, required this.rows});
+
+  final double height;
+  final List<_ArtifactReviewRow> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    if (rows.isEmpty) {
+      return const Text('None.', style: TextStyle(color: Colors.white54));
+    }
+    return SizedBox(
+      height: height,
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: 560,
+            child: Column(
+              children: <Widget>[
+                const _ArtifactReviewTableHeader(),
+                const Divider(height: 1, color: Colors.white24),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: rows.length,
+                    itemExtent: 40,
+                    itemBuilder: (BuildContext context, int index) =>
+                        _ArtifactReviewTableRow(row: rows[index]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ArtifactReviewTableHeader extends StatelessWidget {
+  const _ArtifactReviewTableHeader();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    height: 32,
+    child: Row(
+      children: <Widget>[
+        SizedBox(width: 210, child: Text('Type')),
+        SizedBox(width: 130, child: Text('Time')),
+        SizedBox(width: 100, child: Text('Score')),
+        SizedBox(width: 60, child: Center(child: Text('Reject'))),
+        SizedBox(width: 60, child: Center(child: Text('Accept'))),
+      ],
+    ),
+  );
+}
+
+class _ArtifactReviewTableRow extends StatelessWidget {
+  const _ArtifactReviewTableRow({required this.row});
+
+  final _ArtifactReviewRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: row.selected
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: row.onTap,
+        child: Row(
+          children: <Widget>[
+            SizedBox(
+              width: 210,
+              child: Text(row.type, overflow: TextOverflow.ellipsis),
+            ),
+            SizedBox(
+              width: 130,
+              child: Text(
+                '${(row.onsetMicros / 1000000.0).toStringAsFixed(3)} s',
+              ),
+            ),
+            SizedBox(
+              width: 100,
+              child: Text(row.score?.toStringAsFixed(3) ?? '—'),
+            ),
+            SizedBox(
+              width: 60,
+              child: Tooltip(
+                message: 'Reject',
+                child: TextButton(
+                  onPressed: row.onReject,
+                  child: const Text('R'),
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 60,
+              child: Tooltip(
+                message: 'Accept',
+                child: TextButton(
+                  onPressed: row.onAccept,
+                  child: const Text('A'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ArtifactInstanceTopomap extends StatelessWidget {
+  const _ArtifactInstanceTopomap({required this.label, required this.points});
+
+  final String label;
+  final List<TopomapPointValue> points;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Text(
+          label,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
+        ),
+        const SizedBox(height: 4),
+        Expanded(
+          child: points.length < 3
+              ? const Center(
+                  child: Text(
+                    'Coordinates required',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                )
+              : InterpolatedTopomap(
+                  points: points,
+                  scale: TopomapColorScale(
+                    colors: const <Color>[
+                      Color(0xFF143D8F),
+                      Color(0xFF2EC4FF),
+                      Color(0xFFFFF4B0),
+                      Color(0xFFFF8C42),
+                      Color(0xFFFF4D6D),
+                    ],
+                  ),
+                  bounds: TopomapValueBounds.fromValues(
+                    points.map((TopomapPointValue point) => point.value),
+                  ),
+                  showLabels: false,
+                  sampleDensity: 2,
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+List<TopomapPointValue> _artifactInstanceTopomap(
+  TimeSeriesData? timeSeries, {
+  required int? onsetMicros,
+  required int? durationMicros,
+}) {
+  if (timeSeries == null ||
+      onsetMicros == null ||
+      durationMicros == null ||
+      timeSeries.channelCoordinates.isEmpty ||
+      timeSeries.channels.isEmpty) {
+    return const <TopomapPointValue>[];
+  }
+  final int start = ((onsetMicros / 1000000.0) * timeSeries.sampleRate)
+      .round()
+      .clamp(0, timeSeries.sampleCount - 1);
+  final int length = math.max(
+    1,
+    ((durationMicros / 1000000.0) * timeSeries.sampleRate).round(),
+  );
+  final int stop = math.min(timeSeries.sampleCount, start + length);
+  final List<List<double>> centered = timeSeries.channels
+      .map((List<double> channel) {
+        final List<double> window = channel.sublist(start, stop);
+        final double mean = window.isEmpty
+            ? 0
+            : window.reduce((double a, double b) => a + b) / window.length;
+        return window
+            .map((double value) => value - mean)
+            .toList(growable: false);
+      })
+      .toList(growable: false);
+  int peakIndex = 0;
+  double peakGfp = -1;
+  for (int sample = 0; sample < stop - start; sample++) {
+    double mean = 0;
+    for (final List<double> channel in centered) {
+      mean += channel[sample];
+    }
+    mean /= centered.length;
+    double variance = 0;
+    for (final List<double> channel in centered) {
+      final double delta = channel[sample] - mean;
+      variance += delta * delta;
+    }
+    final double gfp = math.sqrt(variance / centered.length);
+    if (gfp > peakGfp) {
+      peakGfp = gfp;
+      peakIndex = sample;
+    }
+  }
+  final List<TopomapPointValue> points = <TopomapPointValue>[];
+  for (
+    int index = 0;
+    index < math.min(centered.length, timeSeries.channelLabels.length);
+    index++
+  ) {
+    final String label = timeSeries.channelLabels[index];
+    final ChannelCoordinate? coordinate = timeSeries.channelCoordinates[label];
+    if (coordinate == null) continue;
+    points.add(
+      TopomapPointValue(
+        label: label,
+        coordinate: coordinate,
+        value: centered[index][peakIndex],
+      ),
+    );
+  }
+  return points;
+}
+
+// ignore: unused_element
 class _InteractiveArtifactReviewSection extends StatelessWidget {
   const _InteractiveArtifactReviewSection({
     required this.labelChoices,
