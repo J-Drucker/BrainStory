@@ -80,71 +80,66 @@ class NodeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    bool hovering = false;
     return Positioned(
       left: position.dx,
       top: position.dy,
-      child: StatefulBuilder(
-        builder: (BuildContext context, StateSetter setHoverState) {
+      child: _NodeHoverRegion(
+        builder: (BuildContext context, bool hovering) {
           final bool showOutputHandles =
               hovering || selectedOutputPortIndex != null;
           final bool hasVisibleOutputHandles =
               showOutputHandles &&
               outputHandles.isNotEmpty &&
               onOutputTap != null;
-          return MouseRegion(
-            onEnter: (_) => setHoverState(() => hovering = true),
-            onExit: (_) => setHoverState(() => hovering = false),
-            child: SizedBox(
-              width: width,
-              height: hasVisibleOutputHandles ? height + 28 : height,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: <Widget>[
-                  if (statusLabel != null)
-                    Positioned(
-                      left: 0,
-                      top: -18,
-                      child: _NodeStatusStrip(label: statusLabel!),
-                    ),
-                  GestureDetector(
-                    onTap: onTap,
-                    onDoubleTap: onDoubleTap,
-                    onSecondaryTapDown: (details) {
-                      onContextMenuAt?.call(details.globalPosition);
-                    },
-                    child: Draggable(
-                      dragAnchorStrategy: childDragAnchorStrategy,
-                      feedback: _buildCard(),
-                      childWhenDragging: Opacity(
-                        opacity: 0.5,
-                        child: _buildCard(),
-                      ),
-                      onDragEnd: (details) => onDragEnd(details.offset),
+          return SizedBox(
+            width: width,
+            height: hasVisibleOutputHandles ? height + 28 : height,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                if (statusLabel != null)
+                  Positioned(
+                    left: 0,
+                    top: -18,
+                    child: _NodeStatusStrip(label: statusLabel!),
+                  ),
+                GestureDetector(
+                  onTap: onTap,
+                  onDoubleTap: onDoubleTap,
+                  onSecondaryTapDown: (details) {
+                    onContextMenuAt?.call(details.globalPosition);
+                  },
+                  child: Draggable(
+                    dragAnchorStrategy: childDragAnchorStrategy,
+                    feedback: _buildCard(),
+                    childWhenDragging: Opacity(
+                      opacity: 0.5,
                       child: _buildCard(),
                     ),
+                    onDragEnd: (details) => onDragEnd(details.offset),
+                    child: _buildCard(),
                   ),
-                  ..._buildOutputHandles(
-                    showOutputHandles: hasVisibleOutputHandles,
-                  ),
-                  if (showConnectionOutputs) ...<Widget>[
-                    if (connectionOutputEdge != null)
-                      _buildConnectionHandle(
-                        connectionOutputEdge!,
-                        output: true,
-                        forceVisible: hovering,
-                      ),
-                  ],
-                  if (showConnectionInputs) ...<Widget>[
-                    if (connectionInputEdge != null)
-                      _buildConnectionHandle(
-                        connectionInputEdge!,
-                        output: false,
-                        forceVisible: hovering,
-                      ),
-                  ],
+                ),
+                ..._buildOutputHandles(
+                  showOutputHandles: hasVisibleOutputHandles,
+                ),
+                if (showConnectionOutputs) ...<Widget>[
+                  if (connectionOutputEdge != null)
+                    _buildConnectionHandle(
+                      connectionOutputEdge!,
+                      output: true,
+                      forceVisible: hovering,
+                    ),
                 ],
-              ),
+                if (showConnectionInputs) ...<Widget>[
+                  if (connectionInputEdge != null)
+                    _buildConnectionHandle(
+                      connectionInputEdge!,
+                      output: false,
+                      forceVisible: hovering,
+                    ),
+                ],
+              ],
             ),
           );
         },
@@ -334,6 +329,29 @@ class NodeCard extends StatelessWidget {
           );
         })
         .toList(growable: false);
+  }
+}
+
+class _NodeHoverRegion extends StatefulWidget {
+  const _NodeHoverRegion({required this.builder});
+
+  final Widget Function(BuildContext context, bool hovering) builder;
+
+  @override
+  State<_NodeHoverRegion> createState() => _NodeHoverRegionState();
+}
+
+class _NodeHoverRegionState extends State<_NodeHoverRegion> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      opaque: true,
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: widget.builder(context, _hovering),
+    );
   }
 }
 

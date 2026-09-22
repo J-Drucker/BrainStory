@@ -161,31 +161,38 @@ void main() {
   testWidgets('hovering anywhere on a node reveals its wire handles', (
     WidgetTester tester,
   ) async {
+    late StateSetter rebuildCanvas;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: Stack(
-            children: <Widget>[
-              NodeCard(
-                width: 160,
-                height: 72,
-                title: 'Example',
-                nodeNumber: 1,
-                position: Offset.zero,
-                onDragEnd: (_) {},
-                color: Colors.blueGrey,
-                showConnectionOutputs: true,
-                connectionOutputEdge: NodeConnectionEdge.bottom,
-                onConnectionOutputTap: (_) {},
-              ),
-            ],
+          body: StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              rebuildCanvas = setState;
+              return Stack(
+                children: <Widget>[
+                  NodeCard(
+                    width: 160,
+                    height: 72,
+                    title: 'Example',
+                    nodeNumber: 1,
+                    position: Offset.zero,
+                    onDragEnd: (_) {},
+                    color: Colors.blueGrey,
+                    connectionDraftActive: true,
+                    showConnectionInputs: true,
+                    connectionInputEdge: NodeConnectionEdge.top,
+                    onConnectionInputTap: (_) {},
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
 
     final Finder handle = find.byKey(
-      const ValueKey<String>('node-wire-handle-bottom'),
+      const ValueKey<String>('node-wire-handle-top'),
     );
     final Finder visual = find.descendant(
       of: handle,
@@ -193,11 +200,22 @@ void main() {
     );
     expect(tester.getSize(visual).width, 0);
 
-    final TestGesture mouse = await tester.createGesture(
-      kind: PointerDeviceKind.mouse,
+    await tester.sendEventToBinding(
+      const PointerHoverEvent(
+        position: Offset(400, 400),
+        kind: PointerDeviceKind.mouse,
+      ),
     );
-    await mouse.addPointer();
-    await mouse.moveTo(const Offset(80, 36));
+    await tester.sendEventToBinding(
+      PointerHoverEvent(
+        position: tester.getCenter(find.text('Example')),
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getSize(visual).width, 12);
+
+    rebuildCanvas(() {});
     await tester.pumpAndSettle();
 
     expect(tester.getSize(visual).width, 12);
