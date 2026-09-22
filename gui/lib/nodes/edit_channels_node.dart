@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -25,6 +26,7 @@ class EditChannelsNodeType extends NodeType {
 
   static const String coordinateImportNone = 'none';
   static const String coordinateImportStandard = 'standard';
+  static const String coordinateImportCustom = 'custom';
   static const String rereferenceNone = 'none';
   static const String rereferenceAverage = 'average';
 
@@ -82,7 +84,7 @@ class EditChannelsNodeType extends NodeType {
             _channelLabelsForSeries(timeSeries),
           ),
           config: configForDataset(params, visibleDataset.id),
-          currentCoordinateCount: timeSeries.channelCoordinates.length,
+          currentCoordinates: timeSeries.channelCoordinates,
           onChanged: (Map<String, dynamic> config) {
             setState(() {
               setConfigForDataset(params, visibleDataset.id, config);
@@ -143,23 +145,28 @@ class EditChannelsNodeType extends NodeType {
       timeSeries: configSeries,
       config: config,
     );
-    TimeSeriesData? nextSeries = timeSeries == null
-        ? null
-        : applyChannelEdits(
-            timeSeries,
-            config,
-            warningSink: (String warning) {
-              dataset.ram['editChannels.lastWarning'] = warning;
-            },
-          );
     final String coordinateImportMode =
         (config['coordinateImportMode'] ?? coordinateImportNone)
             .toString()
             .trim()
             .toLowerCase();
-    if (coordinateImportMode == coordinateImportStandard &&
-        nextSeries != null) {
-      nextSeries = await applyConfiguredCoordinates(nextSeries);
+    final TimeSeriesData? editableSeries =
+        timeSeries != null && coordinateImportMode == coordinateImportCustom
+        ? applyCustomCoordinates(timeSeries, config)
+        : timeSeries;
+    TimeSeriesData? nextSeries = editableSeries == null
+        ? null
+        : applyChannelEdits(
+            editableSeries,
+            config,
+            warningSink: (String warning) {
+              dataset.ram['editChannels.lastWarning'] = warning;
+            },
+          );
+    if (nextSeries != null) {
+      if (coordinateImportMode == coordinateImportStandard) {
+        nextSeries = await applyConfiguredCoordinates(nextSeries);
+      }
     }
     if (nextSeries != null) {
       dataset.timeSeries = nextSeries;
@@ -330,6 +337,9 @@ class EditChannelsNodeType extends NodeType {
       if (datasetId != sourceDatasetId &&
           sourceCoordinateImportMode != coordinateImportNone)
         'coordinateImportMode': sourceCoordinateImportMode,
+      if (datasetId != sourceDatasetId &&
+          sourceCoordinateImportMode == coordinateImportCustom)
+        'customCoordinates': source['customCoordinates'],
       'edits': mergedEdits,
     };
   }
@@ -634,6 +644,7 @@ class EditChannelsNodeType extends NodeType {
 
     final List<List<double>> outputChannels = <List<double>>[];
     final List<String> outputLabels = <String>[];
+    final List<String> outputSourceLabels = <String>[];
     final Map<String, ChannelCoordinate> outputCoordinates =
         <String, ChannelCoordinate>{};
     bool interpolateRequested = false;
@@ -661,6 +672,7 @@ class EditChannelsNodeType extends NodeType {
 
       outputChannels.add(sourceChannels[index]);
       outputLabels.add(label);
+      outputSourceLabels.add(sourceLabels[index]);
       final ChannelCoordinate? coordinate =
           timeSeries.channelCoordinates[sourceLabels[index]];
       if (coordinate != null) {
@@ -720,10 +732,26 @@ class EditChannelsNodeType extends NodeType {
       }
       outputChannels.add(values);
       outputLabels.add(name);
+      outputSourceLabels.add(name);
     }
 
     if (rereferenceMode == rereferenceAverage) {
-      _applyAverageReferenceInPlace(outputChannels);
+      final Set<String> selectedReferenceLabels =
+          (config['rereferenceChannelLabels'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toSet();
+      final List<int> referenceIndices = <int>[
+        for (int index = 0; index < outputLabels.length; index++)
+          if (selectedReferenceLabels.isEmpty ||
+              selectedReferenceLabels.contains(outputLabels[index]) ||
+              selectedReferenceLabels.contains(outputSourceLabels[index]))
+            index,
+      ];
+      _applyAverageReferenceInPlace(
+        outputChannels,
+        referenceIndices: referenceIndices,
+      );
     }
 
     if (interpolateRequested) {
@@ -761,6 +789,13 @@ class EditChannelsNodeType extends NodeType {
         (map['coordinateImportMode'] ?? coordinateImportNone).toString();
     final String rereferenceMode = (map['rereferenceMode'] ?? rereferenceNone)
         .toString();
+    final List<String> rereferenceChannelLabels =
+        (map['rereferenceChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .toList(growable: false);
+    final Map<String, dynamic> customCoordinates = Map<String, dynamic>.from(
+      map['customCoordinates'] as Map? ?? const <String, dynamic>{},
+    );
     final List<String> sourceChannelLabels =
         (map['sourceChannelLabels'] as List<dynamic>? ?? const <dynamic>[])
             .map((dynamic value) => value.toString())
@@ -793,6 +828,8 @@ class EditChannelsNodeType extends NodeType {
       'sourceChannelLabels': sourceChannelLabels,
       'coordinateImportMode': coordinateImportMode,
       'rereferenceMode': rereferenceMode,
+      'rereferenceChannelLabels': rereferenceChannelLabels,
+      'customCoordinates': customCoordinates,
     };
   }
 
@@ -905,17 +942,61 @@ class EditChannelsNodeType extends NodeType {
     return timeSeries.copyWith(channelCoordinates: next);
   }
 
-  static void _applyAverageReferenceInPlace(List<List<double>> channels) {
-    if (channels.length < 2 || channels.isEmpty) {
+  static TimeSeriesData applyCustomCoordinates(
+    TimeSeriesData timeSeries,
+    Map<String, dynamic> config,
+  ) {
+    final Map<String, dynamic> configured = Map<String, dynamic>.from(
+      config['customCoordinates'] as Map? ?? const <String, dynamic>{},
+    );
+    final Map<String, ChannelCoordinate> next = <String, ChannelCoordinate>{
+      ...timeSeries.channelCoordinates,
+    };
+    for (final String label in _channelLabelsForSeries(timeSeries)) {
+      final Map<String, dynamic> row = Map<String, dynamic>.from(
+        configured[label] as Map? ?? const <String, dynamic>{},
+      );
+      final double? x = _coordinateNumber(row['x']);
+      final double? y = _coordinateNumber(row['y']);
+      final double? z = _coordinateNumber(row['z']);
+      if (x == null || y == null || z == null) continue;
+      final ChannelCoordinate? current = timeSeries.channelCoordinates[label];
+      next[label] = ChannelCoordinate(
+        label: label,
+        x: x,
+        y: y,
+        z: z,
+        coordinateSystem:
+            row['coordinateSystem']?.toString() ??
+            current?.coordinateSystem ??
+            'custom',
+        units: row['units']?.toString() ?? current?.units ?? 'mm',
+      );
+    }
+    return timeSeries.copyWith(channelCoordinates: next);
+  }
+
+  static double? _coordinateNumber(dynamic value) => value is num
+      ? value.toDouble()
+      : double.tryParse(value?.toString() ?? '');
+
+  static void _applyAverageReferenceInPlace(
+    List<List<double>> channels, {
+    List<int>? referenceIndices,
+  }) {
+    final List<int> references =
+        referenceIndices ??
+        List<int>.generate(channels.length, (int index) => index);
+    if (channels.isEmpty || references.isEmpty) {
       return;
     }
     final int sampleCount = channels.first.length;
     for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
       double mean = 0.0;
-      for (final List<double> channel in channels) {
-        mean += channel[sampleIndex];
+      for (final int index in references) {
+        mean += channels[index][sampleIndex];
       }
-      mean /= channels.length;
+      mean /= references.length;
       for (final List<double> channel in channels) {
         channel[sampleIndex] -= mean;
       }
@@ -930,14 +1011,14 @@ class ChannelEditConfigEditor extends StatefulWidget {
     required this.config,
     required this.onChanged,
     this.initialVisibleChannelIndices,
-    this.currentCoordinateCount = 0,
+    this.currentCoordinates = const <String, ChannelCoordinate>{},
   });
 
   final List<String> channelLabels;
   final Map<String, dynamic> config;
   final ValueChanged<Map<String, dynamic>> onChanged;
   final List<int>? initialVisibleChannelIndices;
-  final int currentCoordinateCount;
+  final Map<String, ChannelCoordinate> currentCoordinates;
 
   @override
   State<ChannelEditConfigEditor> createState() =>
@@ -952,6 +1033,10 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       <String, TextEditingController>{};
   final Map<String, TextEditingController> _newChannelControllers =
       <String, TextEditingController>{};
+  final Map<String, List<TextEditingController>> _coordinateControllers =
+      <String, List<TextEditingController>>{};
+  int _channelSectionIndex = 0;
+  String _sortMode = 'import';
 
   @override
   void initState() {
@@ -982,6 +1067,12 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         in _newChannelControllers.values) {
       controller.dispose();
     }
+    for (final List<TextEditingController> controllers
+        in _coordinateControllers.values) {
+      for (final TextEditingController controller in controllers) {
+        controller.dispose();
+      }
+    }
     super.dispose();
   }
 
@@ -994,14 +1085,15 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         _config['newChannels'] as List<dynamic>? ?? const <dynamic>[],
       );
 
-  String get _coordinateImportMode =>
-      (_config['coordinateImportMode'] ??
-              EditChannelsNodeType.coordinateImportNone)
-          .toString();
+  Set<String> get _rereferenceChannelLabels =>
+      (_config['rereferenceChannelLabels'] as List<dynamic>? ??
+              const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .toSet();
 
-  String get _rereferenceMode =>
-      (_config['rereferenceMode'] ?? EditChannelsNodeType.rereferenceNone)
-          .toString();
+  Map<String, dynamic> get _customCoordinates => Map<String, dynamic>.from(
+    _config['customCoordinates'] as Map? ?? const <String, dynamic>{},
+  );
 
   List<int> get _alteredChannelIndices {
     final Set<int> altered = <int>{...?widget.initialVisibleChannelIndices};
@@ -1019,16 +1111,17 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         altered.add(index);
       }
     }
-    return altered
-        .where((int index) => index >= 0 && index < widget.channelLabels.length)
-        .toList(growable: false)
-      ..sort();
+    return _sortedChannelIndices
+        .where((int index) => altered.contains(index))
+        .toList(growable: false);
   }
 
-  List<int> get _remainingChannelIndices =>
-      List<int>.generate(widget.channelLabels.length, (int index) => index)
-          .where((int index) => !_alteredChannelIndices.contains(index))
-          .toList(growable: false);
+  List<int> get _remainingChannelIndices {
+    final Set<int> altered = _alteredChannelIndices.toSet();
+    return _sortedChannelIndices
+        .where((int index) => !altered.contains(index))
+        .toList(growable: false);
+  }
 
   void _ensureSourceChannelLabels() {
     final List<dynamic> stored =
@@ -1088,20 +1181,41 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
         );
       }
     }
+    final Set<String> activeLabels = widget.channelLabels.toSet();
+    for (final String label in _coordinateControllers.keys.toList()) {
+      if (!activeLabels.contains(label)) {
+        for (final TextEditingController controller
+            in _coordinateControllers.remove(label)!) {
+          controller.dispose();
+        }
+      }
+    }
+    for (final String label in widget.channelLabels) {
+      final Map<String, dynamic> configured = Map<String, dynamic>.from(
+        _customCoordinates[label] as Map? ?? const <String, dynamic>{},
+      );
+      final List<String> values = <String>[
+        (configured['x'] ?? '').toString(),
+        (configured['y'] ?? '').toString(),
+        (configured['z'] ?? '').toString(),
+      ];
+      final List<TextEditingController> controllers = _coordinateControllers
+          .putIfAbsent(
+            label,
+            () => values
+                .map((String value) => TextEditingController(text: value))
+                .toList(growable: false),
+          );
+      for (int axis = 0; axis < 3; axis++) {
+        if (controllers[axis].text != values[axis]) {
+          controllers[axis].text = values[axis];
+        }
+      }
+    }
   }
 
   void _emitConfig() {
     widget.onChanged(EditChannelsNodeType._normalizeDatasetConfig(_config));
-  }
-
-  void _setCoordinateImportMode(String value) {
-    _config['coordinateImportMode'] = value;
-    _emitConfig();
-  }
-
-  void _setRereferenceMode(String value) {
-    _config['rereferenceMode'] = value;
-    _emitConfig();
   }
 
   void _updateExistingEdit(
@@ -1221,8 +1335,234 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     _emitConfig();
   }
 
+  List<int> get _sortedChannelIndices {
+    final List<int> indices = List<int>.generate(
+      widget.channelLabels.length,
+      (int index) => index,
+    );
+    if (_sortMode == 'import') return indices;
+    if (_sortMode == 'alphabetical') {
+      indices.sort(
+        (int a, int b) => widget.channelLabels[a].toLowerCase().compareTo(
+          widget.channelLabels[b].toLowerCase(),
+        ),
+      );
+      return indices;
+    }
+    double? axisValue(int index) {
+      final String label = widget.channelLabels[index];
+      final Map<String, dynamic> custom = Map<String, dynamic>.from(
+        _customCoordinates[label] as Map? ?? const <String, dynamic>{},
+      );
+      final ChannelCoordinate? current =
+          ChannelCoordinatesNodeType.coordinateForChannelLabel(
+            widget.currentCoordinates,
+            label,
+          );
+      return switch (_sortMode) {
+        'leftRight' => EditChannelsNodeType._coordinateNumber(
+          custom['x'] ?? current?.x,
+        ),
+        'posteriorAnterior' => EditChannelsNodeType._coordinateNumber(
+          custom['y'] ?? current?.y,
+        ),
+        'inferiorSuperior' => EditChannelsNodeType._coordinateNumber(
+          custom['z'] ?? current?.z,
+        ),
+        _ => null,
+      };
+    }
+
+    indices.sort((int a, int b) {
+      final double? av = axisValue(a);
+      final double? bv = axisValue(b);
+      if (av == null && bv == null) return a.compareTo(b);
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      final int comparison = av.compareTo(bv);
+      return comparison == 0 ? a.compareTo(b) : comparison;
+    });
+    return indices;
+  }
+
+  void _setReferenceChannel(String label, bool selected) {
+    final Set<String> labels = _rereferenceChannelLabels;
+    selected ? labels.add(label) : labels.remove(label);
+    _config['rereferenceChannelLabels'] = labels.toList(growable: false);
+    _config['rereferenceMode'] = labels.isEmpty
+        ? EditChannelsNodeType.rereferenceNone
+        : EditChannelsNodeType.rereferenceAverage;
+    _emitConfig();
+  }
+
+  void _setAllReferenceChannels(bool selected) {
+    _config['rereferenceChannelLabels'] = selected
+        ? List<String>.from(widget.channelLabels)
+        : <String>[];
+    _config['rereferenceMode'] = selected
+        ? EditChannelsNodeType.rereferenceAverage
+        : EditChannelsNodeType.rereferenceNone;
+    _emitConfig();
+  }
+
+  void _updateCoordinate(String label, int axis, String value) {
+    final Map<String, dynamic> coordinates = _customCoordinates;
+    final List<TextEditingController> controllers =
+        _coordinateControllers[label]!;
+    final ChannelCoordinate? current =
+        ChannelCoordinatesNodeType.coordinateForChannelLabel(
+          widget.currentCoordinates,
+          label,
+        );
+    coordinates[label] = <String, dynamic>{
+      'x': axis == 0 ? value : controllers[0].text,
+      'y': axis == 1 ? value : controllers[1].text,
+      'z': axis == 2 ? value : controllers[2].text,
+      'coordinateSystem': current?.coordinateSystem ?? 'custom',
+      'units': current?.units ?? 'mm',
+    };
+    _config['customCoordinates'] = coordinates;
+    _config['coordinateImportMode'] =
+        EditChannelsNodeType.coordinateImportCustom;
+    _emitConfig();
+  }
+
+  Future<void> _assignStandardCoordinates() async {
+    final Map<String, ChannelCoordinate> standard =
+        ChannelCoordinatesNodeType.parseChannelCoordinateCsv(
+          await rootBundle.loadString(
+            ChannelCoordinatesNodeType.standardCoordinatesAsset,
+          ),
+        );
+    _applyCoordinateMap(standard);
+  }
+
+  Future<void> _loadCoordinatesFromFile() async {
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'Channel coordinates',
+          extensions: <String>['csv', 'tsv', 'txt'],
+        ),
+      ],
+    );
+    if (file == null) return;
+    final String payload = await file.readAsString();
+    final Map<String, ChannelCoordinate> parsed =
+        ChannelCoordinatesNodeType.parseChannelCoordinateCsv(
+          payload.replaceAll('\t', ','),
+        );
+    if (parsed.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No valid channel coordinates found.')),
+        );
+      }
+      return;
+    }
+    _applyCoordinateMap(parsed);
+  }
+
+  void _applyCoordinateMap(Map<String, ChannelCoordinate> coordinates) {
+    final Map<String, dynamic> configured = _customCoordinates;
+    for (final String label in widget.channelLabels) {
+      final ChannelCoordinate? coordinate =
+          ChannelCoordinatesNodeType.coordinateForChannelLabel(
+            coordinates,
+            label,
+          );
+      if (coordinate == null) continue;
+      configured[label] = <String, dynamic>{
+        'x': coordinate.x,
+        'y': coordinate.y,
+        'z': coordinate.z,
+        'coordinateSystem': coordinate.coordinateSystem,
+        'units': coordinate.units,
+      };
+    }
+    setState(() {
+      _config['customCoordinates'] = configured;
+      _config['coordinateImportMode'] =
+          EditChannelsNodeType.coordinateImportCustom;
+      _syncControllers();
+    });
+    _emitConfig();
+  }
+
   @override
   Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final Widget tabs = TabBar(
+                onTap: (int index) => setState(() {
+                  _channelSectionIndex = index;
+                }),
+                tabs: const <Tab>[
+                  Tab(text: 'Edit channels'),
+                  Tab(text: 'Rereference'),
+                  Tab(text: 'Coordinates'),
+                ],
+              );
+              final Widget sort = _buildSortDropdown();
+              if (constraints.maxWidth < 700) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[tabs, const SizedBox(height: 8), sort],
+                );
+              }
+              return Row(
+                children: <Widget>[
+                  Expanded(child: tabs),
+                  const SizedBox(width: 16),
+                  SizedBox(width: 190, child: sort),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: IndexedStack(
+              index: _channelSectionIndex,
+              children: <Widget>[
+                _buildEditChannelsPanel(),
+                _buildRereferencePanel(),
+                _buildCoordinatesPanel(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSortDropdown() {
+    return DropdownButtonFormField<String>(
+      initialValue: _sortMode,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Sort channels',
+        border: OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: const <DropdownMenuItem<String>>[
+        DropdownMenuItem(value: 'import', child: Text('Import order')),
+        DropdownMenuItem(value: 'alphabetical', child: Text('Alphabetical')),
+        DropdownMenuItem(value: 'leftRight', child: Text('L-R')),
+        DropdownMenuItem(value: 'posteriorAnterior', child: Text('P-A')),
+        DropdownMenuItem(value: 'inferiorSuperior', child: Text('I-S')),
+      ],
+      onChanged: (String? value) {
+        if (value != null) setState(() => _sortMode = value);
+      },
+    );
+  }
+
+  Widget _buildEditChannelsPanel() {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         return Scrollbar(
@@ -1243,8 +1583,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
-                      _buildMetadataControls(context),
-                      const SizedBox(height: 12),
                       _buildHeaderRow(),
                       const SizedBox(height: 8),
                       Text(
@@ -1334,86 +1672,172 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     );
   }
 
-  Widget _buildMetadataControls(BuildContext context) {
-    final String coordinateSummary = widget.currentCoordinateCount == 0
-        ? 'No coordinates currently attached.'
-        : '${widget.currentCoordinateCount} coordinate${widget.currentCoordinateCount == 1 ? '' : 's'} currently attached.';
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          SizedBox(
-            width: 280,
-            child: DropdownButtonFormField<String>(
-              initialValue: _coordinateImportMode,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Import channel coordinates',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: const <DropdownMenuItem<String>>[
-                DropdownMenuItem<String>(
-                  value: EditChannelsNodeType.coordinateImportNone,
-                  child: Text('No change'),
-                ),
-                DropdownMenuItem<String>(
-                  value: EditChannelsNodeType.coordinateImportStandard,
-                  child: Text('Assign standard coordinates'),
-                ),
-              ],
-              onChanged: (String? value) {
-                if (value == null) {
-                  return;
-                }
-                setState(() {
-                  _setCoordinateImportMode(value);
-                });
-              },
-            ),
+  Widget _buildRereferencePanel() {
+    final Set<String> selected = _rereferenceChannelLabels;
+    final bool allSelected =
+        selected.length == widget.channelLabels.length && selected.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          title: const Text(
+            'Select all',
+            style: TextStyle(fontWeight: FontWeight.w700),
           ),
-          SizedBox(
-            width: 220,
-            child: DropdownButtonFormField<String>(
-              initialValue: _rereferenceMode,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Rereference',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: const <DropdownMenuItem<String>>[
-                DropdownMenuItem<String>(
-                  value: EditChannelsNodeType.rereferenceNone,
-                  child: Text('No change'),
-                ),
-                DropdownMenuItem<String>(
-                  value: EditChannelsNodeType.rereferenceAverage,
-                  child: Text('Average reference'),
-                ),
-              ],
-              onChanged: (String? value) {
-                if (value == null) {
-                  return;
-                }
-                setState(() {
-                  _setRereferenceMode(value);
-                });
-              },
-            ),
+          value: allSelected,
+          tristate: selected.isNotEmpty && !allSelected,
+          onChanged: (bool? value) {
+            setState(() => _setAllReferenceChannels(value == true));
+          },
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _sortedChannelIndices.length,
+            itemExtent: 36,
+            itemBuilder: (BuildContext context, int row) {
+              final String label =
+                  widget.channelLabels[_sortedChannelIndices[row]];
+              return CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                title: Text(label),
+                value: selected.contains(label),
+                onChanged: (bool? value) {
+                  setState(() => _setReferenceChannel(label, value == true));
+                },
+              );
+            },
           ),
-          Text(
-            coordinateSummary,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCoordinatesPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: <Widget>[
+            FilledButton.tonalIcon(
+              onPressed: _assignStandardCoordinates,
+              icon: const Icon(Icons.auto_fix_high, size: 18),
+              label: const Text('Assign standard'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loadCoordinatesFromFile,
+              icon: const Icon(Icons.file_open, size: 18),
+              label: const Text('Load coordinates from file'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        const Row(
+          children: <Widget>[
+            SizedBox(
+              width: 130,
+              child: Text(
+                'Channel',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            SizedBox(
+              width: 235,
+              child: Text(
+                'Current coordinates (X, Y, Z)',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                'New coordinates',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _sortedChannelIndices.length,
+            itemExtent: 48,
+            itemBuilder: (BuildContext context, int row) {
+              final String label =
+                  widget.channelLabels[_sortedChannelIndices[row]];
+              return _buildCoordinateRow(label);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCoordinateRow(String label) {
+    final ChannelCoordinate? current =
+        ChannelCoordinatesNodeType.coordinateForChannelLabel(
+          widget.currentCoordinates,
+          label,
+        );
+    final List<TextEditingController> controllers =
+        _coordinateControllers[label]!;
+    final String currentText = current == null
+        ? 'Not assigned'
+        : '${_coordinateText(current.x)}, ${_coordinateText(current.y)}, ${_coordinateText(current.z)}';
+    return Row(
+      children: <Widget>[
+        SizedBox(
+          width: 130,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        SizedBox(
+          width: 235,
+          child: Text(
+            currentText,
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
+        ),
+        for (int axis = 0; axis < 3; axis++) ...<Widget>[
+          SizedBox(
+            width: 96,
+            child: TextField(
+              controller: controllers[axis],
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              inputFormatters: <TextInputFormatter>[
+                FilteringTextInputFormatter.allow(RegExp(r'[-+0-9.eE]')),
+              ],
+              decoration: InputDecoration(
+                labelText: const <String>['X', 'Y', 'Z'][axis],
+                isDense: true,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (String value) =>
+                  _updateCoordinate(label, axis, value),
+            ),
+          ),
+          if (axis < 2) const SizedBox(width: 8),
         ],
-      ),
+      ],
     );
+  }
+
+  String _coordinateText(double value) {
+    final String fixed = value.toStringAsFixed(3);
+    return fixed.replaceFirst(RegExp(r'\.?0+$'), '');
   }
 
   Widget _buildHeaderRow() {
@@ -1531,22 +1955,29 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           const SizedBox(width: 10),
           SizedBox(
             width: 210,
-            child: RadioGroup<String>(
-              groupValue: datasetScope,
+            child: DropdownButtonFormField<String>(
+              initialValue: datasetScope,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem<String>(
+                  value: 'dataset',
+                  child: Text('This dataset'),
+                ),
+                DropdownMenuItem<String>(
+                  value: 'all',
+                  child: Text('All datasets'),
+                ),
+              ],
               onChanged: (String? value) {
                 if (value == null) return;
                 setState(() {
                   _updateExistingEdit(index, datasetScope: value);
                 });
               },
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  _CompactRadioChoice(value: 'dataset', label: 'this dataset'),
-                  _CompactRadioChoice(value: 'all', label: 'all datasets'),
-                ],
-              ),
             ),
           ),
           const SizedBox(width: 10),

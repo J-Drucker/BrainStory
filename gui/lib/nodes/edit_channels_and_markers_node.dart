@@ -197,17 +197,21 @@ class EditChannelsAndMarkersNodeType extends NodeType {
         timeSeries: nextSeries,
         config: config,
       );
+      final String coordinateImportMode =
+          (config['coordinateImportMode'] ??
+                  EditChannelsNodeType.coordinateImportNone)
+              .toString();
+      final TimeSeriesData editableSeries =
+          coordinateImportMode == EditChannelsNodeType.coordinateImportCustom
+          ? EditChannelsNodeType.applyCustomCoordinates(nextSeries, config)
+          : nextSeries;
       nextSeries = EditChannelsNodeType.applyChannelEdits(
-        nextSeries,
+        editableSeries,
         config,
         warningSink: (String warning) {
           dataset.ram['editChannels.lastWarning'] = warning;
         },
       );
-      final String coordinateImportMode =
-          (config['coordinateImportMode'] ??
-                  EditChannelsNodeType.coordinateImportNone)
-              .toString();
       if (coordinateImportMode ==
           EditChannelsNodeType.coordinateImportStandard) {
         nextSeries = await EditChannelsNodeType.applyConfiguredCoordinates(

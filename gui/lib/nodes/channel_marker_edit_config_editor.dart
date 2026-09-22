@@ -230,8 +230,7 @@ class _ChannelMarkerEditConfigEditorState
                         config: _channelConfig,
                         initialVisibleChannelIndices:
                             widget.initialVisibleChannelIndices,
-                        currentCoordinateCount:
-                            series.channelCoordinates.length,
+                        currentCoordinates: series.channelCoordinates,
                         onChanged: (Map<String, dynamic> config) {
                           _channelConfig = config;
                           widget.onChannelConfigChanged(config);

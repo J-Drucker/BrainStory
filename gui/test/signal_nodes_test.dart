@@ -4088,6 +4088,58 @@ time,Fz,Cz
     },
   );
 
+  test('Edit Channels rereferences against only selected channels', () {
+    final TimeSeriesData edited = EditChannelsNodeType.applyChannelEdits(
+      TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[1, 2],
+          <double>[3, 4],
+          <double>[10, 20],
+        ],
+        sampleRate: 100,
+        channelLabels: <String>['Fz', 'Cz', 'Pz'],
+      ),
+      <String, dynamic>{
+        'rereferenceMode': EditChannelsNodeType.rereferenceAverage,
+        'rereferenceChannelLabels': <String>['Fz', 'Cz'],
+      },
+    );
+
+    expect(edited.channelSamples[0], <double>[-1, -1]);
+    expect(edited.channelSamples[1], <double>[1, 1]);
+    expect(edited.channelSamples[2], <double>[8, 17]);
+  });
+
+  test('Edit Channels applies custom coordinates through a rename', () async {
+    final Dataset dataset = Dataset('custom-coordinates')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[1, 2],
+        ],
+        sampleRate: 100,
+        channelLabels: <String>['Cz'],
+      );
+
+    await EditChannelsNodeType().run(dataset, <String, dynamic>{
+      'channelEditsByDataset': <String, dynamic>{
+        dataset.id: <String, dynamic>{
+          'coordinateImportMode': EditChannelsNodeType.coordinateImportCustom,
+          'customCoordinates': <String, dynamic>{
+            'Cz': <String, dynamic>{'x': 1, 'y': 2, 'z': 3},
+          },
+          'edits': <String, dynamic>{
+            '0': <String, dynamic>{'sourceLabel': 'Cz', 'rename': 'Central'},
+          },
+        },
+      },
+    });
+
+    expect(dataset.timeSeries!.channelLabels, <String>['Central']);
+    expect(dataset.timeSeries!.channelCoordinates['Central']!.x, 1);
+    expect(dataset.timeSeries!.channelCoordinates['Central']!.y, 2);
+    expect(dataset.timeSeries!.channelCoordinates['Central']!.z, 3);
+  });
+
   test('Edit Channels also transforms segmented data', () async {
     final Dataset dataset = Dataset('edit-segments', label: 'Segments');
     dataset.timeSeries = TimeSeriesData(
@@ -4169,8 +4221,10 @@ time,Fz,Cz
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Import channel coordinates'), findsOneWidget);
+    expect(find.text('Edit channels'), findsOneWidget);
     expect(find.text('Rereference'), findsOneWidget);
+    expect(find.text('Coordinates'), findsOneWidget);
+    expect(find.text('Sort channels'), findsOneWidget);
   });
 
   testWidgets('Edit Channels keeps a deleted channel in altered parameters', (
@@ -4257,8 +4311,9 @@ time,Fz,Cz
     expect(find.text('No altered channels.'), findsOneWidget);
     expect(find.text('Other channels'), findsOneWidget);
     expect(find.text('Apply to'), findsOneWidget);
-    expect(find.text('this dataset'), findsNWidgets(2));
-    expect(find.text('all datasets'), findsNWidgets(2));
+    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(3));
+    expect(find.text('this dataset'), findsNothing);
+    expect(find.text('all datasets'), findsNothing);
     await tester.enterText(find.byType(TextField).first, 'Fz renamed');
     await tester.tap(find.text('Markers'));
     await tester.pumpAndSettle();

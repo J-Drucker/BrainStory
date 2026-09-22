@@ -1255,8 +1255,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                     child: ChannelEditConfigEditor(
                       channelLabels: channelLabels,
                       config: draft,
-                      currentCoordinateCount:
-                          timeSeries.channelCoordinates.length,
+                      currentCoordinates: timeSeries.channelCoordinates,
                       onChanged: (Map<String, dynamic> config) {
                         draft = config;
                         _draftChannelEditConfig = config;
