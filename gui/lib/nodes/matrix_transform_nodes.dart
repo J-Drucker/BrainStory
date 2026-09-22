@@ -683,11 +683,14 @@ List<int> _icaFitSampleIndices(
       }
       matchedMarkers++;
       final int onset = marker.onsetSamples(timeSeries.sampleRate);
-      final int duration = marker.durationSamples(timeSeries.sampleRate);
+      final int markerEnd =
+          (((marker.onsetMicros + marker.durationMicros) / 1000000.0) *
+                  timeSeries.sampleRate)
+              .round();
       final int start = (onset - preSeconds * timeSeries.sampleRate)
           .floor()
           .clamp(0, sampleCount);
-      final int stop = (onset + duration + postSeconds * timeSeries.sampleRate)
+      final int stop = (markerEnd + postSeconds * timeSeries.sampleRate)
           .ceil()
           .clamp(0, sampleCount);
       final int safeStop = stop <= start

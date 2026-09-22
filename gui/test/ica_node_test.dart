@@ -195,6 +195,28 @@ void main() {
     expect(dataset.timeSeries!.sampleCount, 2048);
   });
 
+  test('ICA includes every sample in a duration marker', () async {
+    final Dataset dataset = _scopedIcaDataset(
+      markers: const <TimeMarker>[
+        TimeMarker(
+          onsetMicros: 1000000,
+          durationMicros: 1500000,
+          label: 'blink block',
+          markerType: MarkerType.segment,
+        ),
+      ],
+    );
+    await ICANodeType().run(dataset, <String, dynamic>{
+      ...ICANodeType().defaultParams,
+      'fitScope': 'markers',
+      'markerLabels': <String>['blink block'],
+      'markerPreSeconds': 0.0,
+      'markerPostSeconds': 0.0,
+    });
+
+    expect(dataset.matrixTransformation!.fitSampleCount, 384);
+  });
+
   test('ICA validates multichannel input', () async {
     final Dataset dataset = Dataset('single-channel');
     dataset.timeSeries = TimeSeriesData(

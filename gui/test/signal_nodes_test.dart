@@ -1424,6 +1424,10 @@ void main() {
     final ImpedancesNodeType nodeType = ImpedancesNodeType();
     Map<String, dynamic>? runParams;
     final Dataset dataset = Dataset('dialog-dataset', label: 'PVT');
+    final Dataset hiddenDataset = Dataset(
+      'unavailable-dialog-dataset',
+      label: 'Hidden sibling dataset',
+    );
     Future<String> action(Map<String, dynamic> _, Set<String> __) async => 'ok';
     final NodeDatasetActions datasetActions = NodeDatasetActions(
       supportsDisk: true,
@@ -1482,7 +1486,10 @@ void main() {
                       runParams = params;
                     },
                     datasetActions: datasetActions,
-                    datasets: <String, Dataset>{dataset.id: dataset},
+                    datasets: <String, Dataset>{
+                      dataset.id: dataset,
+                      hiddenDataset.id: hiddenDataset,
+                    },
                     availableDatasetIds: <String>{dataset.id},
                     datasetSourceLabels: const <String, List<String>>{},
                     processedDatasetStates: const <String, DatasetState>{},
@@ -1506,6 +1513,8 @@ void main() {
     expect(find.text('Save & Run'), findsOneWidget);
     expect(find.text('Parameters'), findsOneWidget);
     expect(find.text('Persistence'), findsOneWidget);
+    expect(find.text('PVT'), findsOneWidget);
+    expect(find.text('Hidden sibling dataset'), findsNothing);
 
     await tester.tap(find.text('Persistence'));
     await tester.pumpAndSettle();

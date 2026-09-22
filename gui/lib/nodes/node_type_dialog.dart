@@ -66,7 +66,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
     localParams = Map<String, dynamic>.from(widget.params);
     final Set<String> selectedDatasetIds = Set<String>.from(
       localParams['selectedDatasetIds'] as List<dynamic>? ?? <dynamic>[],
-    ).where(widget.datasets.containsKey).toSet();
+    ).where(widget.availableDatasetIds.contains).toSet();
 
     if (selectedDatasetIds.isEmpty) {
       selectedDatasetIds.addAll(widget.availableDatasetIds);
@@ -95,7 +95,12 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
   @override
   Widget build(BuildContext context) {
     final List<MapEntry<String, Dataset>> datasetEntries =
-        widget.datasets.entries.toList()
+        widget.datasets.entries
+            .where(
+              (MapEntry<String, Dataset> entry) =>
+                  widget.availableDatasetIds.contains(entry.value.id),
+            )
+            .toList()
           ..sort((MapEntry<String, Dataset> a, MapEntry<String, Dataset> b) {
             return a.value.label.compareTo(b.value.label);
           });
