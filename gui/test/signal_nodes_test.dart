@@ -874,6 +874,56 @@ void main() {
     );
   });
 
+  test('segmentation parameter inputs include direct parent markers', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset('segmentation-marker-input', label: 'PVT')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.filled(128, 0),
+        sampleRate: 128,
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    final NodeModel importNode = logic.nodes.single;
+    importNode.params['selectedDatasetIds'] = <String>[dataset.id];
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+    logic.applyMarkersFromVisualization(
+      nodeId: importNode.id,
+      dataset: dataset,
+      rawMarkers: const <Map<String, dynamic>>[
+        <String, dynamic>{
+          'datasetId': 'segmentation-marker-input',
+          'label': 'parent marker',
+          'onsetMicros': 500000,
+          'durationMicros': 0,
+          'markerType': MarkerType.event,
+        },
+      ],
+    );
+    final NodeModel markerNode = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+    );
+    logic.addNode(SegmentationNodeType());
+    final NodeModel segmentationNode = logic.nodes.last;
+    segmentationNode.params['selectedDatasetIds'] = <String>[dataset.id];
+    logic.connections.add(<String, dynamic>{
+      'fromNode': markerNode.id,
+      'fromPort': 0,
+      'toNode': segmentationNode.id,
+      'toPort': 0,
+    });
+
+    final Map<String, Dataset> inputs = await logic.inputDatasetViewsForNode(
+      segmentationNode.id,
+    );
+
+    expect(
+      inputs[dataset.id]!.timeSeries!.markers.map(
+        (TimeMarker marker) => marker.label,
+      ),
+      contains('parent marker'),
+    );
+  });
+
   test(
     'unconsumed channel coordinates pass through to daughter nodes',
     () async {

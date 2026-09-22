@@ -3664,6 +3664,24 @@ class CanvasLogic {
     int initialTabIndex = 0,
     bool startInExportMode = false,
   }) {
+    unawaited(
+      _openNodeEditorAfterResolvingInputs(
+        context: context,
+        node: node,
+        update: update,
+        initialTabIndex: initialTabIndex,
+        startInExportMode: startInExportMode,
+      ),
+    );
+  }
+
+  Future<void> _openNodeEditorAfterResolvingInputs({
+    required BuildContext context,
+    required NodeModel node,
+    required VoidCallback update,
+    required int initialTabIndex,
+    required bool startInExportMode,
+  }) async {
     final Map<String, dynamic> editorParams = Map<String, dynamic>.from(
       node.params,
     );
@@ -3675,6 +3693,13 @@ class CanvasLogic {
           _icaInputOptions(node);
       editorParams['_icaChannelLabels'] = options.channels;
       editorParams['_icaMarkerLabels'] = options.markers;
+    }
+    final Map<String, Dataset> editorDatasets =
+        node.type is SegmentationNodeType
+        ? await inputDatasetViewsForNode(node.id)
+        : _datasetsById();
+    if (!context.mounted) {
+      return;
     }
     showDialog<void>(
       context: context,
@@ -3707,7 +3732,7 @@ class CanvasLogic {
           }
         },
         datasetActions: _datasetActionsForNode(node: node, update: update),
-        datasets: _datasetsById(),
+        datasets: editorDatasets,
         availableDatasetIds: _availableDatasetIdsForNode(node),
         datasetSourceLabels: _datasetSourceLabelsForNode(node),
         processedDatasetStates: _processedDatasetStatesForNode(node),
@@ -3717,6 +3742,41 @@ class CanvasLogic {
         startInExportMode: startInExportMode,
       ),
     );
+  }
+
+  Future<Map<String, Dataset>> inputDatasetViewsForNode(String nodeId) async {
+    final NodeModel? node = _findNode(nodeId);
+    if (node == null || node.type is ImportNodeType) {
+      return _datasetsById();
+    }
+    final List<NodeModel> parents = _immediateParents(node.id);
+    final Set<String> availableDatasetIds = _availableDatasetIdsForNode(node);
+    final Map<String, Dataset> views = <String, Dataset>{};
+    for (final Dataset source in datasets.values) {
+      if (!availableDatasetIds.contains(source.id)) {
+        continue;
+      }
+      final Dataset view = _datasetShell(source);
+      bool appliedAnySnapshot = false;
+      for (final NodeModel parent in parents) {
+        if (!_datasetsForNode(parent).contains(source.id) ||
+            parent.datasetStates[source.id] != DatasetState.done) {
+          continue;
+        }
+        final DatasetArtifactSnapshot? snapshot =
+            await _loadSnapshotForNodeDataset(parent.id, source.id);
+        if (snapshot != null && !snapshot.isEmpty) {
+          _snapshotScopedToNodeOutputs(parent, snapshot).applyToDataset(view);
+          appliedAnySnapshot = true;
+          continue;
+        }
+        if (parent.type is ImportNodeType && !appliedAnySnapshot) {
+          _applyLiveSourceArtifacts(view, source);
+        }
+      }
+      views[source.id] = view;
+    }
+    return views;
   }
 
   ({List<String> channels, List<String> markers}) _icaInputOptions(
