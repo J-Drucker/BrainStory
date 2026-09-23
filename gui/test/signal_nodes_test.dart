@@ -478,6 +478,7 @@ void main() {
     expect(find.text('Datasets'), findsOneWidget);
     expect(find.text('Project'), findsOneWidget);
     expect(find.text('Publish'), findsOneWidget);
+    expect(find.text('Run All'), findsOneWidget);
     expect(
       tester.getCenter(find.text('Project')).dy,
       greaterThan(tester.getCenter(find.text('Datasets')).dy),
@@ -492,6 +493,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Datasets'), findsOneWidget);
     expect(find.text('Project'), findsOneWidget);
+  });
+
+  testWidgets('canvas right-click menu offers run all', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CanvasView(logic: logic)),
+      ),
+    );
+
+    final Finder canvasGesture = find.byWidgetPredicate(
+      (Widget widget) =>
+          widget is GestureDetector && widget.onSecondaryTapDown != null,
+    );
+    expect(canvasGesture, findsOneWidget);
+    final GestureDetector detector = tester.widget<GestureDetector>(
+      canvasGesture,
+    );
+    detector.onSecondaryTapDown!(
+      TapDownDetails(globalPosition: const Offset(400, 200)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run All'), findsNWidgets(2));
   });
 
   testWidgets('recent jobs is collapsible below the project controls', (
@@ -617,6 +645,65 @@ void main() {
     expect(order, <String>['first-start', 'first-end', 'second-start']);
     expect(logic.queuedRunJobs.value, isEmpty);
     expect(logic.recentRunJobs.value.first.label, 'Second job');
+  });
+
+  test('run all executes graph layers breadth-first', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset(
+      'run-all-dataset',
+      label: 'Run all',
+      path: 'run_all.csv',
+      sourceBytes: Uint8List.fromList(
+        utf8.encode('time,Fz\n0.000,0\n0.004,1\n0.008,0\n0.012,-1\n'),
+      ),
+    );
+    logic.datasets[dataset.id] = dataset;
+    final List<String> order = <String>[];
+    logic.addNode(ImportNodeType());
+    logic.addNode(_RecordingNodeType('A', order));
+    logic.addNode(_RecordingNodeType('B', order));
+    logic.addNode(_RecordingNodeType('C', order));
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel a = logic.nodes[1];
+    final NodeModel b = logic.nodes[2];
+    final NodeModel c = logic.nodes[3];
+    for (final NodeModel node in logic.nodes) {
+      node.params['selectedDatasetIds'] = <String>[dataset.id];
+    }
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': a.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': b.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': a.id,
+        'fromPort': 0,
+        'toNode': c.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': b.id,
+        'fromPort': 0,
+        'toNode': c.id,
+        'toPort': 0,
+      },
+    ]);
+
+    await logic.runAllNodes();
+
+    expect(order, <String>['A', 'B', 'C']);
+    expect(
+      logic.nodes.map((NodeModel node) => node.datasetStates[dataset.id]),
+      everyElement(DatasetState.done),
+    );
   });
 
   test(
@@ -6271,6 +6358,39 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(node.markerChange.isEmpty, isTrue);
     expect(node.markerChange.rows, isEmpty);
   });
+}
+
+class _RecordingNodeType extends NodeType {
+  _RecordingNodeType(this.title, this.order);
+
+  @override
+  final String title;
+  final List<String> order;
+
+  @override
+  Map<String, dynamic> get defaultParams => <String, dynamic>{};
+
+  @override
+  List<PortSpec> get inputs => const <PortSpec>[
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  List<PortSpec> get outputs => const <PortSpec>[
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  Widget buildBody(
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) => const SizedBox.shrink();
+
+  @override
+  Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
+    order.add(title);
+  }
 }
 
 double _singleFrequencyPower(

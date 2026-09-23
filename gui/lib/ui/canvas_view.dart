@@ -285,7 +285,7 @@ class _CanvasViewState extends State<CanvasView> {
                                           onSecondaryTapDown:
                                               (TapDownDetails details) {
                                                 setState(() {
-                                                  if (!logic.deleteConnectionAt(
+                                                  if (!logic.selectConnectionAt(
                                                     _globalToRawCanvasOffset(
                                                       details.globalPosition,
                                                     ),
@@ -294,6 +294,15 @@ class _CanvasViewState extends State<CanvasView> {
                                                         null;
                                                   }
                                                 });
+                                                unawaited(
+                                                  logic.showCanvasContextMenu(
+                                                    context: context,
+                                                    globalPosition:
+                                                        details.globalPosition,
+                                                    update: () =>
+                                                        setState(() {}),
+                                                  ),
+                                                );
                                               },
                                           child: SizedBox(
                                             key: _canvasKey,
@@ -428,6 +437,14 @@ class _CanvasViewState extends State<CanvasView> {
                                                     update: () =>
                                                         setState(() {}),
                                                   );
+                                            },
+                                            runAll: () {
+                                              unawaited(
+                                                logic.runAllFromUi(
+                                                  context: context,
+                                                  update: () => setState(() {}),
+                                                ),
+                                              );
                                             },
                                             load: () async {
                                               await logic.loadBrainStory(

@@ -795,6 +795,7 @@ class _ProjectActionsMenu extends StatelessWidget {
   const _ProjectActionsMenu({
     required this.publish,
     required this.memory,
+    required this.runAll,
     required this.export,
     required this.load,
     required this.clear,
@@ -804,6 +805,7 @@ class _ProjectActionsMenu extends StatelessWidget {
 
   final VoidCallback publish;
   final VoidCallback memory;
+  final VoidCallback runAll;
   final VoidCallback export;
   final VoidCallback load;
   final VoidCallback clear;
@@ -866,6 +868,12 @@ class _ProjectActionsMenu extends StatelessWidget {
                 _ProcessingActionControl(
                   value: processingResponsiveness,
                   onChanged: onProcessingResponsivenessChanged,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Run All',
+                  icon: Icons.play_arrow,
+                  onPressed: runAll,
                 ),
                 const SizedBox(height: 10),
                 _ProjectActionButton(
@@ -2406,6 +2414,7 @@ class CanvasLogic {
   Widget projectActions({
     required VoidCallback publish,
     required VoidCallback memory,
+    required VoidCallback runAll,
     required VoidCallback export,
     required VoidCallback load,
     required VoidCallback clear,
@@ -2418,6 +2427,7 @@ class CanvasLogic {
         child: _ProjectActionsMenu(
           publish: publish,
           memory: memory,
+          runAll: runAll,
           export: export,
           load: load,
           clear: clear,
@@ -2963,6 +2973,10 @@ class CanvasLogic {
           child: Text(queueRun ? 'Queue From Start' : 'Run From Start'),
         ),
         PopupMenuItem<String>(
+          value: 'run_all',
+          child: Text(queueRun ? 'Queue Run All' : 'Run All'),
+        ),
+        PopupMenuItem<String>(
           value: 'load_from_disk',
           enabled: canLoadFromDisk,
           child: const Text('Load from disk'),
@@ -3079,6 +3093,9 @@ class CanvasLogic {
             _showStatusSnackBar(context, finalDetail);
           }
         }
+        return;
+      case 'run_all':
+        await runAllFromUi(context: context, update: update);
         return;
       case 'load_from_disk':
         final String message = await _loadNodeSnapshotsToRam(
@@ -5086,6 +5103,63 @@ class CanvasLogic {
     );
   }
 
+  Future<void> runAllNodes({Set<String>? datasetIds}) async {
+    await _runNodeSet(
+      nodes.map((NodeModel node) => node.id).toSet(),
+      datasetIds: datasetIds,
+      includeAncestors: true,
+    );
+  }
+
+  Future<void> runAllFromUi({
+    required BuildContext context,
+    required VoidCallback update,
+  }) async {
+    try {
+      final String detail = await runQueued(
+        label: 'Running all nodes',
+        lockedNodeIds: nodes.map((NodeModel node) => node.id).toSet(),
+        action: runAllNodes,
+        successDetail: () => _lastRunDatasetCount == 0
+            ? 'No datasets were available to run.'
+            : 'Ran all nodes for $_lastRunDatasetCount dataset(s).',
+      );
+      update();
+      if (context.mounted) {
+        _showStatusSnackBar(context, detail);
+      }
+    } catch (error) {
+      if (context.mounted) {
+        _showStatusSnackBar(context, 'Run failed: $error');
+      }
+    }
+  }
+
+  Future<void> showCanvasContextMenu({
+    required BuildContext context,
+    required Offset globalPosition,
+    required VoidCallback update,
+  }) async {
+    final String? choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        globalPosition.dx + 1,
+        globalPosition.dy + 1,
+      ),
+      items: <PopupMenuEntry<String>>[
+        PopupMenuItem<String>(
+          value: 'run_all',
+          child: Text(hasActiveRun ? 'Queue Run All' : 'Run All'),
+        ),
+      ],
+    );
+    if (choice == 'run_all' && context.mounted) {
+      await runAllFromUi(context: context, update: update);
+    }
+  }
+
   Future<void> _runNodeSet(
     Set<String> nodeIds, {
     Set<String>? datasetIds,
@@ -5617,21 +5691,28 @@ class CanvasLogic {
       }
     }
 
-    final List<String> queue = nodes
-        .map((NodeModel node) => node.id)
-        .where((String id) => nodeIds.contains(id) && inDegree[id] == 0)
-        .toList();
+    final Iterable<NodeModel> roots = nodes.where(
+      (NodeModel node) => nodeIds.contains(node.id) && inDegree[node.id] == 0,
+    );
+    final List<String> queuedIds = <String>[
+      ...roots
+          .where((NodeModel node) => node.type is ImportNodeType)
+          .map((NodeModel node) => node.id),
+      ...roots
+          .where((NodeModel node) => node.type is! ImportNodeType)
+          .map((NodeModel node) => node.id),
+    ];
     final List<String> orderedIds = <String>[];
     int queueIndex = 0;
 
-    while (queueIndex < queue.length) {
-      final String current = queue[queueIndex++];
+    while (queueIndex < queuedIds.length) {
+      final String current = queuedIds[queueIndex++];
       orderedIds.add(current);
 
       for (final String target in outgoingEdges[current] ?? const <String>[]) {
         inDegree[target] = (inDegree[target] ?? 1) - 1;
         if (inDegree[target] == 0) {
-          queue.add(target);
+          queuedIds.add(target);
         }
       }
     }
