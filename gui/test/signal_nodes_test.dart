@@ -3063,7 +3063,7 @@ Mk2=Response,Response,4,1,0
     },
   );
 
-  testWidgets('blink template shows waveform beside topomap when positioned', (
+  testWidgets('blink template summary shows waveform without a topomap', (
     WidgetTester tester,
   ) async {
     const ArtifactTemplateSummary template = ArtifactTemplateSummary(
@@ -3104,8 +3104,8 @@ Mk2=Response,Response,4,1,0
     );
 
     expect(find.text('Waveform'), findsOneWidget);
-    expect(find.text('Topomap'), findsOneWidget);
-    expect(find.byType(InterpolatedTopomap), findsOneWidget);
+    expect(find.text('Topomap'), findsNothing);
+    expect(find.byType(InterpolatedTopomap), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -3194,7 +3194,7 @@ Mk2=Response,Response,4,1,0
       tester.getTopLeft(find.text('Candidates (1)')).dy,
       lessThan(tester.getTopLeft(find.text('Exemplars (1)')).dy),
     );
-    expect(find.byType(InterpolatedTopomap), findsNWidgets(2));
+    expect(find.byType(InterpolatedTopomap), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
