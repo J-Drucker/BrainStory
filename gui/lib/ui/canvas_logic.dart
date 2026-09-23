@@ -5100,6 +5100,7 @@ class CanvasLogic {
       _collectAncestorsInclusive(nodeId),
       datasetIds: datasetIds,
       includeAncestors: true,
+      depthFirstTargetNodeId: nodeId,
     );
   }
 
@@ -5164,6 +5165,7 @@ class CanvasLogic {
     Set<String> nodeIds, {
     Set<String>? datasetIds,
     bool includeAncestors = false,
+    String? depthFirstTargetNodeId,
   }) async {
     final Set<String> expandedNodeIds = Set<String>.from(nodeIds);
     _expandRuntimeDependencies(
@@ -5171,7 +5173,12 @@ class CanvasLogic {
       includeAncestors: includeAncestors,
     );
 
-    final List<NodeModel> orderedNodes = _orderedNodes(expandedNodeIds);
+    final List<NodeModel> orderedNodes = depthFirstTargetNodeId == null
+        ? _orderedNodes(expandedNodeIds)
+        : _depthFirstAncestorsTo(
+            depthFirstTargetNodeId,
+            allowedNodeIds: expandedNodeIds,
+          );
     if (orderedNodes.isEmpty) {
       _lastRunDatasetCount = 0;
       return;
@@ -5727,6 +5734,36 @@ class CanvasLogic {
         .map(_findNode)
         .whereType<NodeModel>()
         .toList(growable: false);
+  }
+
+  List<NodeModel> _depthFirstAncestorsTo(
+    String targetNodeId, {
+    required Set<String> allowedNodeIds,
+  }) {
+    final List<NodeModel> orderedNodes = <NodeModel>[];
+    final Set<String> visited = <String>{};
+    final Set<String> visiting = <String>{};
+
+    void visit(String nodeId) {
+      if (!allowedNodeIds.contains(nodeId) || visited.contains(nodeId)) {
+        return;
+      }
+      if (!visiting.add(nodeId)) {
+        throw StateError('Cannot run a pipeline containing a cycle.');
+      }
+      for (final NodeModel parent in _immediateParents(nodeId)) {
+        visit(parent.id);
+      }
+      visiting.remove(nodeId);
+      visited.add(nodeId);
+      final NodeModel? node = _findNode(nodeId);
+      if (node != null) {
+        orderedNodes.add(node);
+      }
+    }
+
+    visit(targetNodeId);
+    return orderedNodes;
   }
 
   Set<String> _collectAncestorsInclusive(String nodeId) {

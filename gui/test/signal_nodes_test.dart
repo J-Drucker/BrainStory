@@ -706,6 +706,48 @@ void main() {
     );
   });
 
+  test('run from start follows only the target paths depth-first', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset(
+      'run-from-start-dataset',
+      label: 'Run from start',
+      path: 'run_from_start.csv',
+      sourceBytes: Uint8List.fromList(
+        utf8.encode('time,Fz\n0.000,0\n0.004,1\n0.008,0\n0.012,-1\n'),
+      ),
+    );
+    logic.datasets[dataset.id] = dataset;
+    final List<String> order = <String>[];
+    logic.addNode(ImportNodeType());
+    logic.addNode(_RecordingNodeType('Deep 1', order));
+    logic.addNode(_RecordingNodeType('Deep 2', order));
+    logic.addNode(_RecordingNodeType('Shallow', order));
+    logic.addNode(_RecordingNodeType('Target', order));
+    logic.addNode(_RecordingNodeType('Unrelated', order));
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel deep1 = logic.nodes[1];
+    final NodeModel deep2 = logic.nodes[2];
+    final NodeModel shallow = logic.nodes[3];
+    final NodeModel target = logic.nodes[4];
+    final NodeModel unrelated = logic.nodes[5];
+    for (final NodeModel node in logic.nodes) {
+      node.params['selectedDatasetIds'] = <String>[dataset.id];
+    }
+    logic.connections.addAll(<Map<String, dynamic>>[
+      _testConnection(importNode, deep1),
+      _testConnection(deep1, deep2),
+      _testConnection(deep2, target),
+      _testConnection(importNode, shallow),
+      _testConnection(shallow, target),
+      _testConnection(importNode, unrelated),
+    ]);
+
+    await logic.runFromStart(target.id, datasetIds: <String>{dataset.id});
+
+    expect(order, <String>['Deep 1', 'Deep 2', 'Shallow', 'Target']);
+    expect(unrelated.datasetStates[dataset.id], isNot(DatasetState.done));
+  });
+
   test(
     'removeDataset removes project dataset state and cached references',
     () async {
@@ -6392,6 +6434,14 @@ class _RecordingNodeType extends NodeType {
     order.add(title);
   }
 }
+
+Map<String, dynamic> _testConnection(NodeModel parent, NodeModel child) =>
+    <String, dynamic>{
+      'fromNode': parent.id,
+      'fromPort': 0,
+      'toNode': child.id,
+      'toPort': 0,
+    };
 
 double _singleFrequencyPower(
   List<double> samples,
