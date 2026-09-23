@@ -384,6 +384,18 @@ class EditChannelsNodeType extends NodeType {
     List<String> currentLabels,
   ) {
     final Map<String, dynamic> normalized = _normalizeDatasetConfig(config);
+    final Map<String, dynamic> edits = Map<String, dynamic>.from(
+      normalized['edits'] as Map? ?? const <String, dynamic>{},
+    );
+    final Set<String> editedOutputLabels = edits.values
+        .whereType<Map>()
+        .map((Map value) => Map<String, dynamic>.from(value))
+        .map((Map<String, dynamic> edit) => (edit['rename'] ?? '').toString())
+        .where((String label) => label.trim().isNotEmpty)
+        .toSet();
+    final Set<String> derivedLabels = _normalizeNewChannels(
+      normalized['newChannels'] as List<dynamic>? ?? const <dynamic>[],
+    ).map((Map<String, dynamic> row) => (row['name'] ?? '').toString()).toSet();
     final List<String> stored =
         (normalized['sourceChannelLabels'] as List<dynamic>? ??
                 const <dynamic>[])
@@ -391,14 +403,24 @@ class EditChannelsNodeType extends NodeType {
             .where((String value) => value.trim().isNotEmpty)
             .toList(growable: false);
     if (stored.isNotEmpty) {
-      return stored;
+      final List<String> merged = currentLabels
+          .where(
+            (String label) =>
+                !editedOutputLabels.contains(label) &&
+                !derivedLabels.contains(label),
+          )
+          .toSet()
+          .toList(growable: true);
+      for (int index = 0; index < stored.length; index++) {
+        final String label = stored[index];
+        if (!merged.contains(label)) {
+          merged.insert(math.min(index, merged.length), label);
+        }
+      }
+      return merged;
     }
 
-    final Map<String, dynamic> edits = Map<String, dynamic>.from(
-      normalized['edits'] as Map? ?? const <String, dynamic>{},
-    );
     final Map<int, String> fixedLabels = <int, String>{};
-    final Set<String> editedOutputLabels = <String>{};
     for (final MapEntry<String, dynamic> entry in edits.entries) {
       final int? index = int.tryParse(entry.key);
       final Map<String, dynamic> edit = Map<String, dynamic>.from(
@@ -408,16 +430,11 @@ class EditChannelsNodeType extends NodeType {
       if (index != null && index >= 0 && sourceLabel.isNotEmpty) {
         fixedLabels[index] = sourceLabel;
       }
-      final String rename = (edit['rename'] ?? '').toString().trim();
-      if (rename.isNotEmpty) editedOutputLabels.add(rename);
     }
     if (fixedLabels.isEmpty) {
       return List<String>.from(currentLabels);
     }
 
-    final Set<String> derivedLabels = _normalizeNewChannels(
-      normalized['newChannels'] as List<dynamic>? ?? const <dynamic>[],
-    ).map((Map<String, dynamic> row) => (row['name'] ?? '').toString()).toSet();
     final Set<String> fixedNames = fixedLabels.values.toSet();
     final List<String> remaining = currentLabels
         .where(

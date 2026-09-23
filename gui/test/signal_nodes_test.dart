@@ -4629,6 +4629,44 @@ time,Fz,Cz
     expect(tester.takeException(), isNull);
   });
 
+  test('channel editor merges live channels missing from stored inventory', () {
+    final Map<String, dynamic> config = <String, dynamic>{
+      'sourceChannelLabels': <String>['Fp1', 'Fp2', 'F7', 'F8'],
+    };
+
+    expect(
+      EditChannelsNodeType.channelLabelsForEditor(config, <String>[
+        'Fp1',
+        'Fp2',
+        'F7',
+        'F8',
+        'F9',
+        'F10',
+      ]),
+      <String>['Fp1', 'Fp2', 'F7', 'F8', 'F9', 'F10'],
+    );
+  });
+
+  test(
+    'channel editor retains renamed originals without duplicating outputs',
+    () {
+      final Map<String, dynamic> config = <String, dynamic>{
+        'sourceChannelLabels': <String>['F9', 'F10'],
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{'sourceLabel': 'F9', 'rename': 'Left frontal'},
+        },
+      };
+
+      expect(
+        EditChannelsNodeType.channelLabelsForEditor(config, <String>[
+          'Left frontal',
+          'F10',
+        ]),
+        <String>['F9', 'F10'],
+      );
+    },
+  );
+
   testWidgets('combined edit parameters share channel and marker tabs', (
     WidgetTester tester,
   ) async {
