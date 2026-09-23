@@ -1220,85 +1220,89 @@ class _SegmentedChartState extends State<_SegmentedChart> {
             widget.dataset.id,
           ),
     );
-    final _SegmentChannelEditSave?
-    save = await showDialog<_SegmentChannelEditSave>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return Dialog(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 980, maxHeight: 720),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
+    final _SegmentChannelEditSave? save =
+        await showDialog<_SegmentChannelEditSave>(
+          context: context,
+          builder: (BuildContext dialogContext) {
+            return Dialog(
+              insetPadding: const EdgeInsets.all(24),
+              child: SizedBox(
+                width: 1180,
+                height: 800,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
+                      Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              'Edit Channels',
+                              style: Theme.of(
+                                dialogContext,
+                              ).textTheme.titleLarge,
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => showChannelPositionsDialog(
+                              dialogContext,
+                              dataset: widget.dataset,
+                            ),
+                            icon: const Icon(Icons.public, size: 18),
+                            label: const Text('Channel positions'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
                       Expanded(
-                        child: Text(
-                          'Edit Channels',
-                          style: Theme.of(dialogContext).textTheme.titleLarge,
+                        child: ChannelEditConfigEditor(
+                          channelLabels: channelLabels,
+                          config: draft,
+                          currentCoordinates: timeSeries.channelCoordinates,
+                          onChanged: (Map<String, dynamic> config) {
+                            draft = config;
+                            _draftChannelEditConfig = config;
+                          },
                         ),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: () => showChannelPositionsDialog(
-                          dialogContext,
-                          dataset: widget.dataset,
-                        ),
-                        icon: const Icon(Icons.public, size: 18),
-                        label: const Text('Channel positions'),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: <Widget>[
+                          TextButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(
+                              _SegmentChannelEditSave(
+                                config: draft,
+                                runAfterSave: false,
+                              ),
+                            ),
+                            child: const Text('Save'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: () => Navigator.of(dialogContext).pop(
+                              _SegmentChannelEditSave(
+                                config: draft,
+                                runAfterSave: true,
+                              ),
+                            ),
+                            child: const Text('Save and run'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  Expanded(
-                    child: ChannelEditConfigEditor(
-                      channelLabels: channelLabels,
-                      config: draft,
-                      currentCoordinates: timeSeries.channelCoordinates,
-                      onChanged: (Map<String, dynamic> config) {
-                        draft = config;
-                        _draftChannelEditConfig = config;
-                      },
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(),
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(
-                          _SegmentChannelEditSave(
-                            config: draft,
-                            runAfterSave: false,
-                          ),
-                        ),
-                        child: const Text('Save'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: () => Navigator.of(dialogContext).pop(
-                          _SegmentChannelEditSave(
-                            config: draft,
-                            runAfterSave: true,
-                          ),
-                        ),
-                        child: const Text('Save and run'),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
-      },
-    );
     if (save == null) {
       return;
     }

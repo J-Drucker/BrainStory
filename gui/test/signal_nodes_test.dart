@@ -4613,7 +4613,9 @@ time,Fz,Cz
     expect(find.text('No altered channels.'), findsOneWidget);
     expect(find.text('Other channels'), findsOneWidget);
     expect(find.text('Apply to'), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(3));
+    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(5));
+    expect(find.text('Delete'), findsNWidgets(2));
+    expect(find.byType(Radio<String>), findsNothing);
     expect(find.text('this dataset'), findsNothing);
     expect(find.text('all datasets'), findsNothing);
     await tester.enterText(find.byType(TextField).first, 'Fz renamed');

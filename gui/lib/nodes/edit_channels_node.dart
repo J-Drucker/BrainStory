@@ -1920,33 +1920,30 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                   ),
                 ),
                 const Text('remove'),
-                const SizedBox(width: 4),
-                IgnorePointer(
-                  ignoring: !remove,
-                  child: Opacity(
-                    opacity: remove ? 1.0 : 0.45,
-                    child: RadioGroup<String>(
-                      groupValue: removeMode,
-                      onChanged: (String? value) {
-                        if (value == null) {
-                          return;
-                        }
-                        setState(() {
-                          _updateExistingEdit(index, removeMode: value);
-                        });
-                      },
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const <Widget>[
-                          _CompactRadioChoice(value: 'delete', label: 'delete'),
-                          _CompactRadioChoice(
-                            value: 'interpolate',
-                            label: 'interpolate',
-                          ),
-                        ],
-                      ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: removeMode,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
                     ),
+                    items: const <DropdownMenuItem<String>>[
+                      DropdownMenuItem(value: 'delete', child: Text('Delete')),
+                      DropdownMenuItem(
+                        value: 'interpolate',
+                        child: Text('Interpolate'),
+                      ),
+                    ],
+                    onChanged: remove
+                        ? (String? value) {
+                            if (value == null) return;
+                            setState(() {
+                              _updateExistingEdit(index, removeMode: value);
+                            });
+                          }
+                        : null,
                   ),
                 ),
               ],
@@ -2448,36 +2445,6 @@ class _HeaderCell extends StatelessWidget {
           fontWeight: FontWeight.w700,
           color: Theme.of(context).colorScheme.onSurface,
         ),
-      ),
-    );
-  }
-}
-
-class _CompactRadioChoice extends StatelessWidget {
-  const _CompactRadioChoice({required this.value, required this.label});
-
-  final String value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 27,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          SizedBox(
-            width: 22,
-            height: 22,
-            child: Radio<String>(
-              value: value,
-              visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-          const SizedBox(width: 3),
-          Text(label),
-        ],
       ),
     );
   }

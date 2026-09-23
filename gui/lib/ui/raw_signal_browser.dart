@@ -1419,8 +1419,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       context: context,
       builder: (BuildContext context) {
         return Dialog(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 980, maxHeight: 720),
+          insetPadding: const EdgeInsets.all(24),
+          child: SizedBox(
+            width: 1180,
+            height: 800,
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
