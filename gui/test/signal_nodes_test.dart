@@ -4524,7 +4524,7 @@ time,Fz,Cz
 
     expect(tester.takeException(), isNull);
     expect(find.text('Edit channels'), findsOneWidget);
-    expect(find.text('Rereference'), findsOneWidget);
+    expect(find.text('Re-reference'), findsOneWidget);
     expect(find.text('Coordinates'), findsOneWidget);
     expect(find.text('Sort channels'), findsNothing);
     expect(find.text('Ch#'), findsOneWidget);
@@ -4572,11 +4572,11 @@ time,Fz,Cz
     await tester.pump();
     expect(rowTop('Alpha'), lessThan(rowTop('Beta')));
 
-    await tester.tap(find.text('Rereference'));
+    await tester.tap(find.text('Re-reference'));
     await tester.pumpAndSettle();
-    expect(find.text('Ch#'), findsOneWidget);
-    expect(find.text('Name'), findsOneWidget);
-    expect(find.text('X'), findsOneWidget);
+    expect(find.text('Select all'), findsOneWidget);
+    expect(find.byType(Wrap), findsWidgets);
+    expect((rowTop('Alpha') - rowTop('Beta')).abs(), lessThan(2));
 
     await tester.tap(find.text('Coordinates'));
     await tester.pumpAndSettle();

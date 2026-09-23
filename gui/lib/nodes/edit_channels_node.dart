@@ -1532,7 +1532,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
             }),
             tabs: const <Tab>[
               Tab(text: 'Edit channels'),
-              Tab(text: 'Rereference'),
+              Tab(text: 'Re-reference'),
               Tab(text: 'Coordinates'),
             ],
           ),
@@ -1670,58 +1670,51 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Row(
+          mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            ..._channelHeaderCells(),
-            const SizedBox(width: 12),
-            const _HeaderCell(width: 90, text: 'Reference'),
+            Checkbox(
+              value: allSelected,
+              tristate: selected.isNotEmpty && !allSelected,
+              onChanged: (bool? value) {
+                setState(() => _setAllReferenceChannels(value == true));
+              },
+            ),
+            const Text(
+              'Select all',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
           ],
         ),
         const SizedBox(height: 6),
         const Divider(height: 1),
-        SizedBox(
-          height: 38,
-          child: Row(
-            children: <Widget>[
-              const SizedBox(
-                width: 406,
-                child: Text(
-                  'All channels',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              Checkbox(
-                value: allSelected,
-                tristate: selected.isNotEmpty && !allSelected,
-                onChanged: (bool? value) {
-                  setState(() => _setAllReferenceChannels(value == true));
-                },
-              ),
-            ],
-          ),
-        ),
-        const Divider(height: 1),
+        const SizedBox(height: 8),
         Expanded(
-          child: ListView.builder(
-            itemCount: _sortedChannelIndices.length,
-            itemExtent: 40,
-            itemBuilder: (BuildContext context, int row) {
-              final int index = _sortedChannelIndices[row];
-              final String label = widget.channelLabels[index];
-              return Row(
-                children: <Widget>[
-                  ..._channelIdentityCells(index),
-                  const SizedBox(width: 12),
-                  Checkbox(
-                    value: selected.contains(label),
-                    onChanged: (bool? value) {
-                      setState(
-                        () => _setReferenceChannel(label, value == true),
-                      );
-                    },
-                  ),
-                ],
-              );
-            },
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 4,
+              children: _sortedChannelIndices
+                  .map((int index) {
+                    final String label = widget.channelLabels[index];
+                    return SizedBox(
+                      width: 142,
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(label, overflow: TextOverflow.ellipsis),
+                        value: selected.contains(label),
+                        onChanged: (bool? value) {
+                          setState(
+                            () => _setReferenceChannel(label, value == true),
+                          );
+                        },
+                      ),
+                    );
+                  })
+                  .toList(growable: false),
+            ),
           ),
         ),
       ],
