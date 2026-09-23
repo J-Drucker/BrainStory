@@ -1738,7 +1738,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           children: <Widget>[
             FilledButton.tonalIcon(
               onPressed: _assignStandardCoordinates,
-              icon: const Icon(Icons.auto_fix_high, size: 18),
+              icon: const Icon(Icons.scatter_plot_outlined, size: 18),
               label: const Text('Assign standard'),
             ),
             OutlinedButton.icon(
