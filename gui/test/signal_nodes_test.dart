@@ -494,7 +494,7 @@ void main() {
     expect(find.text('Project'), findsOneWidget);
   });
 
-  testWidgets('recent jobs stays left of the project rail', (
+  testWidgets('recent jobs is collapsible below the project controls', (
     WidgetTester tester,
   ) async {
     final CanvasLogic logic = CanvasLogic();
@@ -512,15 +512,22 @@ void main() {
       ),
     );
 
-    final double projectX = tester.getCenter(find.text('Project')).dx;
     expect(
-      tester.getCenter(find.text('Recent jobs (1)')).dx,
-      lessThan(projectX),
+      tester.getCenter(find.text('Recent jobs (1)')).dy,
+      greaterThan(tester.getCenter(find.text('Project')).dy),
     );
 
     await tester.tap(find.text('Recent jobs (1)'));
     await tester.pumpAndSettle();
-    expect(tester.getCenter(find.text('Recent jobs')).dx, lessThan(projectX));
+    expect(
+      tester.getCenter(find.text('Recent jobs')).dy,
+      greaterThan(tester.getCenter(find.text('Project')).dy),
+    );
+    expect(find.byTooltip('Collapse'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Collapse'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent jobs (1)'), findsOneWidget);
   });
 
   testWidgets('canvas keeps active processing visible without modal lock', (

@@ -409,41 +409,71 @@ class _CanvasViewState extends State<CanvasView> {
                                             onChanged: () => setState(() {}),
                                           ),
                                         ),
-                                      logic.projectActions(
-                                        publish: () async {
-                                          await logic.showPublishDialog(
-                                            context,
-                                          );
-                                        },
-                                        memory: () async {
-                                          await logic.showMemoryManagerDialog(
-                                            context,
+                                      ConstrainedBox(
+                                        constraints: BoxConstraints(
+                                          maxHeight:
+                                              constraints.maxHeight * 0.42,
+                                        ),
+                                        child: SingleChildScrollView(
+                                          child: logic.projectActions(
+                                            publish: () async {
+                                              await logic.showPublishDialog(
+                                                context,
+                                              );
+                                            },
+                                            memory: () async {
+                                              await logic
+                                                  .showMemoryManagerDialog(
+                                                    context,
+                                                    update: () =>
+                                                        setState(() {}),
+                                                  );
+                                            },
+                                            load: () async {
+                                              await logic.loadBrainStory(
+                                                context,
+                                              );
+                                              if (mounted) {
+                                                setState(() {});
+                                              }
+                                            },
+                                            export: () async {
+                                              await logic.exportBrainStory(
+                                                context,
+                                              );
+                                            },
+                                            clear: () {
+                                              if (logic.hasActiveRun) {
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'New project is paused until the active job finishes.',
+                                                    ),
+                                                  ),
+                                                );
+                                                return;
+                                              }
+                                              setState(() => logic.clearAll());
+                                            },
                                             update: () => setState(() {}),
-                                          );
-                                        },
-                                        load: () async {
-                                          await logic.loadBrainStory(context);
-                                          if (mounted) setState(() {});
-                                        },
-                                        export: () async {
-                                          await logic.exportBrainStory(context);
-                                        },
-                                        clear: () {
-                                          if (logic.hasActiveRun) {
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  'New project is paused until the active job finishes.',
-                                                ),
-                                              ),
-                                            );
-                                            return;
-                                          }
-                                          setState(() => logic.clearAll());
-                                        },
-                                        update: () => setState(() {}),
+                                          ),
+                                        ),
+                                      ),
+                                      _RecentJobsPanel(
+                                        runActivity: runActivity,
+                                        jobs: logic.recentRunJobs.value,
+                                        queuedJobs: logic.queuedRunJobs.value,
+                                        processingResponsiveness: logic
+                                            .processingResponsiveness
+                                            .value,
+                                        visualizerPriorityActive: logic
+                                            .visualizerPriorityActive
+                                            .value,
+                                        collapsed: _recentJobsCollapsed,
+                                        onToggleCollapsed:
+                                            _toggleRecentJobsCollapsed,
                                       ),
                                     ],
                                   ),
@@ -452,27 +482,6 @@ class _CanvasViewState extends State<CanvasView> {
                       ),
                     ),
                   ),
-                ),
-                _RecentJobsOverlay(
-                  rightInset: sideRailWidth + 16,
-                  runActivity: runActivity,
-                  jobs: logic.recentRunJobs.value,
-                  queuedJobs: logic.queuedRunJobs.value,
-                  processingResponsiveness:
-                      logic.processingResponsiveness.value,
-                  visualizerPriorityActive:
-                      logic.visualizerPriorityActive.value,
-                  collapsed: _recentJobsCollapsed,
-                  onToggleCollapsed: () {
-                    setState(() {
-                      _recentJobsCollapsed = !_recentJobsCollapsed;
-                    });
-                    if (_recentJobsCollapsed) {
-                      _scheduleRecentJobsCollapse();
-                    } else {
-                      _recentJobsCollapseTimer?.cancel();
-                    }
-                  },
                 ),
               ],
             );
@@ -523,6 +532,17 @@ class _CanvasViewState extends State<CanvasView> {
         _recentJobsCollapsed = true;
       });
     });
+  }
+
+  void _toggleRecentJobsCollapsed() {
+    setState(() {
+      _recentJobsCollapsed = !_recentJobsCollapsed;
+    });
+    if (_recentJobsCollapsed) {
+      _scheduleRecentJobsCollapse();
+    } else {
+      _recentJobsCollapseTimer?.cancel();
+    }
   }
 
   Offset _globalToRawCanvasOffset(Offset globalOffset) {
@@ -852,9 +872,8 @@ class _CanvasViewState extends State<CanvasView> {
   }
 }
 
-class _RecentJobsOverlay extends StatefulWidget {
-  const _RecentJobsOverlay({
-    required this.rightInset,
+class _RecentJobsPanel extends StatefulWidget {
+  const _RecentJobsPanel({
     required this.runActivity,
     required this.jobs,
     required this.queuedJobs,
@@ -864,7 +883,6 @@ class _RecentJobsOverlay extends StatefulWidget {
     required this.onToggleCollapsed,
   });
 
-  final double rightInset;
   final RunActivity? runActivity;
   final List<RunJobEntry> jobs;
   final List<RunJobEntry> queuedJobs;
@@ -874,10 +892,10 @@ class _RecentJobsOverlay extends StatefulWidget {
   final VoidCallback onToggleCollapsed;
 
   @override
-  State<_RecentJobsOverlay> createState() => _RecentJobsOverlayState();
+  State<_RecentJobsPanel> createState() => _RecentJobsPanelState();
 }
 
-class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
+class _RecentJobsPanelState extends State<_RecentJobsPanel> {
   String? _copiedKey;
 
   RunActivity? get runActivity => widget.runActivity;
@@ -897,26 +915,31 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
     }
 
     if (widget.collapsed && runActivity == null && !visualizerPriorityActive) {
-      return Positioned(
-        right: widget.rightInset,
-        bottom: 16,
-        child: FilledButton.tonalIcon(
-          onPressed: widget.onToggleCollapsed,
-          icon: const Icon(Icons.history, size: 18),
-          label: Text('Recent jobs (${jobs.length})'),
-          style: FilledButton.styleFrom(
-            backgroundColor: Colors.black.withValues(alpha: 0.72),
-            foregroundColor: Colors.white,
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton.tonalIcon(
+            onPressed: widget.onToggleCollapsed,
+            icon: const Icon(Icons.history, size: 18),
+            label: Text('Recent jobs (${jobs.length})'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.black.withValues(alpha: 0.72),
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
       );
     }
 
-    return Positioned(
-      right: widget.rightInset,
-      bottom: 16,
+    final double panelHeight = (MediaQuery.sizeOf(context).height * 0.30).clamp(
+      180.0,
+      300.0,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360, minWidth: 280),
+        constraints: BoxConstraints.tightFor(height: panelHeight),
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: Colors.black.withValues(alpha: 0.84),
@@ -930,13 +953,11 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
               ),
             ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
+          child: Column(
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 6, 4),
+                child: Row(
                   children: <Widget>[
                     const Expanded(
                       child: Text(
@@ -971,111 +992,123 @@ class _RecentJobsOverlayState extends State<_RecentJobsOverlay> {
                     ),
                   ],
                 ),
-                if (runActivity != null) ...<Widget>[
-                  _RecentJobCard(
-                    title: runActivity!.label,
-                    detail: runActivity!.detail,
-                    statusLabel: _activityStatusLabel(runActivity!),
-                    color: _activityStatusColor(runActivity!),
-                    onCopy: () => _copyText(
-                      context,
-                      key: 'activity',
-                      _activityClipboardText(runActivity!),
-                    ),
-                    copied: _copiedKey == 'activity',
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (visualizerPriorityActive) ...<Widget>[
-                  _RecentJobCard(
-                    title: 'Visualizer priority',
-                    detail:
-                        'Visualizer work is running monolithically; queued processing is paused.',
-                    statusLabel: 'Priority',
-                    color: const Color(0xFFFFD166),
-                    onCopy: () => _copyText(
-                      context,
-                      key: 'visualizer-priority',
-                      'Priority: Visualizer priority\nVisualizer work is running monolithically; queued processing is paused.',
-                    ),
-                    copied: _copiedKey == 'visualizer-priority',
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (runActivity != null) ...<Widget>[
-                  _RecentJobCard(
-                    title: 'Execution chunking',
-                    detail:
-                        '${processingResponsiveness.label}: ${processingResponsiveness.description}',
-                    statusLabel: processingResponsiveness.label,
-                    color: const Color(0xFF6DD3FF),
-                    onCopy: () => _copyText(
-                      context,
-                      key: 'execution-chunking',
-                      'Execution chunking: ${processingResponsiveness.label}\n${processingResponsiveness.description}',
-                    ),
-                    copied: _copiedKey == 'execution-chunking',
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                if (queuedJobs.isNotEmpty) ...<Widget>[
-                  ...queuedJobs.map(
-                    (RunJobEntry job) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _RecentJobCard(
-                        title: job.label,
-                        detail: job.detail,
-                        statusLabel: 'Queued',
-                        color: const Color(0xFFC0CAD4),
-                        onCopy: () => _copyText(
-                          context,
-                          key: 'queued-${job.label}-${job.detail}',
-                          _jobClipboardText(job, statusLabel: 'Queued'),
+              ),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      if (runActivity != null) ...<Widget>[
+                        _RecentJobCard(
+                          title: runActivity!.label,
+                          detail: runActivity!.detail,
+                          statusLabel: _activityStatusLabel(runActivity!),
+                          color: _activityStatusColor(runActivity!),
+                          onCopy: () => _copyText(
+                            context,
+                            key: 'activity',
+                            _activityClipboardText(runActivity!),
+                          ),
+                          copied: _copiedKey == 'activity',
                         ),
-                        copied:
-                            _copiedKey == 'queued-${job.label}-${job.detail}',
-                      ),
-                    ),
-                  ),
-                ],
-                if (jobs.isEmpty && queuedJobs.isEmpty)
-                  const Text(
-                    'No completed jobs yet.',
-                    style: TextStyle(color: Colors.white60),
-                  )
-                else
-                  ...jobs.map(
-                    (RunJobEntry job) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _RecentJobCard(
-                        title: job.label,
-                        detail: _jobDetail(job),
-                        statusLabel: job.state == RunJobState.done
-                            ? 'Done'
-                            : 'Failed',
-                        color: job.state == RunJobState.done
-                            ? const Color(0xFF43C26B)
-                            : const Color(0xFFFF8A65),
-                        onCopy: () => _copyText(
-                          context,
-                          key:
-                              'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
-                          _jobClipboardText(
-                            job,
-                            statusLabel: job.state == RunJobState.done
-                                ? 'Done'
-                                : 'Failed',
-                            detail: _jobDetail(job),
+                        const SizedBox(height: 8),
+                      ],
+                      if (visualizerPriorityActive) ...<Widget>[
+                        _RecentJobCard(
+                          title: 'Visualizer priority',
+                          detail:
+                              'Visualizer work is running monolithically; queued processing is paused.',
+                          statusLabel: 'Priority',
+                          color: const Color(0xFFFFD166),
+                          onCopy: () => _copyText(
+                            context,
+                            key: 'visualizer-priority',
+                            'Priority: Visualizer priority\nVisualizer work is running monolithically; queued processing is paused.',
+                          ),
+                          copied: _copiedKey == 'visualizer-priority',
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (runActivity != null) ...<Widget>[
+                        _RecentJobCard(
+                          title: 'Execution chunking',
+                          detail:
+                              '${processingResponsiveness.label}: ${processingResponsiveness.description}',
+                          statusLabel: processingResponsiveness.label,
+                          color: const Color(0xFF6DD3FF),
+                          onCopy: () => _copyText(
+                            context,
+                            key: 'execution-chunking',
+                            'Execution chunking: ${processingResponsiveness.label}\n${processingResponsiveness.description}',
+                          ),
+                          copied: _copiedKey == 'execution-chunking',
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (queuedJobs.isNotEmpty) ...<Widget>[
+                        ...queuedJobs.map(
+                          (RunJobEntry job) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _RecentJobCard(
+                              title: job.label,
+                              detail: job.detail,
+                              statusLabel: 'Queued',
+                              color: const Color(0xFFC0CAD4),
+                              onCopy: () => _copyText(
+                                context,
+                                key: 'queued-${job.label}-${job.detail}',
+                                _jobClipboardText(job, statusLabel: 'Queued'),
+                              ),
+                              copied:
+                                  _copiedKey ==
+                                  'queued-${job.label}-${job.detail}',
+                            ),
                           ),
                         ),
-                        copied:
-                            _copiedKey ==
-                            'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
-                      ),
-                    ),
+                      ],
+                      if (jobs.isEmpty && queuedJobs.isEmpty)
+                        const Text(
+                          'No completed jobs yet.',
+                          style: TextStyle(color: Colors.white60),
+                        )
+                      else
+                        ...jobs.map(
+                          (RunJobEntry job) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _RecentJobCard(
+                              title: job.label,
+                              detail: _jobDetail(job),
+                              statusLabel: job.state == RunJobState.done
+                                  ? 'Done'
+                                  : 'Failed',
+                              color: job.state == RunJobState.done
+                                  ? const Color(0xFF43C26B)
+                                  : const Color(0xFFFF8A65),
+                              onCopy: () => _copyText(
+                                context,
+                                key:
+                                    'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
+                                _jobClipboardText(
+                                  job,
+                                  statusLabel: job.state == RunJobState.done
+                                      ? 'Done'
+                                      : 'Failed',
+                                  detail: _jobDetail(job),
+                                ),
+                              ),
+                              copied:
+                                  _copiedKey ==
+                                  'recent-${job.label}-${job.detail}-${job.finishedAt?.microsecondsSinceEpoch}',
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
