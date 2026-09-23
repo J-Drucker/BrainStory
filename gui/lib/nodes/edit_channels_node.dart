@@ -1036,7 +1036,8 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
   final Map<String, List<TextEditingController>> _coordinateControllers =
       <String, List<TextEditingController>>{};
   int _channelSectionIndex = 0;
-  String _sortMode = 'import';
+  String _sortMode = 'channelNumber';
+  bool _sortAscending = true;
 
   @override
   void initState() {
@@ -1340,15 +1341,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       widget.channelLabels.length,
       (int index) => index,
     );
-    if (_sortMode == 'import') return indices;
-    if (_sortMode == 'alphabetical') {
-      indices.sort(
-        (int a, int b) => widget.channelLabels[a].toLowerCase().compareTo(
-          widget.channelLabels[b].toLowerCase(),
-        ),
-      );
-      return indices;
-    }
     double? axisValue(int index) {
       final String label = widget.channelLabels[index];
       final Map<String, dynamic> custom = Map<String, dynamic>.from(
@@ -1360,13 +1352,13 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
             label,
           );
       return switch (_sortMode) {
-        'leftRight' => EditChannelsNodeType._coordinateNumber(
+        'x' => EditChannelsNodeType._coordinateNumber(
           custom['x'] ?? current?.x,
         ),
-        'posteriorAnterior' => EditChannelsNodeType._coordinateNumber(
+        'y' => EditChannelsNodeType._coordinateNumber(
           custom['y'] ?? current?.y,
         ),
-        'inferiorSuperior' => EditChannelsNodeType._coordinateNumber(
+        'z' => EditChannelsNodeType._coordinateNumber(
           custom['z'] ?? current?.z,
         ),
         _ => null,
@@ -1374,15 +1366,36 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     }
 
     indices.sort((int a, int b) {
+      if (_sortMode == 'channelNumber') {
+        return _sortAscending ? a.compareTo(b) : b.compareTo(a);
+      }
+      if (_sortMode == 'name') {
+        final int comparison = widget.channelLabels[a].toLowerCase().compareTo(
+          widget.channelLabels[b].toLowerCase(),
+        );
+        return _sortAscending ? comparison : -comparison;
+      }
       final double? av = axisValue(a);
       final double? bv = axisValue(b);
       if (av == null && bv == null) return a.compareTo(b);
       if (av == null) return 1;
       if (bv == null) return -1;
       final int comparison = av.compareTo(bv);
-      return comparison == 0 ? a.compareTo(b) : comparison;
+      if (comparison == 0) return a.compareTo(b);
+      return _sortAscending ? comparison : -comparison;
     });
     return indices;
+  }
+
+  void _sortBy(String column) {
+    setState(() {
+      if (_sortMode == column) {
+        _sortAscending = !_sortAscending;
+      } else {
+        _sortMode = column;
+        _sortAscending = true;
+      }
+    });
   }
 
   void _setReferenceChannel(String label, bool selected) {
@@ -1496,33 +1509,15 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final Widget tabs = TabBar(
-                onTap: (int index) => setState(() {
-                  _channelSectionIndex = index;
-                }),
-                tabs: const <Tab>[
-                  Tab(text: 'Edit channels'),
-                  Tab(text: 'Rereference'),
-                  Tab(text: 'Coordinates'),
-                ],
-              );
-              final Widget sort = _buildSortDropdown();
-              if (constraints.maxWidth < 700) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[tabs, const SizedBox(height: 8), sort],
-                );
-              }
-              return Row(
-                children: <Widget>[
-                  Expanded(child: tabs),
-                  const SizedBox(width: 16),
-                  SizedBox(width: 190, child: sort),
-                ],
-              );
-            },
+          TabBar(
+            onTap: (int index) => setState(() {
+              _channelSectionIndex = index;
+            }),
+            tabs: const <Tab>[
+              Tab(text: 'Edit channels'),
+              Tab(text: 'Rereference'),
+              Tab(text: 'Coordinates'),
+            ],
           ),
           const SizedBox(height: 10),
           Expanded(
@@ -1537,28 +1532,6 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildSortDropdown() {
-    return DropdownButtonFormField<String>(
-      initialValue: _sortMode,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Sort channels',
-        border: OutlineInputBorder(),
-        isDense: true,
-      ),
-      items: const <DropdownMenuItem<String>>[
-        DropdownMenuItem(value: 'import', child: Text('Import order')),
-        DropdownMenuItem(value: 'alphabetical', child: Text('Alphabetical')),
-        DropdownMenuItem(value: 'leftRight', child: Text('L-R')),
-        DropdownMenuItem(value: 'posteriorAnterior', child: Text('P-A')),
-        DropdownMenuItem(value: 'inferiorSuperior', child: Text('I-S')),
-      ],
-      onChanged: (String? value) {
-        if (value != null) setState(() => _sortMode = value);
-      },
     );
   }
 
@@ -1579,7 +1552,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                 controller: _horizontalController,
                 scrollDirection: Axis.horizontal,
                 child: SizedBox(
-                  width: math.max(950, constraints.maxWidth),
+                  width: math.max(1320, constraints.maxWidth),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
@@ -1679,36 +1652,57 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          dense: true,
-          title: const Text(
-            'Select all',
-            style: TextStyle(fontWeight: FontWeight.w700),
+        Row(
+          children: <Widget>[
+            ..._channelHeaderCells(),
+            const SizedBox(width: 12),
+            const _HeaderCell(width: 90, text: 'Reference'),
+          ],
+        ),
+        const SizedBox(height: 6),
+        const Divider(height: 1),
+        SizedBox(
+          height: 38,
+          child: Row(
+            children: <Widget>[
+              const SizedBox(
+                width: 406,
+                child: Text(
+                  'All channels',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Checkbox(
+                value: allSelected,
+                tristate: selected.isNotEmpty && !allSelected,
+                onChanged: (bool? value) {
+                  setState(() => _setAllReferenceChannels(value == true));
+                },
+              ),
+            ],
           ),
-          value: allSelected,
-          tristate: selected.isNotEmpty && !allSelected,
-          onChanged: (bool? value) {
-            setState(() => _setAllReferenceChannels(value == true));
-          },
         ),
         const Divider(height: 1),
         Expanded(
           child: ListView.builder(
             itemCount: _sortedChannelIndices.length,
-            itemExtent: 36,
+            itemExtent: 40,
             itemBuilder: (BuildContext context, int row) {
-              final String label =
-                  widget.channelLabels[_sortedChannelIndices[row]];
-              return CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                visualDensity: VisualDensity.compact,
-                title: Text(label),
-                value: selected.contains(label),
-                onChanged: (bool? value) {
-                  setState(() => _setReferenceChannel(label, value == true));
-                },
+              final int index = _sortedChannelIndices[row];
+              final String label = widget.channelLabels[index];
+              return Row(
+                children: <Widget>[
+                  ..._channelIdentityCells(index),
+                  const SizedBox(width: 12),
+                  Checkbox(
+                    value: selected.contains(label),
+                    onChanged: (bool? value) {
+                      setState(
+                        () => _setReferenceChannel(label, value == true),
+                      );
+                    },
+                  ),
+                ],
               );
             },
           ),
@@ -1738,28 +1732,15 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
           ],
         ),
         const SizedBox(height: 10),
-        const Row(
+        Row(
           children: <Widget>[
-            SizedBox(
-              width: 130,
-              child: Text(
-                'Channel',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-            SizedBox(
-              width: 235,
-              child: Text(
-                'Current coordinates (X, Y, Z)',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-            Expanded(
-              child: Text(
-                'New coordinates',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
+            ..._channelHeaderCells(),
+            const SizedBox(width: 12),
+            const _HeaderCell(width: 96, text: 'New X'),
+            const SizedBox(width: 8),
+            const _HeaderCell(width: 96, text: 'New Y'),
+            const SizedBox(width: 8),
+            const _HeaderCell(width: 96, text: 'New Z'),
           ],
         ),
         const SizedBox(height: 6),
@@ -1769,9 +1750,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
             itemCount: _sortedChannelIndices.length,
             itemExtent: 48,
             itemBuilder: (BuildContext context, int row) {
-              final String label =
-                  widget.channelLabels[_sortedChannelIndices[row]];
-              return _buildCoordinateRow(label);
+              return _buildCoordinateRow(_sortedChannelIndices[row]);
             },
           ),
         ),
@@ -1779,35 +1758,14 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     );
   }
 
-  Widget _buildCoordinateRow(String label) {
-    final ChannelCoordinate? current =
-        ChannelCoordinatesNodeType.coordinateForChannelLabel(
-          widget.currentCoordinates,
-          label,
-        );
+  Widget _buildCoordinateRow(int index) {
+    final String label = widget.channelLabels[index];
     final List<TextEditingController> controllers =
         _coordinateControllers[label]!;
-    final String currentText = current == null
-        ? 'Not assigned'
-        : '${_coordinateText(current.x)}, ${_coordinateText(current.y)}, ${_coordinateText(current.z)}';
     return Row(
       children: <Widget>[
-        SizedBox(
-          width: 130,
-          child: Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ),
-        SizedBox(
-          width: 235,
-          child: Text(
-            currentText,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
+        ..._channelIdentityCells(index),
+        const SizedBox(width: 12),
         for (int axis = 0; axis < 3; axis++) ...<Widget>[
           SizedBox(
             width: 96,
@@ -1840,18 +1798,89 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     return fixed.replaceFirst(RegExp(r'\.?0+$'), '');
   }
 
+  double? _channelCoordinateValue(int index, String axis) {
+    final String label = widget.channelLabels[index];
+    final Map<String, dynamic> custom = Map<String, dynamic>.from(
+      _customCoordinates[label] as Map? ?? const <String, dynamic>{},
+    );
+    final ChannelCoordinate? current =
+        ChannelCoordinatesNodeType.coordinateForChannelLabel(
+          widget.currentCoordinates,
+          label,
+        );
+    return EditChannelsNodeType._coordinateNumber(
+      custom[axis] ??
+          switch (axis) {
+            'x' => current?.x,
+            'y' => current?.y,
+            'z' => current?.z,
+            _ => null,
+          },
+    );
+  }
+
+  String _channelCoordinateText(int index, String axis) {
+    final double? value = _channelCoordinateValue(index, axis);
+    return value == null ? '-' : _coordinateText(value);
+  }
+
+  List<Widget> _channelHeaderCells() => <Widget>[
+    _SortableHeaderCell(
+      width: 58,
+      text: 'Ch#',
+      selected: _sortMode == 'channelNumber',
+      ascending: _sortAscending,
+      onTap: () => _sortBy('channelNumber'),
+    ),
+    const SizedBox(width: 8),
+    _SortableHeaderCell(
+      width: 120,
+      text: 'Name',
+      selected: _sortMode == 'name',
+      ascending: _sortAscending,
+      onTap: () => _sortBy('name'),
+    ),
+    for (final String axis in const <String>['x', 'y', 'z']) ...<Widget>[
+      const SizedBox(width: 8),
+      _SortableHeaderCell(
+        width: 68,
+        text: axis.toUpperCase(),
+        selected: _sortMode == axis,
+        ascending: _sortAscending,
+        onTap: () => _sortBy(axis),
+      ),
+    ],
+  ];
+
+  List<Widget> _channelIdentityCells(int index) => <Widget>[
+    SizedBox(width: 58, child: Text('${index + 1}')),
+    const SizedBox(width: 8),
+    SizedBox(
+      width: 120,
+      child: Text(
+        widget.channelLabels[index],
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
+    ),
+    for (final String axis in const <String>['x', 'y', 'z']) ...<Widget>[
+      const SizedBox(width: 8),
+      SizedBox(width: 68, child: Text(_channelCoordinateText(index, axis))),
+    ],
+  ];
+
   Widget _buildHeaderRow() {
-    return const Row(
+    return Row(
       children: <Widget>[
-        _HeaderCell(width: 170, text: 'Original channel'),
-        SizedBox(width: 10),
-        _HeaderCell(width: 180, text: 'Rename'),
-        SizedBox(width: 10),
-        _HeaderCell(width: 310, text: 'Remove'),
-        SizedBox(width: 10),
-        _HeaderCell(width: 210, text: 'Apply to'),
-        SizedBox(width: 10),
-        _HeaderCell(width: 40, text: ''),
+        ..._channelHeaderCells(),
+        const SizedBox(width: 10),
+        const _HeaderCell(width: 180, text: 'Rename'),
+        const SizedBox(width: 10),
+        const _HeaderCell(width: 310, text: 'Remove'),
+        const SizedBox(width: 10),
+        const _HeaderCell(width: 210, text: 'Apply to'),
+        const SizedBox(width: 10),
+        const _HeaderCell(width: 40, text: ''),
       ],
     );
   }
@@ -1877,13 +1906,7 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          SizedBox(
-            width: 170,
-            child: Text(
-              widget.channelLabels[index],
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-          ),
+          ..._channelIdentityCells(index),
           const SizedBox(width: 10),
           SizedBox(
             width: 180,
@@ -2444,6 +2467,59 @@ class _HeaderCell extends StatelessWidget {
         style: TextStyle(
           fontWeight: FontWeight.w700,
           color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+    );
+  }
+}
+
+class _SortableHeaderCell extends StatelessWidget {
+  const _SortableHeaderCell({
+    required this.width,
+    required this.text,
+    required this.selected,
+    required this.ascending,
+    required this.onTap,
+  });
+
+  final double width;
+  final String text;
+  final bool selected;
+  final bool ascending;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = selected
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.onSurface;
+    return SizedBox(
+      width: width,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Flexible(
+                child: Text(
+                  text,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w700, color: color),
+                ),
+              ),
+              if (selected) ...<Widget>[
+                const SizedBox(width: 2),
+                Icon(
+                  ascending ? Icons.arrow_upward : Icons.arrow_downward,
+                  size: 13,
+                  color: color,
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

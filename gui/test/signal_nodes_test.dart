@@ -4526,7 +4526,64 @@ time,Fz,Cz
     expect(find.text('Edit channels'), findsOneWidget);
     expect(find.text('Rereference'), findsOneWidget);
     expect(find.text('Coordinates'), findsOneWidget);
-    expect(find.text('Sort channels'), findsOneWidget);
+    expect(find.text('Sort channels'), findsNothing);
+    expect(find.text('Ch#'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('X'), findsOneWidget);
+    expect(find.text('Y'), findsOneWidget);
+    expect(find.text('Z'), findsOneWidget);
+  });
+
+  testWidgets('channel identity headers sort every channel table', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: ChannelEditConfigEditor(
+            channelLabels: const <String>['Beta', 'Alpha'],
+            currentCoordinates: const <String, ChannelCoordinate>{
+              'Beta': ChannelCoordinate(label: 'Beta', x: 1, y: -1, z: 0.5),
+              'Alpha': ChannelCoordinate(label: 'Alpha', x: -1, y: 1, z: -0.5),
+            },
+            config: const <String, dynamic>{},
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    double rowTop(String label) => tester.getTopLeft(find.text(label)).dy;
+    expect(rowTop('Beta'), lessThan(rowTop('Alpha')));
+
+    await tester.tap(find.text('Name'));
+    await tester.pump();
+    expect(rowTop('Alpha'), lessThan(rowTop('Beta')));
+
+    await tester.tap(find.text('Name'));
+    await tester.pump();
+    expect(rowTop('Beta'), lessThan(rowTop('Alpha')));
+
+    await tester.tap(find.text('X'));
+    await tester.pump();
+    expect(rowTop('Alpha'), lessThan(rowTop('Beta')));
+
+    await tester.tap(find.text('Rereference'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ch#'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('X'), findsOneWidget);
+
+    await tester.tap(find.text('Coordinates'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ch#'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('X'), findsWidgets);
+    expect(find.text('New X'), findsOneWidget);
   });
 
   testWidgets('Edit Channels keeps a deleted channel in altered parameters', (
@@ -4613,7 +4670,7 @@ time,Fz,Cz
     expect(find.text('No altered channels.'), findsOneWidget);
     expect(find.text('Other channels'), findsOneWidget);
     expect(find.text('Apply to'), findsOneWidget);
-    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(5));
+    expect(find.byType(DropdownButtonFormField<String>), findsNWidgets(4));
     expect(find.text('Delete'), findsNWidgets(2));
     expect(find.byType(Radio<String>), findsNothing);
     expect(find.text('this dataset'), findsNothing);
