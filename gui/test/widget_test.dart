@@ -10,5 +10,11 @@ void main() {
 
     expect(find.text('Nodes'), findsOneWidget);
     expect(find.text('Datasets'), findsOneWidget);
+    expect(find.text('New'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
+    expect(find.text('Save'), findsOneWidget);
+    expect(find.text('Clear All'), findsNothing);
+    expect(find.text('Load BrainStory'), findsNothing);
+    expect(find.text('Export BrainStory'), findsNothing);
   });
 }

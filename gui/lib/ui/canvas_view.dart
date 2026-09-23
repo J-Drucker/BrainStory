@@ -435,7 +435,7 @@ class _CanvasViewState extends State<CanvasView> {
                                             ).showSnackBar(
                                               const SnackBar(
                                                 content: Text(
-                                                  'Clear all is paused until the active job finishes.',
+                                                  'New project is paused until the active job finishes.',
                                                 ),
                                               ),
                                             );

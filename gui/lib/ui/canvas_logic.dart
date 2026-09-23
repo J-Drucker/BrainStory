@@ -869,21 +869,21 @@ class _ProjectActionsMenu extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 _ProjectActionButton(
-                  label: 'Load BrainStory',
+                  label: 'New',
+                  icon: Icons.note_add_outlined,
+                  onPressed: clear,
+                ),
+                const SizedBox(height: 10),
+                _ProjectActionButton(
+                  label: 'Open',
                   icon: Icons.folder_open,
                   onPressed: load,
                 ),
                 const SizedBox(height: 10),
                 _ProjectActionButton(
-                  label: 'Export BrainStory',
-                  icon: Icons.save_alt,
+                  label: 'Save',
+                  icon: Icons.save,
                   onPressed: export,
-                ),
-                const SizedBox(height: 10),
-                _ProjectActionButton(
-                  label: 'Clear All',
-                  icon: Icons.delete_outline,
-                  onPressed: clear,
                 ),
               ],
             ),
@@ -1804,7 +1804,7 @@ class CanvasLogic {
       _showStatusSnackBar(
         context,
         savedPath == null
-            ? 'BrainStory export was canceled.'
+            ? 'BrainStory save was canceled.'
             : 'Saved BrainStory project to $savedPath.',
       );
     }
@@ -1955,14 +1955,14 @@ class CanvasLogic {
       if (context.mounted) {
         _showStatusSnackBar(
           context,
-          'Loaded BrainStory project from ${file.name}.',
+          'Opened BrainStory project from ${file.name}.',
         );
       }
     } catch (error) {
       if (context.mounted) {
         _showStatusSnackBar(
           context,
-          'Could not load BrainStory project: $error',
+          'Could not open BrainStory project: $error',
         );
       }
     }
