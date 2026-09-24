@@ -55,6 +55,7 @@ class ArtifactIdentity {
     required this.artifactId,
     required this.datasetId,
     required this.kind,
+    required this.createdAtUtcMicros,
     this.producerNodeId,
     this.sourceArtifactIds = const <String>[],
     this.revision = 0,
@@ -63,6 +64,7 @@ class ArtifactIdentity {
   final String artifactId;
   final String datasetId;
   final BrainStoryArtifactKind kind;
+  final int createdAtUtcMicros;
   final String? producerNodeId;
   final List<String> sourceArtifactIds;
   final int revision;
@@ -71,6 +73,7 @@ class ArtifactIdentity {
     String? artifactId,
     String? datasetId,
     BrainStoryArtifactKind? kind,
+    int? createdAtUtcMicros,
     String? producerNodeId,
     bool clearProducerNodeId = false,
     List<String>? sourceArtifactIds,
@@ -80,6 +83,7 @@ class ArtifactIdentity {
       artifactId: artifactId ?? this.artifactId,
       datasetId: datasetId ?? this.datasetId,
       kind: kind ?? this.kind,
+      createdAtUtcMicros: createdAtUtcMicros ?? this.createdAtUtcMicros,
       producerNodeId: clearProducerNodeId
           ? null
           : (producerNodeId ?? this.producerNodeId),
@@ -93,6 +97,7 @@ class ArtifactIdentity {
       'artifactId': artifactId,
       'datasetId': datasetId,
       'kind': kind.name,
+      'createdAtUtcMicros': createdAtUtcMicros,
       'producerNodeId': producerNodeId,
       'sourceArtifactIds': sourceArtifactIds,
       'revision': revision,
@@ -104,6 +109,11 @@ class ArtifactIdentity {
       artifactId: json['artifactId']?.toString() ?? '',
       datasetId: json['datasetId']?.toString() ?? '',
       kind: artifactKindFromWireValue(json['kind']?.toString()),
+      // Legacy projects did not timestamp identities. The migration time is
+      // the earliest truthful timestamp BrainStory can assign to those rows.
+      createdAtUtcMicros:
+          (json['createdAtUtcMicros'] as num?)?.toInt() ??
+          DateTime.now().toUtc().microsecondsSinceEpoch,
       producerNodeId: json['producerNodeId']?.toString(),
       sourceArtifactIds:
           (json['sourceArtifactIds'] as List<dynamic>? ?? const <dynamic>[])

@@ -7257,6 +7257,9 @@ class CanvasLogic {
     required Dataset dataset,
     List<String> sourceArtifactIds = const <String>[],
   }) {
+    final int createdAtUtcMicros = DateTime.now()
+        .toUtc()
+        .microsecondsSinceEpoch;
     for (final BrainStoryArtifactKind kind in _artifactKindsForNodeOutputs(
       node,
       dataset,
@@ -7272,6 +7275,7 @@ class CanvasLogic {
           artifactId: artifactId,
           datasetId: dataset.id,
           kind: kind,
+          createdAtUtcMicros: createdAtUtcMicros,
           producerNodeId: node.id,
           sourceArtifactIds: sourceArtifactIds,
           revision: previous?.artifactId == artifactId

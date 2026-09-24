@@ -1152,6 +1152,7 @@ void main() {
           artifactId: 'node-a:dataset-a:channelCoordinates',
           datasetId: 'dataset-a',
           kind: BrainStoryArtifactKind.channelCoordinates,
+          createdAtUtcMicros: 1000000,
           producerNodeId: 'node-a',
         ),
       );
@@ -1887,6 +1888,7 @@ void main() {
       artifactId: 'artifact-node-2-dataset-1-signal',
       datasetId: 'dataset-1',
       kind: BrainStoryArtifactKind.timeSeries,
+      createdAtUtcMicros: 123456789,
       producerNodeId: 'node-2',
       sourceArtifactIds: <String>['artifact-node-1-dataset-1-signal'],
       revision: 3,
@@ -1913,6 +1915,7 @@ void main() {
 
     expect(restoredIdentity.artifactId, identity.artifactId);
     expect(restoredIdentity.kind, BrainStoryArtifactKind.timeSeries);
+    expect(restoredIdentity.createdAtUtcMicros, 123456789);
     expect(
       restoredIdentity.sourceArtifactIds.single,
       'artifact-node-1-dataset-1-signal',
@@ -1920,6 +1923,21 @@ void main() {
     expect(restoredChangeSet.touchesChannelTopology, isTrue);
     expect(restoredChangeSet.touchesSamples, isFalse);
     expect(restoredChangeSet.isChannelScoped, isTrue);
+  });
+
+  test('legacy artifact identities receive a migration timestamp', () {
+    final int before = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final ArtifactIdentity identity = ArtifactIdentity.fromJson(
+      <String, dynamic>{
+        'artifactId': 'legacy-artifact',
+        'datasetId': 'dataset-1',
+        'kind': 'timeSeries',
+      },
+    );
+    final int after = DateTime.now().toUtc().microsecondsSinceEpoch;
+
+    expect(identity.createdAtUtcMicros, inInclusiveRange(before, after));
+    expect(identity.toJson(), contains('createdAtUtcMicros'));
   });
 
   test('dataset artifact snapshots preserve artifact identities', () {
@@ -1934,6 +1952,7 @@ void main() {
         artifactId: 'node-1-dataset-1-time-series',
         datasetId: 'dataset-1',
         kind: BrainStoryArtifactKind.timeSeries,
+        createdAtUtcMicros: 2000000,
         producerNodeId: 'node-1',
       ),
     );
@@ -1952,6 +1971,12 @@ void main() {
           .artifactIdentities[BrainStoryArtifactKind.timeSeries]!
           .artifactId,
       'node-1-dataset-1-time-series',
+    );
+    expect(
+      restored
+          .artifactIdentities[BrainStoryArtifactKind.timeSeries]!
+          .createdAtUtcMicros,
+      2000000,
     );
     expect(
       target
@@ -2141,6 +2166,7 @@ void main() {
         artifactId: 'import-node:dataset-1:timeSeries',
         datasetId: 'dataset-1',
         kind: BrainStoryArtifactKind.timeSeries,
+        createdAtUtcMicros: 3000000,
         producerNodeId: 'import-node',
       ),
     );
@@ -2166,6 +2192,7 @@ void main() {
     );
     expect(spectrumIdentity, isNotNull);
     expect(spectrumIdentity!.producerNodeId, psdNode.id);
+    expect(spectrumIdentity.createdAtUtcMicros, greaterThan(0));
     expect(spectrumIdentity.datasetId, dataset.id);
     expect(spectrumIdentity.artifactId, '${psdNode.id}:${dataset.id}:spectrum');
     final NodeModel markerNode = logic.nodes.firstWhere(
