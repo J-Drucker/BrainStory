@@ -336,6 +336,62 @@ void main() {
     );
   });
 
+  test('wires sharing a port fan out into adjacent endpoint lanes', () {
+    final CanvasLogic outgoing = CanvasLogic();
+    outgoing.addNode(ImportNodeType());
+    outgoing.addNode(ResampleNodeType());
+    outgoing.addNode(BandpassNodeType());
+    final NodeModel parent = outgoing.nodes[0]..position = const Offset(100, 0);
+    final NodeModel leftChild = outgoing.nodes[1]
+      ..position = const Offset(20, 220);
+    final NodeModel rightChild = outgoing.nodes[2]
+      ..position = const Offset(180, 220);
+    for (final NodeModel child in <NodeModel>[leftChild, rightChild]) {
+      outgoing.connections.add(<String, dynamic>{
+        'fromNode': parent.id,
+        'fromPort': 0,
+        'toNode': child.id,
+        'toPort': 0,
+      });
+    }
+    final List<ConnectionPainter> outgoingPainters = outgoing
+        .connectionWidgets()
+        .cast<CustomPaint>()
+        .map((CustomPaint paint) => paint.painter! as ConnectionPainter)
+        .toList(growable: false);
+    expect(
+      outgoingPainters[0].start.dx,
+      lessThan(outgoingPainters[1].start.dx),
+    );
+    expect(outgoingPainters[1].start.dx - outgoingPainters[0].start.dx, 7);
+
+    final CanvasLogic incoming = CanvasLogic();
+    incoming.addNode(ImportNodeType());
+    incoming.addNode(ImportNodeType());
+    incoming.addNode(ResampleNodeType());
+    final NodeModel leftParent = incoming.nodes[0]
+      ..position = const Offset(20, 0);
+    final NodeModel rightParent = incoming.nodes[1]
+      ..position = const Offset(180, 0);
+    final NodeModel child = incoming.nodes[2]
+      ..position = const Offset(100, 220);
+    for (final NodeModel source in <NodeModel>[leftParent, rightParent]) {
+      incoming.connections.add(<String, dynamic>{
+        'fromNode': source.id,
+        'fromPort': 0,
+        'toNode': child.id,
+        'toPort': 0,
+      });
+    }
+    final List<ConnectionPainter> incomingPainters = incoming
+        .connectionWidgets()
+        .cast<CustomPaint>()
+        .map((CustomPaint paint) => paint.painter! as ConnectionPainter)
+        .toList(growable: false);
+    expect(incomingPainters[0].end.dx, lessThan(incomingPainters[1].end.dx));
+    expect(incomingPainters[1].end.dx - incomingPainters[0].end.dx, 7);
+  });
+
   test('consecutive channel and marker edits combine into one node', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(EditChannelsNodeType());

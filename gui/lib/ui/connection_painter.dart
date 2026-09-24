@@ -43,14 +43,12 @@ List<Offset> buildConnectionPolyline({
     candidateXs,
     existingPolylines,
     horizontal: true,
-    gridSize: gridWidth,
     primary: (routedStart.dx + routedEnd.dx) / 2,
   );
   _addWireDetourAxes(
     candidateYs,
     existingPolylines,
     horizontal: false,
-    gridSize: gridHeight,
     primary: (routedStart.dy + routedEnd.dy) / 2,
   );
   _addEndpointDetourAxes(
@@ -206,17 +204,16 @@ void _addWireDetourAxes(
   List<double> values,
   List<List<Offset>> polylines, {
   required bool horizontal,
-  required double gridSize,
   required double primary,
 }) {
   final Set<double> expanded = values.toSet();
-  final double detour = gridSize / 2;
+  const double detour = 7;
   for (final List<Offset> polyline in polylines) {
     for (final Offset point in polyline) {
       final double value = horizontal ? point.dx : point.dy;
       expanded
-        ..add(_snapToHalfGrid(value - detour, gridSize))
-        ..add(_snapToHalfGrid(value + detour, gridSize));
+        ..add(value - detour)
+        ..add(value + detour);
     }
   }
   values

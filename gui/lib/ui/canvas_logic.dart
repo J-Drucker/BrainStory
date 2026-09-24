@@ -2615,18 +2615,32 @@ class CanvasLogic {
         connection,
         fromNode,
       );
-      final Offset start = _outputAnchor(
-        fromNode,
-        toNode,
-        fromPortIndex: fromPort,
-        edge: fromEdge,
-      );
+      final Offset start =
+          _outputAnchor(
+            fromNode,
+            toNode,
+            fromPortIndex: fromPort,
+            edge: fromEdge,
+          ) +
+          _connectionEndpointLaneOffset(
+            connectionIndex,
+            node: fromNode,
+            edge: fromEdge,
+            output: true,
+          );
       final NodeConnectionEdge toEdge = _resolvedInputEdge(
         connection,
         fromNode,
         toNode,
       );
-      final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
+      final Offset end =
+          _inputAnchor(fromNode, toNode, edge: toEdge) +
+          _connectionEndpointLaneOffset(
+            connectionIndex,
+            node: toNode,
+            edge: toEdge,
+            output: false,
+          );
       final bool preferVertical =
           fromEdge == NodeConnectionEdge.bottom ||
           fromEdge == NodeConnectionEdge.top;
@@ -9990,7 +10004,10 @@ class CanvasLogic {
 
   List<List<Offset>> _routedConnectionPolylines() {
     final List<List<Offset>> routes = <List<Offset>>[];
-    for (final Map<String, dynamic> connection in connections) {
+    for (final MapEntry<int, Map<String, dynamic>> entry
+        in connections.asMap().entries) {
+      final int connectionIndex = entry.key;
+      final Map<String, dynamic> connection = entry.value;
       final NodeModel? fromNode = _findNode(
         connection['fromNode'] as String? ?? '',
       );
@@ -10006,18 +10023,32 @@ class CanvasLogic {
         connection,
         fromNode,
       );
-      final Offset start = _outputAnchor(
-        fromNode,
-        toNode,
-        fromPortIndex: fromPort,
-        edge: fromEdge,
-      );
+      final Offset start =
+          _outputAnchor(
+            fromNode,
+            toNode,
+            fromPortIndex: fromPort,
+            edge: fromEdge,
+          ) +
+          _connectionEndpointLaneOffset(
+            connectionIndex,
+            node: fromNode,
+            edge: fromEdge,
+            output: true,
+          );
       final NodeConnectionEdge toEdge = _resolvedInputEdge(
         connection,
         fromNode,
         toNode,
       );
-      final Offset end = _inputAnchor(fromNode, toNode, edge: toEdge);
+      final Offset end =
+          _inputAnchor(fromNode, toNode, edge: toEdge) +
+          _connectionEndpointLaneOffset(
+            connectionIndex,
+            node: toNode,
+            edge: toEdge,
+            output: false,
+          );
       routes.add(
         buildConnectionPolyline(
           start: start,
@@ -10040,6 +10071,80 @@ class CanvasLogic {
       );
     }
     return routes;
+  }
+
+  Offset _connectionEndpointLaneOffset(
+    int connectionIndex, {
+    required NodeModel node,
+    required NodeConnectionEdge edge,
+    required bool output,
+  }) {
+    const double preferredLaneSpacing = 7;
+    final Map<String, dynamic> connection = connections[connectionIndex];
+    final String nodeKey = output ? 'fromNode' : 'toNode';
+    final String portKey = output ? 'fromPort' : 'toPort';
+    final int portIndex = (connection[portKey] as num?)?.toInt() ?? 0;
+    final List<int> siblings = <int>[];
+    for (final MapEntry<int, Map<String, dynamic>> candidate
+        in connections.asMap().entries) {
+      if (candidate.value[nodeKey]?.toString() != node.id ||
+          ((candidate.value[portKey] as num?)?.toInt() ?? 0) != portIndex) {
+        continue;
+      }
+      final NodeConnectionEdge candidateEdge;
+      if (output) {
+        candidateEdge = _resolvedOutputEdge(candidate.value, node);
+      } else {
+        final NodeModel? candidateFrom = _findNode(
+          candidate.value['fromNode']?.toString() ?? '',
+        );
+        if (candidateFrom == null) continue;
+        candidateEdge = _resolvedInputEdge(
+          candidate.value,
+          candidateFrom,
+          node,
+        );
+      }
+      if (candidateEdge == edge) siblings.add(candidate.key);
+    }
+    if (siblings.length < 2) return Offset.zero;
+    siblings.sort((int a, int b) {
+      final NodeModel? aOther = _findNode(
+        connections[a][output ? 'toNode' : 'fromNode']?.toString() ?? '',
+      );
+      final NodeModel? bOther = _findNode(
+        connections[b][output ? 'toNode' : 'fromNode']?.toString() ?? '',
+      );
+      final int positionOrder = _laneSortPosition(
+        aOther,
+        edge,
+      ).compareTo(_laneSortPosition(bOther, edge));
+      return positionOrder != 0 ? positionOrder : a.compareTo(b);
+    });
+    final int rank = siblings.indexOf(connectionIndex);
+    final double availableHalfSpan = switch (edge) {
+      NodeConnectionEdge.top ||
+      NodeConnectionEdge.bottom => (_cardWidth / 2) - 12,
+      NodeConnectionEdge.left ||
+      NodeConnectionEdge.right => (_cardHeight / 2) - 10,
+    };
+    final double laneSpacing = math.min(
+      preferredLaneSpacing,
+      (availableHalfSpan * 2) / (siblings.length - 1),
+    );
+    final double offset = (rank - ((siblings.length - 1) / 2)) * laneSpacing;
+    return switch (edge) {
+      NodeConnectionEdge.top || NodeConnectionEdge.bottom => Offset(offset, 0),
+      NodeConnectionEdge.left || NodeConnectionEdge.right => Offset(0, offset),
+    };
+  }
+
+  double _laneSortPosition(NodeModel? other, NodeConnectionEdge edge) {
+    if (other == null) return 0;
+    return switch (edge) {
+      NodeConnectionEdge.top || NodeConnectionEdge.bottom => other.position.dx,
+      NodeConnectionEdge.left || NodeConnectionEdge.right => other.position.dy,
+    };
   }
 
   Offset _directionForEdge(NodeConnectionEdge edge) {
