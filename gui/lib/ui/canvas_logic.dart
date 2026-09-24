@@ -2928,6 +2928,14 @@ class CanvasLogic {
           (NodeModel selected) => isNodeMutationLocked(selected.id),
         ) ??
         false;
+    final bool showSelectedCombination =
+        selectedNodeIds.length >= 2 &&
+        selectedNodeIds.contains(node.id) &&
+        nodes.any(
+          (NodeModel candidate) =>
+              selectedNodeIds.contains(candidate.id) &&
+              _isEditCombinationType(candidate.type),
+        );
     final _NodeCombinationPlan? previousCombination =
         _combinationPlanWithPrevious(node);
     final _NodeCombinationPlan? nextCombination = previousCombination == null
@@ -2986,20 +2994,22 @@ class CanvasLogic {
           child: Text('Memory management'),
         ),
         const PopupMenuItem<String>(value: 'export', child: Text('Export')),
-        if (selectedCombination != null)
+        if (showSelectedCombination)
           PopupMenuItem<String>(
             value: 'combine_selected',
-            enabled: !selectedCombinationLocked,
-            child: const Text('Combine Selected Nodes'),
+            enabled: selectedCombination != null && !selectedCombinationLocked,
+            child: const Text('Combine Selected Edit Nodes'),
           ),
-        if (combination != null)
+        if (_isEditCombinationType(node.type))
           PopupMenuItem<String>(
             value: 'combine',
-            enabled: !combinationLocked,
+            enabled: combination != null && !combinationLocked,
             child: Text(
               previousCombination != null
                   ? 'Combine with Previous Node'
-                  : 'Combine with Next Node',
+                  : nextCombination != null
+                  ? 'Combine with Next Node'
+                  : 'Combine with Adjacent Edit Node',
             ),
           ),
         if (nodeGroup != null)
@@ -3314,17 +3324,15 @@ class CanvasLogic {
     }
 
     final bool upstreamChannels = upstream.type is EditChannelsNodeType;
-    final bool upstreamCombined =
-        upstream.type is EditChannelsAndMarkersNodeType;
-    final bool upstreamMarkers = upstream.type is AddRemoveMarkersNodeType;
     final bool downstreamMarkers = downstream.type is AddRemoveMarkersNodeType;
-    if (downstreamMarkers &&
+    if ((_isEditCombinationType(upstream.type) ||
+            _isEditCombinationType(downstream.type)) &&
         (upstream.params['markerGenerator'] != null ||
             downstream.params['markerGenerator'] != null)) {
       return null;
     }
 
-    if ((upstreamChannels || upstreamCombined) && downstreamMarkers) {
+    if (upstreamChannels && downstreamMarkers) {
       final NodeType type = EditChannelsAndMarkersNodeType();
       final Map<String, dynamic> params = _deepCloneJsonMap(type.defaultParams);
       params['channelEditsByDataset'] = _deepCloneJsonMap(
@@ -3363,24 +3371,14 @@ class CanvasLogic {
       );
     }
 
-    if (upstreamMarkers && downstreamMarkers) {
-      final bool downstreamAppliesMarkers =
-          downstream.params['applyEmptyMarkerSet'] == true ||
-          (downstream.params['markers'] as List<dynamic>? ?? const <dynamic>[])
-              .isNotEmpty;
-      final NodeModel effectiveNode = downstreamAppliesMarkers
-          ? downstream
-          : upstream;
-      final NodeType type = AddRemoveMarkersNodeType();
-      final Map<String, dynamic> params = _deepCloneJsonMap(
-        effectiveNode.params,
-      );
-      params['selectedDatasetIds'] = upstreamDatasets.toList(growable: false);
+    if (_isEditCombinationType(upstream.type) &&
+        _isEditCombinationType(downstream.type)) {
+      final List<NodeModel> ordered = <NodeModel>[upstream, downstream];
       return _NodeCombinationPlan(
         upstream: upstream,
         downstream: downstream,
-        type: type,
-        params: params,
+        type: _combinedEditType(ordered),
+        params: _combinedStageParams(ordered, upstreamDatasets),
       );
     }
     return null;
@@ -3490,16 +3488,25 @@ class CanvasLogic {
     final List<NodeModel> selected = nodes
         .where((NodeModel node) => selectedNodeIds.contains(node.id))
         .toList(growable: false);
+    final bool allEditNodes =
+        selected.isNotEmpty &&
+        selected.every((NodeModel node) => _isEditCombinationType(node.type));
+    final bool sameSupportedType =
+        selected.isNotEmpty &&
+        selected.every(
+          (NodeModel node) =>
+              node.type.runtimeType == contextNode.type.runtimeType,
+        ) &&
+        _supportsSelectedCombination(contextNode.type);
     if (selected.length != selectedNodeIds.length ||
         selected.any(
           (NodeModel node) =>
-              node.type.runtimeType != contextNode.type.runtimeType ||
               node.params.containsKey('_runtimeGeneratedByNodeId'),
         ) ||
-        !_supportsSelectedCombination(contextNode.type)) {
+        (!allEditNodes && !sameSupportedType)) {
       return null;
     }
-    if (contextNode.type is AddRemoveMarkersNodeType &&
+    if (allEditNodes &&
         selected.any(
           (NodeModel node) => node.params['markerGenerator'] != null,
         )) {
@@ -3547,6 +3554,42 @@ class CanvasLogic {
     }
     if (ordered.length != selected.length) return null;
 
+    return _SelectedNodeCombinationPlan(
+      nodes: ordered,
+      type: allEditNodes ? _combinedEditType(ordered) : ordered.first.type,
+      params: _combinedStageParams(ordered, datasetIds),
+    );
+  }
+
+  bool _isEditCombinationType(NodeType type) {
+    return type is EditChannelsNodeType ||
+        type is AddRemoveMarkersNodeType ||
+        type is EditChannelsAndMarkersNodeType;
+  }
+
+  NodeType _combinedEditType(List<NodeModel> nodes) {
+    final bool hasChannelEdits = nodes.any(
+      (NodeModel node) =>
+          node.type is EditChannelsNodeType ||
+          node.type is EditChannelsAndMarkersNodeType,
+    );
+    final bool hasMarkerEdits = nodes.any(
+      (NodeModel node) =>
+          node.type is AddRemoveMarkersNodeType ||
+          node.type is EditChannelsAndMarkersNodeType,
+    );
+    if (hasChannelEdits && hasMarkerEdits) {
+      return EditChannelsAndMarkersNodeType();
+    }
+    return hasChannelEdits
+        ? EditChannelsNodeType()
+        : AddRemoveMarkersNodeType();
+  }
+
+  Map<String, dynamic> _combinedStageParams(
+    List<NodeModel> ordered,
+    Set<String> datasetIds,
+  ) {
     final List<Map<String, dynamic>> stages = <Map<String, dynamic>>[];
     for (final NodeModel node in ordered) {
       final List<Map<String, dynamic>>? existingStages =
@@ -3554,19 +3597,15 @@ class CanvasLogic {
       final Iterable<Map<String, dynamic>> nodeStages =
           existingStages ?? <Map<String, dynamic>>[node.params];
       for (final Map<String, dynamic> stage in nodeStages) {
-        final Map<String, dynamic> clone = _deepCloneJsonMap(stage)
-          ..remove(combinedExecutionStagesKey);
-        stages.add(clone);
+        stages.add(
+          _deepCloneJsonMap(stage)..remove(combinedExecutionStagesKey),
+        );
       }
     }
     final Map<String, dynamic> params = _deepCloneJsonMap(ordered.last.params);
     params[combinedExecutionStagesKey] = stages;
     params['selectedDatasetIds'] = datasetIds.toList(growable: false);
-    return _SelectedNodeCombinationPlan(
-      nodes: ordered,
-      type: ordered.first.type,
-      params: params,
-    );
+    return params;
   }
 
   bool _supportsSelectedCombination(NodeType type) {

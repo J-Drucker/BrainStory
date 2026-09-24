@@ -321,6 +321,80 @@ void main() {
     expect(logic.connections, hasLength(1));
   });
 
+  test('consecutive marker then channel edits combine in execution order', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.datasets['dataset-1'] = Dataset('dataset-1');
+    logic.addNode(AddRemoveMarkersNodeType());
+    final NodeModel markerNode = logic.nodes.last;
+    markerNode.params['markerEditOperations'] = <String, dynamic>{
+      'renames': <String, String>{'A': 'B'},
+    };
+    logic.addNode(EditChannelsNodeType());
+    final NodeModel channelNode = logic.nodes.last;
+    channelNode.params['channelEditsByDataset'] = <String, dynamic>{
+      'dataset-1': <String, dynamic>{
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{'rename': 'Fp1 edited'},
+        },
+      },
+    };
+    logic.connections.add(<String, dynamic>{
+      'fromNode': markerNode.id,
+      'fromPort': 0,
+      'toNode': channelNode.id,
+      'toPort': 0,
+    });
+
+    expect(
+      logic.combineConsecutiveEditNodes(markerNode.id, channelNode.id),
+      'Edit Channels and Markers',
+    );
+    final NodeModel combined = logic.nodes.single;
+    expect(combined.type, isA<EditChannelsAndMarkersNodeType>());
+    final List<Map<String, dynamic>> stages = combinedExecutionStages(
+      combined.params,
+    )!;
+    expect(stages, hasLength(2));
+    expect(stages.first['markerEditOperations'], isNotEmpty);
+    expect(stages.last['channelEditsByDataset'], contains('dataset-1'));
+  });
+
+  test('selected mixed edit chain combines while preserving every stage', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.datasets['dataset-1'] = Dataset('dataset-1');
+    logic.addNode(AddRemoveMarkersNodeType());
+    final NodeModel first = logic.nodes.last;
+    first.params['markerEditOperations'] = <String, dynamic>{
+      'renames': <String, String>{'A': 'B'},
+    };
+    logic.addNode(EditChannelsNodeType());
+    final NodeModel second = logic.nodes.last;
+    logic.addNode(AddRemoveMarkersNodeType());
+    final NodeModel third = logic.nodes.last;
+    third.params['markerEditOperations'] = <String, dynamic>{
+      'deletedLabels': <String>['C'],
+    };
+    final List<NodeModel> chain = <NodeModel>[first, second, third];
+    for (int index = 0; index < chain.length - 1; index++) {
+      logic.connections.add(<String, dynamic>{
+        'fromNode': chain[index].id,
+        'fromPort': 0,
+        'toNode': chain[index + 1].id,
+        'toPort': 0,
+      });
+    }
+
+    expect(
+      logic.combineSelectedNodes(
+        chain.map((NodeModel node) => node.id).toSet(),
+      ),
+      'Edit Channels and Markers',
+    );
+    final NodeModel combined = logic.nodes.single;
+    expect(combined.type, isA<EditChannelsAndMarkersNodeType>());
+    expect(combinedExecutionStages(combined.params), hasLength(3));
+  });
+
   test('selected bandpass chain combines without losing filter stages', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImportNodeType());
