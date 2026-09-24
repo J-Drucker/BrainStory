@@ -280,6 +280,8 @@ class _MarkerLabelEditConfigEditorState
   final Set<String> _deletedLabels = <String>{};
   final Map<String, _MarkerLogicRecodeDraft> _logicRecodeDrafts =
       <String, _MarkerLogicRecodeDraft>{};
+  final Set<String> _enumeratedLabels = <String>{};
+  String _enumerationMode = 'individual';
   final List<_BoundaryCombinationDraft> _boundaryDrafts =
       <_BoundaryCombinationDraft>[];
   int _nextBoundaryDraftId = 1;
@@ -306,6 +308,8 @@ class _MarkerLabelEditConfigEditorState
       );
     _deletedLabels.clear();
     _logicRecodeDrafts.clear();
+    _enumeratedLabels.clear();
+    _enumerationMode = 'individual';
     _boundaryDrafts
       ..clear()
       ..add(_BoundaryCombinationDraft(id: _nextBoundaryDraftId++));
@@ -326,6 +330,17 @@ class _MarkerLabelEditConfigEditorState
           .map((dynamic value) => value.toString())
           .where(_labels.contains),
     );
+    final Map<String, dynamic> enumeration = Map<String, dynamic>.from(
+      operations['enumeration'] as Map? ?? const <String, dynamic>{},
+    );
+    _enumeratedLabels.addAll(
+      (enumeration['labels'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => value.toString())
+          .where(_labels.contains),
+    );
+    _enumerationMode = enumeration['mode']?.toString() == 'combined'
+        ? 'combined'
+        : 'individual';
     for (final Map<dynamic, dynamic> rawRule
         in (operations['logicRules'] as List<dynamic>? ?? const <dynamic>[])
             .whereType<Map>()) {
@@ -453,6 +468,10 @@ class _MarkerLabelEditConfigEditorState
     return <String, dynamic>{
       'renames': _effectiveRenames,
       'deletedLabels': _deletedLabels.toList(growable: false),
+      'enumeration': <String, dynamic>{
+        'labels': _enumeratedLabels.toList(growable: false),
+        'mode': _enumerationMode,
+      },
       'logicRules': _logicRecodeDrafts.values
           .map(
             (_MarkerLogicRecodeDraft draft) => <String, dynamic>{
@@ -553,6 +572,70 @@ class _MarkerLabelEditConfigEditorState
               ],
             ),
           ],
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 12),
+          Text(
+            'Enumerate',
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _labels
+                .map((String label) {
+                  return FilterChip(
+                    label: Text(label),
+                    selected: _enumeratedLabels.contains(label),
+                    onSelected: _deletedLabels.contains(label)
+                        ? null
+                        : (bool selected) {
+                            setState(() {
+                              selected
+                                  ? _enumeratedLabels.add(label)
+                                  : _enumeratedLabels.remove(label);
+                              if (_enumeratedLabels.length < 2) {
+                                _enumerationMode = 'individual';
+                              }
+                            });
+                            _emit();
+                          },
+                  );
+                })
+                .toList(growable: false),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: 220,
+            child: DropdownButtonFormField<String>(
+              key: ValueKey<String>(
+                'enumeration-mode-$_enumerationMode-${_enumeratedLabels.length >= 2}',
+              ),
+              initialValue: _enumerationMode,
+              decoration: const InputDecoration(
+                labelText: 'Numbering',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              items: const <DropdownMenuItem<String>>[
+                DropdownMenuItem(
+                  value: 'individual',
+                  child: Text('Individual'),
+                ),
+                DropdownMenuItem(value: 'combined', child: Text('Combined')),
+              ],
+              onChanged: _enumeratedLabels.length < 2
+                  ? null
+                  : (String? value) {
+                      if (value == null) return;
+                      setState(() => _enumerationMode = value);
+                      _emit();
+                    },
+            ),
+          ),
           const SizedBox(height: 20),
           const Divider(),
           const SizedBox(height: 12),

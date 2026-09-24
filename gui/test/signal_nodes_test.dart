@@ -4717,7 +4717,7 @@ time,Fz,Cz
     await tester.tap(find.text('Markers'));
     await tester.pumpAndSettle();
     expect(find.text('Rename or delete marker labels.'), findsOneWidget);
-    expect(find.text('blink'), findsOneWidget);
+    expect(find.text('blink'), findsNWidgets(2));
     expect(find.text('Recode'), findsOneWidget);
     await tester.tap(find.text('Recode'));
     await tester.pumpAndSettle();
@@ -4812,8 +4812,8 @@ time,Fz,Cz
         ),
       );
 
-      expect(find.text('cue'), findsOneWidget);
-      expect(find.text('correct'), findsOneWidget);
+      expect(find.text('cue'), findsNWidgets(2));
+      expect(find.text('correct'), findsNWidgets(2));
       expect(find.byIcon(Icons.check), findsOneWidget);
       await tester.tap(
         find.ancestor(
@@ -5780,6 +5780,108 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(
       result.markers.any((TimeMarker marker) => marker.label == 'Note'),
       isTrue,
+    );
+  });
+
+  test('marker enumeration supports combined and individual counters', () {
+    const List<TimeMarker> markers = <TimeMarker>[
+      TimeMarker(onsetMicros: 3000, label: 'B'),
+      TimeMarker(onsetMicros: 1000, label: 'A'),
+      TimeMarker(onsetMicros: 2000, label: 'B'),
+      TimeMarker(onsetMicros: 4000, label: 'Other'),
+    ];
+
+    final List<TimeMarker> combined = AddRemoveMarkersNodeType.enumerateMarkers(
+      markers,
+      labels: <String>{'A', 'B'},
+      combined: true,
+    );
+    expect(combined.map((TimeMarker marker) => marker.label), <String>[
+      'B_2',
+      'A_0',
+      'B_1',
+      'Other',
+    ]);
+
+    final List<TimeMarker> individual =
+        AddRemoveMarkersNodeType.enumerateMarkers(
+          markers,
+          labels: <String>{'A', 'B'},
+        );
+    expect(individual.map((TimeMarker marker) => marker.label), <String>[
+      'B_1',
+      'A_0',
+      'B_0',
+      'Other',
+    ]);
+  });
+
+  test('marker edit operations persist and apply enumeration', () {
+    final List<TimeMarker> result =
+        AddRemoveMarkersNodeType.applyMarkerEditOperations(
+          const <TimeMarker>[
+            TimeMarker(onsetMicros: 0, label: 's4'),
+            TimeMarker(onsetMicros: 1000, label: 'keep'),
+            TimeMarker(onsetMicros: 2000, label: 's4'),
+          ],
+          <String, dynamic>{
+            'enumeration': <String, dynamic>{
+              'labels': <String>['s4'],
+              'mode': 'individual',
+            },
+          },
+        );
+
+    expect(result.map((TimeMarker marker) => marker.label), <String>[
+      's4_0',
+      'keep',
+      's4_1',
+    ]);
+  });
+
+  testWidgets('enumeration mode enables after selecting multiple labels', (
+    WidgetTester tester,
+  ) async {
+    Map<String, dynamic> savedOperations = <String, dynamic>{};
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: MarkerLabelEditConfigEditor(
+            markers: const <TimeMarker>[
+              TimeMarker(onsetMicros: 0, label: 'A'),
+              TimeMarker(onsetMicros: 1000, label: 'B'),
+            ],
+            onChanged: (_) {},
+            onOperationsChanged: (Map<String, dynamic> operations) {
+              savedOperations = operations;
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Enumerate'), findsOneWidget);
+    DropdownButtonFormField<String> modeDropdown() =>
+        tester.widget<DropdownButtonFormField<String>>(
+          find.ancestor(
+            of: find.text('Numbering'),
+            matching: find.byType(DropdownButtonFormField<String>),
+          ),
+        );
+    expect(modeDropdown().onChanged, isNull);
+
+    await tester.tap(find.widgetWithText(FilterChip, 'A'));
+    await tester.pump();
+    expect(modeDropdown().onChanged, isNull);
+
+    await tester.tap(find.widgetWithText(FilterChip, 'B'));
+    await tester.pump();
+    expect(modeDropdown().onChanged, isNotNull);
+    expect(
+      ((savedOperations['enumeration'] as Map)['labels'] as List<dynamic>)
+          .toSet(),
+      <String>{'A', 'B'},
     );
   });
 

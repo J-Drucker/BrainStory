@@ -3303,6 +3303,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   List<String> _markerOperationDescriptions() {
     final Map<String, dynamic> operations = _effectiveMarkerEditOperations();
     final List<String> descriptions = <String>[];
+    final Map<String, dynamic> enumeration = Map<String, dynamic>.from(
+      operations['enumeration'] as Map? ?? const <String, dynamic>{},
+    );
+    final List<String> enumeratedLabels =
+        (enumeration['labels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .where((String label) => label.isNotEmpty)
+            .toList(growable: false);
+    if (enumeratedLabels.isNotEmpty) {
+      final String mode = enumeration['mode']?.toString() == 'combined'
+          ? 'combined'
+          : 'individual';
+      descriptions.add(
+        'Enumerated ${enumeratedLabels.join(', ')} ($mode numbering)',
+      );
+    }
     for (final Map<dynamic, dynamic> rawRule
         in (operations['logicRules'] as List<dynamic>? ?? const <dynamic>[])
             .whereType<Map>()) {

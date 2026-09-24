@@ -345,7 +345,65 @@ class AddRemoveMarkersNodeType extends NodeType {
         replaceBoundaries: rule['replaceBoundaries'] != false,
       ).markers;
     }
+
+    final Map<String, dynamic> enumeration = Map<String, dynamic>.from(
+      operations['enumeration'] as Map? ?? const <String, dynamic>{},
+    );
+    final Set<String> enumerationLabels =
+        (enumeration['labels'] as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic value) => value.toString())
+            .map((String label) => renames[label] ?? label)
+            .toSet();
+    if (enumerationLabels.isNotEmpty) {
+      result = enumerateMarkers(
+        result,
+        labels: enumerationLabels,
+        combined: enumeration['mode']?.toString() == 'combined',
+      );
+    }
     return result;
+  }
+
+  static List<TimeMarker> enumerateMarkers(
+    List<TimeMarker> markers, {
+    required Set<String> labels,
+    bool combined = false,
+  }) {
+    if (labels.isEmpty) {
+      return List<TimeMarker>.from(markers, growable: false);
+    }
+    final List<({int index, TimeMarker marker})> ordered =
+        markers.indexed
+            .map(
+              ((int, TimeMarker) entry) => (index: entry.$1, marker: entry.$2),
+            )
+            .where((entry) => labels.contains(entry.marker.label))
+            .toList(growable: false)
+          ..sort((a, b) {
+            final int byTime = a.marker.onsetMicros.compareTo(
+              b.marker.onsetMicros,
+            );
+            return byTime != 0 ? byTime : a.index.compareTo(b.index);
+          });
+    final Map<int, TimeMarker> replacements = <int, TimeMarker>{};
+    final Map<String, int> labelCounters = <String, int>{};
+    int combinedCounter = 0;
+    for (final entry in ordered) {
+      final String label = entry.marker.label;
+      final int sequence;
+      if (combined) {
+        sequence = combinedCounter++;
+      } else {
+        sequence = labelCounters[label] ?? 0;
+        labelCounters[label] = sequence + 1;
+      }
+      replacements[entry.index] = entry.marker.copyWith(
+        label: '${label}_$sequence',
+      );
+    }
+    return markers.indexed
+        .map(((int, TimeMarker) entry) => replacements[entry.$1] ?? entry.$2)
+        .toList(growable: false);
   }
 
   static MarkerBoundaryCombinationResult combineBoundaryMarkers(
