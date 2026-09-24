@@ -182,6 +182,9 @@ class _ChannelMarkerEditConfigEditorState
   @override
   Widget build(BuildContext context) {
     final TimeSeriesData? series = widget.dataset.timeSeries;
+    final int? fileEndMicros = series == null || series.sampleRate <= 0
+        ? null
+        : ((series.sampleCount / series.sampleRate) * 1000000).round();
     final List<String> currentLabels = series == null
         ? const <String>[]
         : series.channelLabels.length == series.channelCount
@@ -241,6 +244,7 @@ class _ChannelMarkerEditConfigEditorState
                 ),
               MarkerLabelEditConfigEditor(
                 markers: widget.markers,
+                fileEndMicros: fileEndMicros,
                 onChanged: widget.onMarkersChanged,
                 initialOperations: widget.initialMarkerOperations,
                 onOperationsChanged: widget.onMarkerOperationsChanged,
@@ -258,12 +262,14 @@ class MarkerLabelEditConfigEditor extends StatefulWidget {
     super.key,
     required this.markers,
     required this.onChanged,
+    this.fileEndMicros,
     this.initialOperations = const <String, dynamic>{},
     this.onOperationsChanged,
   });
 
   final List<TimeMarker> markers;
   final ValueChanged<List<TimeMarker>> onChanged;
+  final int? fileEndMicros;
   final Map<String, dynamic> initialOperations;
   final ValueChanged<Map<String, dynamic>>? onOperationsChanged;
 
@@ -437,6 +443,7 @@ class _MarkerLabelEditConfigEditorState
       stopLabel: _effectiveRenames[draft.stopLabel] ?? draft.stopLabel!,
       blockLabel: draft.blockLabel,
       replaceBoundaries: false,
+      fileEndMicros: widget.fileEndMicros,
     );
   }
 
@@ -459,6 +466,7 @@ class _MarkerLabelEditConfigEditorState
         AddRemoveMarkersNodeType.applyMarkerEditOperations(
           _baseMarkers,
           operations,
+          fileEndMicros: widget.fileEndMicros,
         );
     widget.onOperationsChanged?.call(operations);
     widget.onChanged(result);
@@ -507,14 +515,15 @@ class _MarkerLabelEditConfigEditorState
 
   @override
   Widget build(BuildContext context) {
-    if (_labels.isEmpty) {
-      return const Center(child: Text('No markers.'));
-    }
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          const Text('Rename or delete marker labels.'),
+          Text(
+            _labels.isEmpty
+                ? 'No existing markers.'
+                : 'Rename or delete marker labels.',
+          ),
           const SizedBox(height: 12),
           for (int index = 0; index < _labels.length; index++) ...<Widget>[
             if (index > 0) const Divider(height: 18),
@@ -811,6 +820,11 @@ class _MarkerLabelEditConfigEditorState
     required String? value,
     required ValueChanged<String?> onChanged,
   }) {
+    final List<String> choices = <String>[
+      if (role == 'Start') AddRemoveMarkersNodeType.startOfFileBoundary,
+      if (role == 'Stop') AddRemoveMarkersNodeType.endOfFileBoundary,
+      ..._labels,
+    ];
     return DropdownButtonFormField<String>(
       key: ValueKey<String>('${draft.id}-$role-${value ?? 'none'}'),
       initialValue: value ?? '',
@@ -822,10 +836,13 @@ class _MarkerLabelEditConfigEditorState
       ),
       items: <DropdownMenuItem<String>>[
         const DropdownMenuItem<String>(value: '', child: Text('None')),
-        ..._labels.map(
+        ...choices.map(
           (String label) => DropdownMenuItem<String>(
             value: label,
-            child: Text(label, overflow: TextOverflow.ellipsis),
+            child: Text(
+              AddRemoveMarkersNodeType.boundaryLabel(label),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
       ],

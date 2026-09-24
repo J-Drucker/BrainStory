@@ -5783,6 +5783,53 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
   });
 
+  test('marker boundaries can use file edges', () {
+    const List<TimeMarker> markers = <TimeMarker>[
+      TimeMarker(onsetMicros: 2500, label: 'Stop'),
+      TimeMarker(onsetMicros: 4000, label: 'Start'),
+    ];
+
+    final MarkerBoundaryCombinationResult fromStart =
+        AddRemoveMarkersNodeType.combineBoundaryMarkers(
+          markers,
+          startLabel: AddRemoveMarkersNodeType.startOfFileBoundary,
+          stopLabel: 'Stop',
+          blockLabel: 'Opening',
+          fileEndMicros: 10000,
+        );
+    final TimeMarker opening = fromStart.markers.singleWhere(
+      (TimeMarker marker) => marker.label == 'Opening',
+    );
+    expect(opening.onsetMicros, 0);
+    expect(opening.durationMicros, 2500);
+
+    final MarkerBoundaryCombinationResult toEnd =
+        AddRemoveMarkersNodeType.combineBoundaryMarkers(
+          markers,
+          startLabel: 'Start',
+          stopLabel: AddRemoveMarkersNodeType.endOfFileBoundary,
+          blockLabel: 'Closing',
+          fileEndMicros: 10000,
+        );
+    final TimeMarker closing = toEnd.markers.singleWhere(
+      (TimeMarker marker) => marker.label == 'Closing',
+    );
+    expect(closing.onsetMicros, 4000);
+    expect(closing.durationMicros, 6000);
+
+    final MarkerBoundaryCombinationResult wholeFile =
+        AddRemoveMarkersNodeType.combineBoundaryMarkers(
+          const <TimeMarker>[],
+          startLabel: AddRemoveMarkersNodeType.startOfFileBoundary,
+          stopLabel: AddRemoveMarkersNodeType.endOfFileBoundary,
+          blockLabel: 'Whole file',
+          fileEndMicros: 10000,
+        );
+    expect(wholeFile.combinedCount, 1);
+    expect(wholeFile.markers.single.onsetMicros, 0);
+    expect(wholeFile.markers.single.durationMicros, 10000);
+  });
+
   test('marker enumeration supports combined and individual counters', () {
     const List<TimeMarker> markers = <TimeMarker>[
       TimeMarker(onsetMicros: 3000, label: 'B'),

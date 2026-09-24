@@ -2942,44 +2942,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     return maxWidth.clamp(88.0, 260.0);
   }
 
-  double _defaultRightPanelWidth(List<TimeMarker> markers) {
+  double _defaultRightPanelWidth(List<TimeMarker> _) {
     if (_interactionMode() == 'edit' &&
         _interactiveArtifactDetectionEnabled()) {
       return 600;
     }
-    double measure(
-      String text, {
-      double fontSize = 12,
-      FontWeight fontWeight = FontWeight.w600,
-    }) {
-      final TextPainter painter = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(fontSize: fontSize, fontWeight: fontWeight),
-        ),
-        maxLines: 1,
-        textDirection: TextDirection.ltr,
-      )..layout();
-      return painter.width;
-    }
-
-    // Includes panel padding, the section chevron, and the Edit markers action.
-    double maxWidth =
-        measure('Markers (${markers.length})') + measure('Edit markers') + 78;
-    for (final String text in <String>[
-      'Current template',
-      'Candidate matches',
-      'Accepted',
-      'Save to existing node',
-    ]) {
-      maxWidth = math.max(maxWidth, measure(text) + 56);
-    }
-    for (final String label
-        in markers.map((TimeMarker marker) => marker.label).toSet().take(32)) {
-      // A marker-label row also contains a chevron, swatch, count, and delete.
-      maxWidth = math.max(maxWidth, measure(label) + 132);
-    }
-    return maxWidth.clamp(248.0, 360.0);
+    return 420;
   }
 
   double _resolvedLeftPanelWidth(double defaultWidth) {

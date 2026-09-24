@@ -22,6 +22,16 @@ class MarkerBoundaryCombinationResult {
 enum MarkerLogicMatchMode { firstSubsequent, mostRecent, withinWindow }
 
 class AddRemoveMarkersNodeType extends NodeType {
+  static const String startOfFileBoundary =
+      '__brainstory_boundary_start_of_file__';
+  static const String endOfFileBoundary = '__brainstory_boundary_end_of_file__';
+
+  static String boundaryLabel(String value) => switch (value) {
+    startOfFileBoundary => 'Start of file',
+    endOfFileBoundary => 'End of file',
+    _ => value,
+  };
+
   @override
   String get title => 'Edit Markers';
 
@@ -118,6 +128,7 @@ class AddRemoveMarkersNodeType extends NodeType {
           Expanded(
             child: MarkerLabelEditConfigEditor(
               markers: markers,
+              fileEndMicros: _timeSeriesEndMicros(dataset.timeSeries!),
               initialOperations: operations,
               onOperationsChanged: (Map<String, dynamic> nextOperations) {
                 setState(() {
@@ -197,7 +208,11 @@ class AddRemoveMarkersNodeType extends NodeType {
     );
     final List<TimeMarker> editedMarkers = operations.isNotEmpty
         ? operationsApply
-              ? applyMarkerEditOperations(timeSeries.markers, operations)
+              ? applyMarkerEditOperations(
+                  timeSeries.markers,
+                  operations,
+                  fileEndMicros: _timeSeriesEndMicros(timeSeries),
+                )
               : timeSeries.markers
         : markersForDataset(
             dataset.id,
@@ -265,8 +280,9 @@ class AddRemoveMarkersNodeType extends NodeType {
 
   static List<TimeMarker> applyMarkerEditOperations(
     List<TimeMarker> markers,
-    Map<String, dynamic> operations,
-  ) {
+    Map<String, dynamic> operations, {
+    int? fileEndMicros,
+  }) {
     final Map<String, String> renames =
         Map<String, dynamic>.from(
           operations['renames'] as Map? ?? const <String, dynamic>{},
@@ -343,6 +359,7 @@ class AddRemoveMarkersNodeType extends NodeType {
         stopLabel: renames[originalStop] ?? originalStop,
         blockLabel: rule['blockLabel']?.toString() ?? '',
         replaceBoundaries: rule['replaceBoundaries'] != false,
+        fileEndMicros: fileEndMicros,
       ).markers;
     }
 
@@ -412,14 +429,18 @@ class AddRemoveMarkersNodeType extends NodeType {
     required String stopLabel,
     required String blockLabel,
     bool replaceBoundaries = true,
+    int? fileEndMicros,
   }) {
     final String normalizedStart = startLabel.trim();
     final String normalizedStop = stopLabel.trim();
     final String normalizedBlock = blockLabel.trim();
+    final bool startsAtFile = normalizedStart == startOfFileBoundary;
+    final bool stopsAtFile = normalizedStop == endOfFileBoundary;
     if (normalizedStart.isEmpty ||
         normalizedStop.isEmpty ||
         normalizedBlock.isEmpty ||
-        normalizedStart == normalizedStop) {
+        normalizedStart == normalizedStop ||
+        (stopsAtFile && (fileEndMicros == null || fileEndMicros <= 0))) {
       return MarkerBoundaryCombinationResult(
         markers: List<TimeMarker>.from(markers, growable: false),
         combinedCount: 0,
@@ -441,8 +462,28 @@ class AddRemoveMarkersNodeType extends NodeType {
     final List<TimeMarker> blocks = <TimeMarker>[];
     int unmatchedStops = 0;
 
-    for (final TimeMarker marker in ordered) {
-      if (marker.label == normalizedStart) {
+    if (startsAtFile) {
+      openStarts.add(
+        const TimeMarker(
+          onsetMicros: 0,
+          durationMicros: 0,
+          label: startOfFileBoundary,
+        ),
+      );
+    }
+
+    final List<TimeMarker> boundaries = <TimeMarker>[
+      ...ordered,
+      if (stopsAtFile)
+        TimeMarker(
+          onsetMicros: fileEndMicros!,
+          durationMicros: 0,
+          label: endOfFileBoundary,
+        ),
+    ];
+
+    for (final TimeMarker marker in boundaries) {
+      if (!startsAtFile && marker.label == normalizedStart) {
         openStarts.add(marker);
         continue;
       }
@@ -460,9 +501,8 @@ class AddRemoveMarkersNodeType extends NodeType {
         openStarts.insert(0, start);
         continue;
       }
-      consumed
-        ..add(start)
-        ..add(marker);
+      if (!startsAtFile) consumed.add(start);
+      if (!stopsAtFile) consumed.add(marker);
       blocks.add(
         TimeMarker(
           onsetMicros: start.onsetMicros,
@@ -472,8 +512,8 @@ class AddRemoveMarkersNodeType extends NodeType {
           channelMask: start.channelMask,
           attributes: <String, dynamic>{
             ...start.attributes,
-            'brainstory.boundaryStartLabel': normalizedStart,
-            'brainstory.boundaryStopLabel': normalizedStop,
+            'brainstory.boundaryStartLabel': boundaryLabel(normalizedStart),
+            'brainstory.boundaryStopLabel': boundaryLabel(normalizedStop),
           },
         ),
       );
@@ -494,6 +534,11 @@ class AddRemoveMarkersNodeType extends NodeType {
       unmatchedStartCount: openStarts.length,
       unmatchedStopCount: unmatchedStops,
     );
+  }
+
+  static int _timeSeriesEndMicros(TimeSeriesData timeSeries) {
+    if (timeSeries.sampleRate <= 0) return 0;
+    return ((timeSeries.sampleCount / timeSeries.sampleRate) * 1000000).round();
   }
 
   static List<TimeMarker> recodeByMarkerLogic(
