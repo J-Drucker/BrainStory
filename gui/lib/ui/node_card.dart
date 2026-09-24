@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 enum NodeConnectionEdge { right, bottom, left, top }
@@ -103,7 +105,7 @@ class NodeCard extends StatelessWidget {
                     top: -18,
                     child: _NodeStatusStrip(label: statusLabel!),
                   ),
-                GestureDetector(
+                _ExtendedDoubleTapDetector(
                   onTap: onTap,
                   onDoubleTap: onDoubleTap,
                   onSecondaryTapDown: (details) {
@@ -329,6 +331,63 @@ class NodeCard extends StatelessWidget {
           );
         })
         .toList(growable: false);
+  }
+}
+
+class _ExtendedDoubleTapDetector extends StatefulWidget {
+  const _ExtendedDoubleTapDetector({
+    required this.child,
+    this.onTap,
+    this.onDoubleTap,
+    this.onSecondaryTapDown,
+  });
+
+  static const Duration doubleTapWindow = Duration(milliseconds: 450);
+
+  final Widget child;
+  final VoidCallback? onTap;
+  final VoidCallback? onDoubleTap;
+  final GestureTapDownCallback? onSecondaryTapDown;
+
+  @override
+  State<_ExtendedDoubleTapDetector> createState() =>
+      _ExtendedDoubleTapDetectorState();
+}
+
+class _ExtendedDoubleTapDetectorState
+    extends State<_ExtendedDoubleTapDetector> {
+  Timer? _singleTapTimer;
+
+  @override
+  void dispose() {
+    _singleTapTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    if (widget.onDoubleTap == null) {
+      widget.onTap?.call();
+      return;
+    }
+    if (_singleTapTimer?.isActive ?? false) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
+      widget.onDoubleTap?.call();
+      return;
+    }
+    _singleTapTimer = Timer(_ExtendedDoubleTapDetector.doubleTapWindow, () {
+      _singleTapTimer = null;
+      widget.onTap?.call();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: _handleTap,
+      onSecondaryTapDown: widget.onSecondaryTapDown,
+      child: widget.child,
+    );
   }
 }
 

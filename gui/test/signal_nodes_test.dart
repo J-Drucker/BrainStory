@@ -221,6 +221,71 @@ void main() {
     expect(tester.getSize(visual).width, 12);
   });
 
+  testWidgets('node single tap waits for the extended double-click window', (
+    WidgetTester tester,
+  ) async {
+    int taps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Stack(
+          children: <Widget>[
+            NodeCard(
+              width: 160,
+              height: 72,
+              title: 'Example',
+              nodeNumber: 1,
+              position: Offset.zero,
+              onDragEnd: (_) {},
+              color: Colors.blueGrey,
+              onTap: () => taps += 1,
+              onDoubleTap: () {},
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Example'));
+    await tester.pump(const Duration(milliseconds: 449));
+    expect(taps, 0);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(taps, 1);
+  });
+
+  testWidgets('slower node double-click opens without firing single tap', (
+    WidgetTester tester,
+  ) async {
+    int taps = 0;
+    int doubleTaps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Stack(
+          children: <Widget>[
+            NodeCard(
+              width: 160,
+              height: 72,
+              title: 'Example',
+              nodeNumber: 1,
+              position: Offset.zero,
+              onDragEnd: (_) {},
+              color: Colors.blueGrey,
+              onTap: () => taps += 1,
+              onDoubleTap: () => doubleTaps += 1,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Example'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Example'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(taps, 0);
+    expect(doubleTaps, 1);
+  });
+
   test('wire routing avoids nodes and prefers not to cross existing wires', () {
     final List<Offset> aroundNode = buildConnectionPolyline(
       start: const Offset(0, 50),
