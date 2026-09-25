@@ -238,12 +238,20 @@ class NodePersistenceCell {
     this.active = false,
     this.onDisk = false,
     this.passThrough = false,
+    this.artifactId,
+    this.producerNodeId,
+    this.revision,
+    this.createdAtUtcMicros,
   });
 
   final NodePersistenceStatus status;
   final bool active;
   final bool onDisk;
   final bool passThrough;
+  final String? artifactId;
+  final String? producerNodeId;
+  final int? revision;
+  final int? createdAtUtcMicros;
 }
 
 class NodePersistenceRow {

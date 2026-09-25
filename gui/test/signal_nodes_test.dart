@@ -1399,6 +1399,16 @@ void main() {
           channelLabels: const <String>['Cz'],
         );
       logic.datasets[dataset.id] = dataset;
+      dataset.setArtifactIdentity(
+        ArtifactIdentity(
+          artifactId: '${importNode.id}:${dataset.id}:timeSeries',
+          datasetId: dataset.id,
+          kind: BrainStoryArtifactKind.timeSeries,
+          createdAtUtcMicros: 987654321,
+          producerNodeId: importNode.id,
+          revision: 3,
+        ),
+      );
       importNode.datasetStates[dataset.id] = DatasetState.done;
       bandpassNode.datasetStates[dataset.id] = DatasetState.ready;
 
@@ -1438,6 +1448,15 @@ void main() {
         table.rows.single.cells[inputSignal.id]!.status,
         NodePersistenceStatus.inputReady,
       );
+      expect(
+        table.rows.single.cells[inputSignal.id]!.createdAtUtcMicros,
+        987654321,
+      );
+      expect(
+        table.rows.single.cells[inputSignal.id]!.producerNodeId,
+        importNode.id,
+      );
+      expect(table.rows.single.cells[inputSignal.id]!.revision, 3);
       expect(
         table.rows.single.cells[ownOutput.id]!.status,
         NodePersistenceStatus.outputReady,
@@ -1828,6 +1847,7 @@ void main() {
       'unavailable-dialog-dataset',
       label: 'Hidden sibling dataset',
     );
+    int saveToDiskCalls = 0;
     Future<String> action(Map<String, dynamic> _, Set<String> __) async => 'ok';
     final NodeDatasetActions datasetActions = NodeDatasetActions(
       supportsDisk: true,
@@ -1847,6 +1867,14 @@ void main() {
               connectedNodeLabel: '#1 Import',
               artifact: NodePersistenceArtifact.timeSeries,
             ),
+            NodePersistenceColumn(
+              id: 'output:node:timeSeries',
+              direction: NodePersistenceDirection.output,
+              connectedNodeId: 'node',
+              connectedNodeLabel: '#2 Impedances output',
+              artifact: NodePersistenceArtifact.timeSeries,
+              selectedNodeOutput: true,
+            ),
           ],
           rows: <NodePersistenceRow>[
             NodePersistenceRow(
@@ -1855,6 +1883,14 @@ void main() {
               cells: <String, NodePersistenceCell>{
                 'input:source:timeSeries': NodePersistenceCell(
                   status: NodePersistenceStatus.inputReady,
+                ),
+                'output:node:timeSeries': NodePersistenceCell(
+                  status: NodePersistenceStatus.outputDone,
+                  active: true,
+                  artifactId: 'node:dialog-dataset:timeSeries',
+                  producerNodeId: 'node',
+                  revision: 2,
+                  createdAtUtcMicros: 123456789,
                 ),
               },
             ),
@@ -1867,7 +1903,11 @@ void main() {
       clearResults: action,
       loadFromDisk: action,
       purgeActiveMemory: action,
-      saveToDisk: action,
+      saveToDisk: (Map<String, dynamic> _, Set<String> datasetIds) async {
+        saveToDiskCalls++;
+        expect(datasetIds, <String>{'dialog-dataset'});
+        return 'saved';
+      },
       purgeFromDisk: action,
     );
 
@@ -1923,8 +1963,20 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Connected node'), findsOneWidget);
-    expect(find.text('Time series'), findsOneWidget);
+    expect(find.text('Time series'), findsNWidgets(2));
     expect(find.text('Ready'), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Persistence actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Load into memory'), findsOneWidget);
+    expect(find.text('Save to disk'), findsOneWidget);
+    expect(find.text('Release from memory'), findsOneWidget);
+    expect(find.text('Remove disk copy'), findsOneWidget);
+    expect(find.text('Recompute'), findsOneWidget);
+    await tester.tap(find.text('Save to disk'));
+    await tester.pumpAndSettle();
+    expect(saveToDiskCalls, 1);
 
     await tester.tap(find.text('Parameters'));
     await tester.pumpAndSettle();

@@ -250,10 +250,12 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
                 datasets: datasetEntries,
                 selectedDatasetIds: selectedDatasetIds,
                 statusSnapshot: statusSnapshot,
+                params: localParams,
                 storagePolicy: NodeStoragePolicyPresentation.fromWireValue(
                   localParams['storagePolicy']?.toString(),
                 ),
                 datasetActions: widget.datasetActions,
+                onRefresh: _refreshDatasetStatuses,
                 onStoragePolicyChanged: (NodeStoragePolicy policy) {
                   setState(() {
                     localParams['storagePolicy'] = policy.wireValue;
@@ -338,8 +340,10 @@ class _NodePersistenceTab extends StatefulWidget {
     required this.datasets,
     required this.selectedDatasetIds,
     required this.statusSnapshot,
+    required this.params,
     required this.storagePolicy,
     required this.datasetActions,
+    required this.onRefresh,
     required this.onStoragePolicyChanged,
     required this.startInExportMode,
   });
@@ -347,8 +351,10 @@ class _NodePersistenceTab extends StatefulWidget {
   final List<MapEntry<String, Dataset>> datasets;
   final Set<String> selectedDatasetIds;
   final NodeDatasetStatusSnapshot statusSnapshot;
+  final Map<String, dynamic> params;
   final NodeStoragePolicy storagePolicy;
   final NodeDatasetActions? datasetActions;
+  final Future<void> Function() onRefresh;
   final ValueChanged<NodeStoragePolicy> onStoragePolicyChanged;
   final bool startInExportMode;
 
@@ -483,6 +489,8 @@ class _NodePersistenceTabState extends State<_NodePersistenceTab> {
                 )
               : _NodePersistenceTable(
                   table: table,
+                  statusSnapshot: widget.statusSnapshot,
+                  supportsDisk: widget.datasetActions?.supportsDisk == true,
                   exportMode: _exportMode,
                   selected: _selected,
                   eligible: eligible,
@@ -491,20 +499,67 @@ class _NodePersistenceTabState extends State<_NodePersistenceTab> {
                       selected ? _selected.add(key) : _selected.remove(key);
                     });
                   },
+                  onDatasetAction: _runDatasetAction,
                 ),
         ),
       ],
     );
   }
+
+  Future<void> _runDatasetAction(
+    BuildContext context,
+    String datasetId,
+    _PersistenceDatasetAction action,
+  ) async {
+    final NodeDatasetActions? actions = widget.datasetActions;
+    if (actions == null) return;
+    final Set<String> datasetIds = <String>{datasetId};
+    final Map<String, dynamic> params = Map<String, dynamic>.from(
+      widget.params,
+    );
+    final String message = switch (action) {
+      _PersistenceDatasetAction.load => await actions.loadFromDisk(
+        params,
+        datasetIds,
+      ),
+      _PersistenceDatasetAction.save => await actions.saveToDisk(
+        params,
+        datasetIds,
+      ),
+      _PersistenceDatasetAction.release => await actions.purgeActiveMemory(
+        params,
+        datasetIds,
+      ),
+      _PersistenceDatasetAction.removeDisk => await actions.purgeFromDisk(
+        params,
+        datasetIds,
+      ),
+      _PersistenceDatasetAction.recompute => await actions.runThisNode(
+        params,
+        datasetIds,
+      ),
+    };
+    await widget.onRefresh();
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
 }
+
+enum _PersistenceDatasetAction { load, save, release, removeDisk, recompute }
 
 class _NodePersistenceTable extends StatelessWidget {
   const _NodePersistenceTable({
     required this.table,
+    required this.statusSnapshot,
+    required this.supportsDisk,
     required this.exportMode,
     required this.selected,
     required this.eligible,
     required this.onSelectionChanged,
+    required this.onDatasetAction,
   });
 
   static const double _datasetWidth = 180;
@@ -513,10 +568,18 @@ class _NodePersistenceTable extends StatelessWidget {
   static const double _rowHeight = 50;
 
   final NodePersistenceTableSnapshot table;
+  final NodeDatasetStatusSnapshot statusSnapshot;
+  final bool supportsDisk;
   final bool exportMode;
   final Set<String> selected;
   final Set<String> eligible;
   final void Function(String key, bool selected) onSelectionChanged;
+  final Future<void> Function(
+    BuildContext context,
+    String datasetId,
+    _PersistenceDatasetAction action,
+  )
+  onDatasetAction;
 
   @override
   Widget build(BuildContext context) {
@@ -540,7 +603,7 @@ class _NodePersistenceTable extends StatelessWidget {
                       _stubHeader('Connected node'),
                       _stubHeader('Artifact'),
                       for (final NodePersistenceRow row in table.rows)
-                        _datasetCell(row.datasetLabel),
+                        _datasetCell(context, row),
                     ],
                   ),
                 ),
@@ -627,7 +690,13 @@ class _NodePersistenceTable extends StatelessWidget {
     );
   }
 
-  Widget _datasetCell(String label) {
+  Widget _datasetCell(BuildContext context, NodePersistenceRow row) {
+    final bool inRam = statusSnapshot.ramLoadedDatasetIds.contains(
+      row.datasetId,
+    );
+    final bool onDisk = statusSnapshot.diskSavedDatasetIds.contains(
+      row.datasetId,
+    );
     return Container(
       width: _datasetWidth,
       height: _rowHeight,
@@ -636,11 +705,52 @@ class _NodePersistenceTable extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Colors.black12)),
       ),
-      child: Text(
-        label,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w700),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              row.datasetLabel,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          PopupMenuButton<_PersistenceDatasetAction>(
+            tooltip: 'Persistence actions',
+            padding: EdgeInsets.zero,
+            iconSize: 18,
+            onSelected: (_PersistenceDatasetAction action) =>
+                onDatasetAction(context, row.datasetId, action),
+            itemBuilder: (BuildContext context) =>
+                <PopupMenuEntry<_PersistenceDatasetAction>>[
+                  PopupMenuItem<_PersistenceDatasetAction>(
+                    value: _PersistenceDatasetAction.load,
+                    enabled: onDisk,
+                    child: const Text('Load into memory'),
+                  ),
+                  PopupMenuItem<_PersistenceDatasetAction>(
+                    value: _PersistenceDatasetAction.save,
+                    enabled: supportsDisk && inRam,
+                    child: const Text('Save to disk'),
+                  ),
+                  PopupMenuItem<_PersistenceDatasetAction>(
+                    value: _PersistenceDatasetAction.release,
+                    enabled: inRam,
+                    child: const Text('Release from memory'),
+                  ),
+                  PopupMenuItem<_PersistenceDatasetAction>(
+                    value: _PersistenceDatasetAction.removeDisk,
+                    enabled: supportsDisk && onDisk,
+                    child: const Text('Remove disk copy'),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<_PersistenceDatasetAction>(
+                    value: _PersistenceDatasetAction.recompute,
+                    child: Text('Recompute'),
+                  ),
+                ],
+          ),
+        ],
       ),
     );
   }
@@ -714,7 +824,8 @@ class _NodePersistenceTable extends StatelessWidget {
     final List<_PersistenceBadgeSpec> badges = _persistenceBadges(cell);
     final String selectionKey = '${row.datasetId}:${column.artifact.name}';
     final bool canSelect = eligible.contains(selectionKey);
-    return Container(
+    final String? details = _persistenceCellDetails(cell);
+    final Widget contents = Container(
       width: _columnWidth,
       height: _rowHeight,
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 6),
@@ -775,7 +886,27 @@ class _NodePersistenceTable extends StatelessWidget {
         ],
       ),
     );
+    return details == null
+        ? contents
+        : Tooltip(message: details, child: contents);
   }
+}
+
+String? _persistenceCellDetails(NodePersistenceCell cell) {
+  final List<String> details = <String>[];
+  if (cell.createdAtUtcMicros != null) {
+    final DateTime created = DateTime.fromMicrosecondsSinceEpoch(
+      cell.createdAtUtcMicros!,
+      isUtc: true,
+    ).toLocal();
+    details.add('Created ${created.toIso8601String()}');
+  }
+  if (cell.revision != null) details.add('Revision ${cell.revision}');
+  if (cell.producerNodeId != null) {
+    details.add('Produced by ${cell.producerNodeId}');
+  }
+  if (cell.artifactId != null) details.add('Artifact ${cell.artifactId}');
+  return details.isEmpty ? null : details.join('\n');
 }
 
 class _PersistenceHeaderSpan {

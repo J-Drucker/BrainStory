@@ -860,8 +860,8 @@ class _ProjectActionsMenu extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 _ProjectActionButton(
-                  label: 'Memory',
-                  icon: Icons.memory,
+                  label: 'Persistence',
+                  icon: Icons.storage,
                   onPressed: memory,
                 ),
                 const SizedBox(height: 10),
@@ -3005,7 +3005,7 @@ class CanvasLogic {
         ),
         const PopupMenuItem<String>(
           value: 'memory',
-          child: Text('Memory management'),
+          child: Text('Persistence'),
         ),
         const PopupMenuItem<String>(value: 'export', child: Text('Export')),
         if (showSelectedCombination)
@@ -3132,7 +3132,12 @@ class CanvasLogic {
         }
         return;
       case 'memory':
-        await showMemoryManagerDialog(context, update: update, node: node);
+        _openNodeEditor(
+          context: context,
+          node: node,
+          update: update,
+          initialTabIndex: 1,
+        );
         return;
       case 'export':
         _openNodeEditor(
@@ -7725,10 +7730,18 @@ class CanvasLogic {
         parent,
         dataset.id,
       );
+      final ArtifactIdentity? identity = _artifactIdentityForPersistence(
+        node: parent,
+        dataset: dataset,
+        artifact: build.column.artifact,
+      );
       if (state == DatasetState.stale || state == DatasetState.partial) {
-        return const NodePersistenceCell(status: NodePersistenceStatus.stale);
+        return _persistenceCellWithIdentity(
+          status: NodePersistenceStatus.stale,
+          identity: identity,
+        );
       }
-      return NodePersistenceCell(
+      return _persistenceCellWithIdentity(
         status:
             state == DatasetState.done &&
                 _persistenceArtifactAvailableFromNode(
@@ -7738,6 +7751,7 @@ class CanvasLogic {
                 )
             ? NodePersistenceStatus.inputReady
             : NodePersistenceStatus.wired,
+        identity: identity,
       );
     }
 
@@ -7758,13 +7772,11 @@ class CanvasLogic {
     }
     final DatasetArtifactSnapshot? snapshot =
         _nodeRamSnapshots[statusNode.id]?[dataset.id];
-    final BrainStoryArtifactKind? identityKind = _brainStoryKindForPersistence(
-      build.column.artifact,
+    final ArtifactIdentity? identity = _artifactIdentityForPersistence(
+      node: statusNode,
+      dataset: dataset,
+      artifact: build.column.artifact,
     );
-    final ArtifactIdentity? identity = identityKind == null
-        ? null
-        : snapshot?.artifactIdentities[identityKind] ??
-              dataset.artifactIdentityFor(identityKind);
     final bool onDisk =
         diskDatasetsByNode[statusNode.id]?.contains(dataset.id) == true;
     final bool passThrough =
@@ -7785,11 +7797,44 @@ class CanvasLogic {
         status: NodePersistenceStatus.outputNotReady,
       );
     }
-    return NodePersistenceCell(
+    return _persistenceCellWithIdentity(
       status: NodePersistenceStatus.outputDone,
+      identity: identity,
       active: materialized || (!onDisk && !passThrough),
       onDisk: onDisk,
       passThrough: passThrough,
+    );
+  }
+
+  ArtifactIdentity? _artifactIdentityForPersistence({
+    required NodeModel node,
+    required Dataset dataset,
+    required NodePersistenceArtifact artifact,
+  }) {
+    final BrainStoryArtifactKind? kind = _brainStoryKindForPersistence(
+      artifact,
+    );
+    if (kind == null) return null;
+    return _nodeRamSnapshots[node.id]?[dataset.id]?.artifactIdentities[kind] ??
+        dataset.artifactIdentityFor(kind);
+  }
+
+  NodePersistenceCell _persistenceCellWithIdentity({
+    required NodePersistenceStatus status,
+    required ArtifactIdentity? identity,
+    bool active = false,
+    bool onDisk = false,
+    bool passThrough = false,
+  }) {
+    return NodePersistenceCell(
+      status: status,
+      active: active,
+      onDisk: onDisk,
+      passThrough: passThrough,
+      artifactId: identity?.artifactId,
+      producerNodeId: identity?.producerNodeId,
+      revision: identity?.revision,
+      createdAtUtcMicros: identity?.createdAtUtcMicros,
     );
   }
 
@@ -9332,8 +9377,8 @@ class CanvasLogic {
   }) async {
     Future<List<_MemoryRowSummary>> loadRows() => _memoryRows(nodeId: node?.id);
     final String title = node == null
-        ? 'Memory'
-        : 'Memory: ${_nodeDescriptor(node)} ${node.title}';
+        ? 'Persistence'
+        : 'Persistence: ${_nodeDescriptor(node)} ${node.title}';
     final String emptyMessage = node == null
         ? 'No node outputs are available yet.'
         : 'No datasets are available for this node yet.';
