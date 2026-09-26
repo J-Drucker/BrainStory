@@ -8,6 +8,7 @@ import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/ica_viewer.dart';
+import 'package:brainstory_gui/ui/topomap_view.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -90,6 +91,38 @@ void main() {
     await tester.pump();
     expect(find.text('1 excluded'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ICA traces keep labels fixed and expose timeline controls', (
+    WidgetTester tester,
+  ) async {
+    await _pumpViewer(tester, dataset: _icaDataset(), onApply: (_) async {});
+
+    expect(
+      find.byKey(const ValueKey<String>('ica-frozen-labels')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey<String>('ica-time-axis')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('ica-timeline-slider')),
+      findsOneWidget,
+    );
+    expect(find.text('IC 1'), findsWidgets);
+  });
+
+  testWidgets('ICA topomaps use the lighter review palette', (
+    WidgetTester tester,
+  ) async {
+    await _pumpViewer(tester, dataset: _icaDataset(), onApply: (_) async {});
+
+    final InterpolatedTopomap topomap = tester.widget<InterpolatedTopomap>(
+      find.byType(InterpolatedTopomap).first,
+    );
+    expect(topomap.scale.palette, const <Color>[
+      Color(0xFF6596AD),
+      Color(0xFF929499),
+      Color(0xFFC77E73),
+    ]);
   });
 
   testWidgets('ICA Control-scroll zooms component traces vertically', (

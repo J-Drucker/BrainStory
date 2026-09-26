@@ -339,72 +339,139 @@ class _IcaViewerState extends State<IcaViewer> {
             Expanded(
               child: LayoutBuilder(
                 builder: (BuildContext context, BoxConstraints constraints) {
+                  const double labelWidth = 58;
+                  const double labelGap = 8;
+                  final double viewportWidth = math.max(
+                    1,
+                    constraints.maxWidth - labelWidth - labelGap,
+                  );
                   final double duration = sampleCount / activations.sampleRate;
                   final double canvasWidth = math.max(
-                    constraints.maxWidth,
-                    constraints.maxWidth * duration / _windowSeconds,
+                    viewportWidth,
+                    viewportWidth * duration / _windowSeconds,
                   );
                   final double canvasHeight = math.max(
                     constraints.maxHeight,
                     traces.length * 52.0 * _spacing,
                   );
-                  return Listener(
-                    key: const ValueKey<String>('ica-trace-viewport'),
-                    onPointerSignal: _handleTracePointerSignal,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragUpdate: (DragUpdateDetails details) =>
-                          _scrollHorizontal(-details.delta.dx),
-                      onDoubleTap: () {
-                        if (_horizontalController.hasClients) {
-                          _horizontalController.jumpTo(0);
-                        }
-                      },
-                      child: Scrollbar(
-                        controller: _verticalController,
-                        thumbVisibility: canvasHeight > constraints.maxHeight,
-                        child: SingleChildScrollView(
-                          controller: _verticalController,
-                          child: Scrollbar(
-                            controller: _horizontalController,
-                            thumbVisibility: canvasWidth > constraints.maxWidth,
-                            notificationPredicate:
-                                (ScrollNotification notice) =>
-                                    notice.metrics.axis == Axis.horizontal,
-                            child: SingleChildScrollView(
-                              controller: _horizontalController,
-                              scrollDirection: Axis.horizontal,
-                              child: SizedBox(
-                                width: canvasWidth,
-                                height: canvasHeight,
-                                child: CustomPaint(
-                                  key: ValueKey<String>(
-                                    _previewing
-                                        ? 'ica-preview-traces'
-                                        : 'ica-component-traces',
-                                  ),
-                                  painter: _StackedTracePainter(
-                                    traces: traces,
-                                    labels: labels,
-                                    colors: _previewing
-                                        ? null
-                                        : List<Color>.generate(
-                                            traces.length,
-                                            _componentColor,
+                  final List<Color>? colors = _previewing
+                      ? null
+                      : List<Color>.generate(traces.length, _componentColor);
+                  return Column(
+                    children: <Widget>[
+                      Expanded(
+                        child: Listener(
+                          key: const ValueKey<String>('ica-trace-viewport'),
+                          onPointerSignal: _handleTracePointerSignal,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragUpdate:
+                                (DragUpdateDetails details) =>
+                                    _scrollHorizontal(-details.delta.dx),
+                            onDoubleTap: () {
+                              if (_horizontalController.hasClients) {
+                                _horizontalController.jumpTo(0);
+                              }
+                            },
+                            child: Scrollbar(
+                              controller: _verticalController,
+                              thumbVisibility:
+                                  canvasHeight > constraints.maxHeight,
+                              child: SingleChildScrollView(
+                                controller: _verticalController,
+                                child: SizedBox(
+                                  height: canvasHeight,
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: <Widget>[
+                                      SizedBox(
+                                        key: const ValueKey<String>(
+                                          'ica-frozen-labels',
+                                        ),
+                                        width: labelWidth,
+                                        height: canvasHeight,
+                                        child: _IcaLabelColumn(
+                                          labels: labels,
+                                          colors: colors,
+                                          excluded: _previewing
+                                              ? const <int>{}
+                                              : _excluded,
+                                        ),
+                                      ),
+                                      const SizedBox(width: labelGap),
+                                      Expanded(
+                                        child: Scrollbar(
+                                          controller: _horizontalController,
+                                          thumbVisibility:
+                                              canvasWidth > viewportWidth,
+                                          notificationPredicate:
+                                              (ScrollNotification notice) =>
+                                                  notice.metrics.axis ==
+                                                  Axis.horizontal,
+                                          child: SingleChildScrollView(
+                                            controller: _horizontalController,
+                                            scrollDirection: Axis.horizontal,
+                                            child: SizedBox(
+                                              width: canvasWidth,
+                                              height: canvasHeight,
+                                              child: CustomPaint(
+                                                key: ValueKey<String>(
+                                                  _previewing
+                                                      ? 'ica-preview-traces'
+                                                      : 'ica-component-traces',
+                                                ),
+                                                painter: _StackedTracePainter(
+                                                  traces: traces,
+                                                  colors: colors,
+                                                  excluded: _previewing
+                                                      ? const <int>{}
+                                                      : _excluded,
+                                                  verticalScale: _verticalScale,
+                                                ),
+                                                child: const SizedBox.expand(),
+                                              ),
+                                            ),
                                           ),
-                                    excluded: _previewing
-                                        ? const <int>{}
-                                        : _excluded,
-                                    verticalScale: _verticalScale,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  child: const SizedBox.expand(),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: <Widget>[
+                          const SizedBox(width: labelWidth + labelGap),
+                          Expanded(
+                            child: _IcaTimeAxisBar(
+                              controller: _horizontalController,
+                              pixelsPerSecond: canvasWidth / duration,
+                              viewportWidth: viewportWidth,
+                              durationSeconds: duration,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: <Widget>[
+                          const SizedBox(width: labelWidth + labelGap),
+                          Expanded(
+                            child: _IcaTimelineBar(
+                              controller: _horizontalController,
+                              totalWidth: canvasWidth,
+                              viewportWidth: viewportWidth,
+                              durationSeconds: duration,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   );
                 },
               ),
@@ -570,9 +637,9 @@ class _IcaViewerState extends State<IcaViewer> {
                             : sharedBounds,
                         scale: TopomapColorScale(
                           colors: const <Color>[
-                            Color(0xFF315A71),
-                            Color(0xFF34363A),
-                            Color(0xFF8A493F),
+                            Color(0xFF6596AD),
+                            Color(0xFF929499),
+                            Color(0xFFC77E73),
                           ],
                         ),
                         showLabels: false,
@@ -742,14 +809,12 @@ TopomapValueBounds _symmetricBounds(List<TopomapPointValue> points) {
 class _StackedTracePainter extends CustomPainter {
   const _StackedTracePainter({
     required this.traces,
-    required this.labels,
     required this.colors,
     required this.excluded,
     required this.verticalScale,
   });
 
   final List<List<double>> traces;
-  final List<String> labels;
   final List<Color>? colors;
   final Set<int> excluded;
   final double verticalScale;
@@ -757,8 +822,7 @@ class _StackedTracePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (traces.isEmpty || size.width <= 0 || size.height <= 0) return;
-    const double labelWidth = 58;
-    final double plotWidth = math.max(1, size.width - labelWidth);
+    final double plotWidth = math.max(1, size.width);
     final double rowHeight = size.height / traces.length;
     final Paint gridPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.08)
@@ -769,27 +833,9 @@ class _StackedTracePainter extends CustomPainter {
     for (int row = 0; row < traces.length; row++) {
       final double centerY = (row + 0.5) * rowHeight;
       canvas.drawLine(
-        Offset(labelWidth, centerY),
+        Offset(0, centerY),
         Offset(size.width, centerY),
         gridPaint,
-      );
-      final TextPainter labelPainter = TextPainter(
-        text: TextSpan(
-          text: row < labels.length ? labels[row] : '${row + 1}',
-          style: TextStyle(
-            color: excluded.contains(row)
-                ? Colors.white24
-                : colors?[row] ?? Colors.white70,
-            fontSize: 10,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-        maxLines: 1,
-        ellipsis: '...',
-      )..layout(maxWidth: labelWidth - 6);
-      labelPainter.paint(
-        canvas,
-        Offset(2, centerY - (labelPainter.height / 2)),
       );
       final List<double> values = traces[row];
       if (values.length < 2) continue;
@@ -806,7 +852,7 @@ class _StackedTracePainter extends CustomPainter {
       for (int column = 0; column < columns; column++) {
         final int sample = ((column / (columns - 1)) * (values.length - 1))
             .round();
-        final double x = labelWidth + (column / (columns - 1)) * plotWidth;
+        final double x = (column / (columns - 1)) * plotWidth;
         final double y =
             centerY -
             (values[sample] / maximum * verticalScale).clamp(-1.0, 1.0) *
@@ -821,9 +867,246 @@ class _StackedTracePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _StackedTracePainter oldDelegate) {
     return oldDelegate.traces != traces ||
-        oldDelegate.labels != labels ||
         oldDelegate.colors != colors ||
         oldDelegate.excluded != excluded ||
         oldDelegate.verticalScale != verticalScale;
+  }
+}
+
+class _IcaLabelColumn extends StatelessWidget {
+  const _IcaLabelColumn({
+    required this.labels,
+    required this.colors,
+    required this.excluded,
+  });
+
+  final List<String> labels;
+  final List<Color>? colors;
+  final Set<int> excluded;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List<Widget>.generate(labels.length, (int index) {
+        return Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              labels[index],
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: excluded.contains(index)
+                    ? Colors.white24
+                    : colors?[index] ?? Colors.white70,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _IcaTimeAxisBar extends StatelessWidget {
+  const _IcaTimeAxisBar({
+    required this.controller,
+    required this.pixelsPerSecond,
+    required this.viewportWidth,
+    required this.durationSeconds,
+  });
+
+  final ScrollController controller;
+  final double pixelsPerSecond;
+  final double viewportWidth;
+  final double durationSeconds;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: const ValueKey<String>('ica-time-axis'),
+      height: 26,
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (BuildContext context, Widget? child) {
+          final double offset = controller.hasClients ? controller.offset : 0;
+          final double startSeconds = offset / pixelsPerSecond;
+          final double endSeconds = (offset + viewportWidth) / pixelsPerSecond;
+          final int firstTick = math.max(0, startSeconds.floor());
+          final int lastTick = math.min(
+            durationSeconds.ceil(),
+            endSeconds.ceil(),
+          );
+          return Container(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+              ),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: <Widget>[
+                for (int second = firstTick; second <= lastTick; second++)
+                  ..._icaTimeTick(
+                    second: second,
+                    x: (second * pixelsPerSecond) - offset,
+                  ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+List<Widget> _icaTimeTick({required int second, required double x}) {
+  const double labelWidth = 44;
+  return <Widget>[
+    Positioned(
+      left: x - 0.5,
+      top: 0,
+      child: Container(
+        width: 1,
+        height: 8,
+        color: Colors.white.withValues(alpha: 0.28),
+      ),
+    ),
+    Positioned(
+      left: x - (labelWidth / 2),
+      top: 10,
+      child: SizedBox(
+        width: labelWidth,
+        child: Text(
+          '${second}s',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 10),
+        ),
+      ),
+    ),
+  ];
+}
+
+class _IcaTimelineBar extends StatelessWidget {
+  const _IcaTimelineBar({
+    required this.controller,
+    required this.totalWidth,
+    required this.viewportWidth,
+    required this.durationSeconds,
+  });
+
+  final ScrollController controller;
+  final double totalWidth;
+  final double viewportWidth;
+  final double durationSeconds;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: const ValueKey<String>('ica-timeline-slider'),
+      height: 28,
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (BuildContext context, Widget? child) {
+          return LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final double barWidth = constraints.maxWidth;
+              final double windowFraction = totalWidth <= 0
+                  ? 1
+                  : (viewportWidth / totalWidth).clamp(0.02, 1.0);
+              final double thumbWidth = math.max(18, barWidth * windowFraction);
+              final double maxOffset = math.max(0, totalWidth - viewportWidth);
+              final double offset = controller.hasClients
+                  ? controller.offset
+                  : 0;
+              final double normalized = maxOffset == 0
+                  ? 0
+                  : (offset / maxOffset).clamp(0.0, 1.0);
+              final double travel = math.max(0, barWidth - thumbWidth);
+              final double thumbLeft = travel * normalized;
+              final double startSeconds = durationSeconds * normalized;
+              final double visibleSeconds = durationSeconds * windowFraction;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragUpdate: (DragUpdateDetails details) {
+                  if (!controller.hasClients || maxOffset == 0 || travel == 0) {
+                    return;
+                  }
+                  final double left = (thumbLeft + details.delta.dx).clamp(
+                    0.0,
+                    travel,
+                  );
+                  controller.jumpTo((left / travel) * maxOffset);
+                },
+                onTapDown: (TapDownDetails details) {
+                  if (!controller.hasClients || maxOffset == 0 || travel == 0) {
+                    return;
+                  }
+                  final double left =
+                      (details.localPosition.dx - (thumbWidth / 2)).clamp(
+                        0.0,
+                        travel,
+                      );
+                  controller.jumpTo((left / travel) * maxOffset);
+                },
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: thumbLeft,
+                      top: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: thumbWidth,
+                        decoration: BoxDecoration(
+                          color: Colors.cyanAccent.withValues(alpha: 0.32),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: Colors.cyanAccent.withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Row(
+                          children: <Widget>[
+                            Text(
+                              '${startSeconds.toStringAsFixed(1)} s',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '${visibleSeconds.toStringAsFixed(1)} s window / ${durationSeconds.toStringAsFixed(1)} s total',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
   }
 }
