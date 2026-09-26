@@ -9938,24 +9938,10 @@ class CanvasLogic {
     };
   }
 
-  NodeConnectionEdge? _connectionEdgeFromName(String? name) {
-    for (final NodeConnectionEdge edge in NodeConnectionEdge.values) {
-      if (edge.name == name) return edge;
-    }
-    return null;
-  }
-
   NodeConnectionEdge _resolvedOutputEdge(
     Map<String, dynamic> connection,
     NodeModel fromNode,
   ) {
-    final NodeConnectionEdge? stored = _connectionEdgeFromName(
-      connection['fromEdge']?.toString(),
-    );
-    if (stored == NodeConnectionEdge.bottom ||
-        stored == NodeConnectionEdge.right) {
-      return stored!;
-    }
     final NodeModel? toNode = _findNode(connection['toNode']?.toString() ?? '');
     return toNode == null
         ? NodeConnectionEdge.bottom
@@ -9967,12 +9953,6 @@ class CanvasLogic {
     NodeModel fromNode,
     NodeModel toNode,
   ) {
-    final NodeConnectionEdge? stored = _connectionEdgeFromName(
-      connection['toEdge']?.toString(),
-    );
-    if (stored == NodeConnectionEdge.top || stored == NodeConnectionEdge.left) {
-      return stored!;
-    }
     return _connectionEdgesForNodes(fromNode, toNode).$2;
   }
 

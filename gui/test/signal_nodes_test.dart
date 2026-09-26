@@ -51,6 +51,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+bool _orthogonalRouteIntersectsRect(List<Offset> route, Rect rect) {
+  for (int index = 1; index < route.length; index++) {
+    final Offset a = route[index - 1];
+    final Offset b = route[index];
+    if ((a.dx - b.dx).abs() < 0.001) {
+      if (a.dx > rect.left &&
+          a.dx < rect.right &&
+          math.max(a.dy, b.dy) > rect.top &&
+          math.min(a.dy, b.dy) < rect.bottom) {
+        return true;
+      }
+    } else if ((a.dy - b.dy).abs() < 0.001 &&
+        a.dy > rect.top &&
+        a.dy < rect.bottom &&
+        math.max(a.dx, b.dx) > rect.left &&
+        math.min(a.dx, b.dx) < rect.right) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void main() {
   test('node palette hides unfinished implementations', () {
     final Set<String> visibleTitles = NodeRegistry.entries
@@ -141,6 +163,51 @@ void main() {
     logic.startConnectionDraft(upstream, NodeConnectionEdge.bottom);
     expect(logic.hasConnectionDraft, isTrue);
     logic.clearConnectionDraft();
+  });
+
+  test('moved diagonal connection uses current sides and avoids nodes', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(EditChannelsNodeType());
+    logic.addNode(SegmentationNodeType());
+    final NodeModel source = logic.nodes[0]..position = const Offset(90, 198);
+    final NodeModel obstacle = logic.nodes[1]..position = const Offset(90, 63);
+    final NodeModel target = logic.nodes[2]..position = const Offset(390, 63);
+    logic.connections.add(<String, dynamic>{
+      'fromNode': source.id,
+      'fromPort': 0,
+      'fromEdge': NodeConnectionEdge.bottom.name,
+      'toNode': target.id,
+      'toPort': 0,
+      'toEdge': NodeConnectionEdge.top.name,
+    });
+
+    final ConnectionPainter painter =
+        (logic.connectionWidgets().single as CustomPaint).painter!
+            as ConnectionPainter;
+    expect(painter.preferVertical, isFalse);
+    expect(painter.endVertical, isFalse);
+    expect(painter.start, const Offset(250, 234));
+    expect(painter.end, const Offset(390, 99));
+
+    final List<Offset> route = buildConnectionPolyline(
+      start: painter.start,
+      end: painter.end,
+      preferVertical: painter.preferVertical,
+      endVertical: painter.endVertical,
+      startDirection: painter.startDirection,
+      endDirection: painter.endDirection,
+      gridWidth: painter.gridWidth,
+      gridHeight: painter.gridHeight,
+      obstacles: painter.obstacles,
+    );
+    final Rect obstacleRect = Rect.fromLTWH(
+      obstacle.position.dx,
+      obstacle.position.dy,
+      160,
+      72,
+    );
+    expect(_orthogonalRouteIntersectsRect(route, obstacleRect), isFalse);
   });
 
   test('clicking a node selects it as the connection parent', () {
