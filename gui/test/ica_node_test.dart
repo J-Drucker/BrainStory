@@ -12,6 +12,24 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('ICA marker dependency follows its fit scope', () {
+    final ICANodeType node = ICANodeType();
+
+    expect(
+      node.invalidatedByMarkerChanges(<String, dynamic>{'fitScope': 'whole'}),
+      isFalse,
+    );
+    expect(
+      node.invalidatedByMarkerChanges(<String, dynamic>{'fitScope': 'portion'}),
+      isFalse,
+    );
+    expect(
+      node.invalidatedByMarkerChanges(<String, dynamic>{'fitScope': 'markers'}),
+      isTrue,
+    );
+    expect(node.supportsIncrementalStaleRecompute, isFalse);
+  });
+
   test('ICA node emits components and reconstruction-ready metadata', () async {
     const int sampleCount = 2048;
     const double sampleRate = 256.0;

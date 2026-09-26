@@ -24,6 +24,7 @@ import 'package:brainstory_gui/nodes/import_node.dart';
 import 'package:brainstory_gui/nodes/impedances_node.dart';
 import 'package:brainstory_gui/nodes/interactive_artifact_detection_node.dart';
 import 'package:brainstory_gui/nodes/machine_learning_nodes.dart';
+import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/nodes/node_registry.dart';
 import 'package:brainstory_gui/nodes/psd_average_node.dart';
@@ -2321,6 +2322,69 @@ void main() {
     expect(editNode.datasetStates[dataset.id], DatasetState.done);
     expect(dataset.timeSeries!.channelLabels, <String>['Fz', 'Pz']);
     expect(dataset.timeSeries!.channels.last, <double>[7, 8, 9]);
+  });
+
+  test('marker edits stale only marker-scoped ICA fits', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset('ica-marker-dataset', label: 'Example')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[1, 2, 3, 4],
+          <double>[4, 3, 2, 1],
+        ],
+        sampleRate: 100,
+        channelLabels: const <String>['Fz', 'Cz'],
+        markers: const <TimeMarker>[
+          TimeMarker(onsetMicros: 1000, label: 'blink'),
+        ],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(AddRemoveMarkersNodeType());
+    logic.addNode(ICANodeType());
+    logic.addNode(ICANodeType());
+    final NodeModel source = logic.nodes[0];
+    final NodeModel markerEdit = logic.nodes[1];
+    final NodeModel markerIca = logic.nodes[2];
+    final NodeModel wholeIca = logic.nodes[3];
+    markerIca.params['fitScope'] = 'markers';
+    wholeIca.params['fitScope'] = 'whole';
+    markerEdit.params
+      ..['markers'] = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'datasetId': dataset.id,
+          'label': 'blink',
+          'onsetMicros': 2000,
+          'durationMicros': 0,
+          'markerType': MarkerType.event,
+        },
+      ]
+      ..['applyEmptyMarkerSet'] = true
+      ..['markerEditSourceDatasetId'] = dataset.id;
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': source.id,
+        'fromPort': 0,
+        'toNode': markerEdit.id,
+        'toPort': 0,
+      },
+      for (final NodeModel ica in <NodeModel>[markerIca, wholeIca])
+        <String, dynamic>{
+          'fromNode': markerEdit.id,
+          'fromPort': 0,
+          'toNode': ica.id,
+          'toPort': 0,
+        },
+    ]);
+    source.datasetStates[dataset.id] = DatasetState.done;
+    markerEdit.datasetStates[dataset.id] = DatasetState.ready;
+    markerIca.datasetStates[dataset.id] = DatasetState.done;
+    wholeIca.datasetStates[dataset.id] = DatasetState.done;
+
+    await logic.runThisStep(markerEdit.id, datasetIds: <String>{dataset.id});
+
+    expect(markerIca.datasetStates[dataset.id], DatasetState.stale);
+    expect(wholeIca.datasetStates[dataset.id], DatasetState.done);
   });
 
   test('node runs stamp output artifact identity and lineage', () async {

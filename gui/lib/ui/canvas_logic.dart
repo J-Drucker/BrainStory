@@ -5964,12 +5964,6 @@ class CanvasLogic {
     final bool usesSignal = node.inputPorts.any(
       (PortSpec port) => port.type == PortType.signal,
     );
-    final bool usesMarkers = node.inputPorts.any(
-      (PortSpec port) => port.type == PortType.markers,
-    );
-    final bool usesMetadata = node.inputPorts.any(
-      (PortSpec port) => port.type == PortType.metadata,
-    );
     final bool signalChanged =
         changeSet.touchesSamples ||
         changeSet.touchesChannelLabels ||
@@ -5984,7 +5978,8 @@ class CanvasLogic {
     if (signalChanged && usesSignal) {
       return true;
     }
-    if (markerOrSegmentChanged && (usesMarkers || usesMetadata)) {
+    if (markerOrSegmentChanged &&
+        node.type.invalidatedByMarkerChanges(node.params)) {
       return true;
     }
     if (!signalChanged && !markerOrSegmentChanged) {
@@ -8675,8 +8670,7 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) async {
-    if (node.type is EditChannelsNodeType ||
-        node.type is EditChannelsAndMarkersNodeType) {
+    if (!node.type.supportsIncrementalStaleRecompute) {
       return;
     }
     final DatasetArtifactSnapshot? snapshot = await _loadSnapshotForNodeDataset(

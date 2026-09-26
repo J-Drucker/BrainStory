@@ -148,6 +148,10 @@ class ICANodeType extends _MatrixTransformNodeType {
       'FastICA separates a continuous multichannel recording into statistically independent component activations.';
 
   @override
+  bool invalidatedByMarkerChanges(Map<String, dynamic> params) =>
+      (params['fitScope'] ?? 'whole').toString() == 'markers';
+
+  @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'componentCount': 0,
     'tolerance': 1.0e-4,

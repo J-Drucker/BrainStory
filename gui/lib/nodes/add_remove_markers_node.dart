@@ -196,6 +196,7 @@ class AddRemoveMarkersNodeType extends NodeType {
           ...generatedMarkers,
         ],
       );
+      _recordMarkerChange(dataset, 'Generated FFT window markers');
       return;
     }
 
@@ -236,6 +237,15 @@ class AddRemoveMarkersNodeType extends NodeType {
       return;
     }
     dataset.timeSeries = timeSeries.copyWith(markers: editedMarkers);
+    _recordMarkerChange(dataset, 'Edited markers');
+  }
+
+  static void _recordMarkerChange(Dataset dataset, String description) {
+    dataset.ram['artifact.lastChangeSet'] = ArtifactChangeSet(
+      datasetId: dataset.id,
+      changeTypes: const <ArtifactChangeType>{ArtifactChangeType.markers},
+      description: description,
+    );
   }
 
   static bool markerOperationsApplyToDataset(

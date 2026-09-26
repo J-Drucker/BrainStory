@@ -446,6 +446,15 @@ abstract class NodeType {
   List<PortSpec> get inputs;
   List<PortSpec> get outputs;
 
+  bool invalidatedByMarkerChanges(Map<String, dynamic> params) {
+    return inputs.any(
+      (PortSpec port) =>
+          port.type == PortType.markers || port.type == PortType.metadata,
+    );
+  }
+
+  bool get supportsIncrementalStaleRecompute => false;
+
   NodeParameterChangeImpact parameterChangeImpact(
     Map<String, dynamic> previousParams,
     Map<String, dynamic> nextParams,

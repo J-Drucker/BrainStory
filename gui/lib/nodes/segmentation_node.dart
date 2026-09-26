@@ -8,6 +8,9 @@ import 'node_type.dart';
 
 class SegmentationNodeType extends NodeType {
   @override
+  bool get supportsIncrementalStaleRecompute => true;
+
+  @override
   String get title => 'Segmentation';
 
   @override
@@ -368,6 +371,20 @@ bool _canReuseEventSegmentsForBaselineOnlyChange({
       existingSegmented.segments.isEmpty ||
       (params['mode'] ?? 'events').toString() != 'events' ||
       (previousRunParams['mode'] ?? 'events').toString() != 'events') {
+    return false;
+  }
+
+  const Set<String> baselineKeys = <String>{
+    'eventApplyBaseline',
+    'eventBaselineConfigured',
+    'eventBaselineStartMs',
+    'eventBaselineStopMs',
+  };
+  final bool baselineChanged = baselineKeys.any(
+    (String key) =>
+        !_paramValuesEquivalent(params[key], previousRunParams[key]),
+  );
+  if (!baselineChanged) {
     return false;
   }
 

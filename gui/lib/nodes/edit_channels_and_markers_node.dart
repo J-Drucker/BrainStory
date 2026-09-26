@@ -261,7 +261,7 @@ class EditChannelsAndMarkersNodeType extends NodeType {
       dataset.ram['artifact.lastChangeSet'] = _mergedChangeSet(
         datasetId: dataset.id,
         channelChangeSet: channelChangeSet,
-        editedMarkers: editedMarkers,
+        hasMarkerChanges: hasMarkerChanges,
       );
     }
   }
@@ -269,11 +269,11 @@ class EditChannelsAndMarkersNodeType extends NodeType {
   ArtifactChangeSet _mergedChangeSet({
     required String datasetId,
     required ArtifactChangeSet? channelChangeSet,
-    required List<TimeMarker> editedMarkers,
+    required bool hasMarkerChanges,
   }) {
     final Set<ArtifactChangeType> changeTypes = <ArtifactChangeType>{
       if (channelChangeSet != null) ...channelChangeSet.changeTypes,
-      if (editedMarkers.isNotEmpty) ArtifactChangeType.markers,
+      if (hasMarkerChanges) ArtifactChangeType.markers,
     };
     return ArtifactChangeSet(
       datasetId: datasetId,
