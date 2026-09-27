@@ -42,6 +42,9 @@ class NodeCard extends StatelessWidget {
   final NodeConnectionEdge? connectionInputEdge;
 
   final void Function(Offset) onDragEnd;
+  final VoidCallback? onDragStarted;
+  final void Function(Offset)? onDragUpdate;
+  final VoidCallback? onDragCanceled;
   final void Function()? onTap;
   final void Function()? onDoubleTap;
   final void Function(int portIndex)? onOutputTap;
@@ -73,6 +76,9 @@ class NodeCard extends StatelessWidget {
     this.connectionOutputEdge,
     this.connectionInputEdge,
     this.onTap,
+    this.onDragStarted,
+    this.onDragUpdate,
+    this.onDragCanceled,
     this.onDoubleTap,
     this.onOutputTap,
     this.onConnectionOutputTap,
@@ -113,11 +119,12 @@ class NodeCard extends StatelessWidget {
                   },
                   child: Draggable(
                     dragAnchorStrategy: childDragAnchorStrategy,
-                    feedback: _buildCard(),
-                    childWhenDragging: Opacity(
-                      opacity: 0.5,
-                      child: _buildCard(),
-                    ),
+                    feedback: const SizedBox.shrink(),
+                    childWhenDragging: _buildCard(),
+                    onDragStarted: onDragStarted,
+                    onDragUpdate: (DragUpdateDetails details) =>
+                        onDragUpdate?.call(details.delta),
+                    onDraggableCanceled: (_, __) => onDragCanceled?.call(),
                     onDragEnd: (details) => onDragEnd(details.offset),
                     child: _buildCard(),
                   ),

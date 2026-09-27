@@ -1009,6 +1009,8 @@ class CanvasLogic {
   String? _pendingFromNodeId;
   int? _pendingFromPortIndex;
   NodeConnectionEdge? _pendingFromEdge;
+  String? _draggedNodeId;
+  Map<String, Offset>? _dragOriginalPositions;
   int _lastGeneratedNodeIdMicros = 0;
   final Map<NodeCategory, bool> _collapsedCategories = <NodeCategory, bool>{};
   final Map<String, bool> _collapsedSubcategories = <String, bool>{};
@@ -2883,7 +2885,19 @@ class CanvasLogic {
           update();
         },
         onDragEnd: (Offset globalOffset) {
-          moveNodeOrSelection(node, translateDropOffset(globalOffset));
+          finishNodeDrag(node, translateDropOffset(globalOffset));
+          update();
+        },
+        onDragStarted: () {
+          beginNodeDrag(node);
+          update();
+        },
+        onDragUpdate: (Offset delta) {
+          updateNodeDrag(node, delta);
+          update();
+        },
+        onDragCanceled: () {
+          cancelNodeDrag();
           update();
         },
         onTap: () {
@@ -9393,6 +9407,70 @@ class CanvasLogic {
       }
     }
     selectedNodeId = draggedNode.id;
+  }
+
+  Map<String, Offset> _nodePositionsForDrag(NodeModel draggedNode) {
+    final CanvasNodeGroup? nodeGroup = _groupForNode(draggedNode.id);
+    final bool movingSelection =
+        selectedNodeIds.contains(draggedNode.id) && selectedNodeIds.length > 1;
+    final Set<String> movingIds = movingSelection
+        ? Set<String>.from(selectedNodeIds)
+        : nodeGroup == null
+        ? <String>{draggedNode.id}
+        : Set<String>.from(nodeGroup.nodeIds);
+    return <String, Offset>{
+      for (final NodeModel node in nodes)
+        if (movingIds.contains(node.id)) node.id: node.position,
+    };
+  }
+
+  void _restoreNodePositions(Map<String, Offset> positions) {
+    for (final NodeModel node in nodes) {
+      final Offset? position = positions[node.id];
+      if (position != null) {
+        node.position = position;
+      }
+    }
+  }
+
+  void beginNodeDrag(NodeModel draggedNode) {
+    _draggedNodeId = draggedNode.id;
+    _dragOriginalPositions = _nodePositionsForDrag(draggedNode);
+  }
+
+  void updateNodeDrag(NodeModel draggedNode, Offset delta) {
+    final Map<String, Offset>? originals = _dragOriginalPositions;
+    if (_draggedNodeId != draggedNode.id || originals == null) {
+      beginNodeDrag(draggedNode);
+    }
+    for (final NodeModel node in nodes) {
+      if (!_dragOriginalPositions!.containsKey(node.id)) {
+        continue;
+      }
+      node.position = Offset(
+        math.max(0, node.position.dx + delta.dx),
+        math.max(0, node.position.dy + delta.dy),
+      );
+    }
+  }
+
+  void finishNodeDrag(NodeModel draggedNode, Offset targetPosition) {
+    final Map<String, Offset>? originals = _dragOriginalPositions;
+    if (_draggedNodeId == draggedNode.id && originals != null) {
+      _restoreNodePositions(originals);
+    }
+    _draggedNodeId = null;
+    _dragOriginalPositions = null;
+    moveNodeOrSelection(draggedNode, targetPosition);
+  }
+
+  void cancelNodeDrag() {
+    final Map<String, Offset>? originals = _dragOriginalPositions;
+    if (originals != null) {
+      _restoreNodePositions(originals);
+    }
+    _draggedNodeId = null;
+    _dragOriginalPositions = null;
   }
 
   Future<void> showMemoryManagerDialog(

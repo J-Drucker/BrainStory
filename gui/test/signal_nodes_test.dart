@@ -210,6 +210,34 @@ void main() {
     expect(_orthogonalRouteIntersectsRect(route, obstacleRect), isFalse);
   });
 
+  test('connection endpoints follow a node during an active drag', () {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.addNode(ResampleNodeType());
+    final NodeModel parent = logic.nodes[0]..position = const Offset(100, 100);
+    final NodeModel child = logic.nodes[1]..position = const Offset(100, 300);
+    logic.connections.add(<String, dynamic>{
+      'fromNode': parent.id,
+      'fromPort': 0,
+      'toNode': child.id,
+      'toPort': 0,
+    });
+    final ConnectionPainter before =
+        (logic.connectionWidgets().single as CustomPaint).painter!
+            as ConnectionPainter;
+
+    logic.beginNodeDrag(parent);
+    logic.updateNodeDrag(parent, const Offset(75, 20));
+    final ConnectionPainter during =
+        (logic.connectionWidgets().single as CustomPaint).painter!
+            as ConnectionPainter;
+
+    expect(parent.position, const Offset(175, 120));
+    expect(during.start, isNot(before.start));
+    logic.cancelNodeDrag();
+    expect(parent.position, const Offset(100, 100));
+  });
+
   test('clicking a node selects it as the connection parent', () {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImportNodeType());
@@ -5729,6 +5757,7 @@ Mk2=Artifact,Bad Segment,11,5,0
       'mode': 'events',
       'eventWindowStartMs': -100.0,
       'eventWindowStopMs': 100.0,
+      'eventApplyBaseline': false,
       'includedMarkers': <String, dynamic>{'event|Pulse': true},
     });
 
@@ -5770,6 +5799,7 @@ Mk2=Artifact,Bad Segment,11,5,0
       'mode': 'events',
       'eventWindowStartMs': -200.0,
       'eventWindowStopMs': 800.0,
+      'eventApplyBaseline': false,
       'includedMarkers': <String, dynamic>{'event|rare': true},
     });
 
@@ -5970,6 +6000,7 @@ Mk2=Artifact,Bad Segment,11,5,0
         'mode': 'events',
         'eventWindowStartMs': -10.0,
         'eventWindowStopMs': 10.0,
+        'eventApplyBaseline': false,
         'includedMarkers': <String, dynamic>{'event|Pulse': true},
       });
 
