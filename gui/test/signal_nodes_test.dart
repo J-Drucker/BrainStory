@@ -4110,6 +4110,11 @@ time,Fz,Cz
     expect(segmentationTraceTooltipLabel(const <String>[], 1), 'Channel 2');
   });
 
+  test('segmentation separates conditions independently of channel mode', () {
+    expect(segmentationConditionsAreOverlaid('natural'), isFalse);
+    expect(segmentationConditionsAreOverlaid('butterfly'), isTrue);
+  });
+
   test('applyBandpassFilter notch attenuates the requested frequency', () {
     const double sampleRate = 256.0;
     const double targetFrequency = 60.0;

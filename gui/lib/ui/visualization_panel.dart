@@ -1427,8 +1427,6 @@ class _SegmentedChartState extends State<_SegmentedChart> {
       conditionMode = 'natural';
       params['segmented_condition_mode'] = conditionMode;
     }
-    final bool stackConditionRows =
-        channelMode == 'butterfly' && groups.length > 1;
     final List<_SegmentPanelConfig> panels = conditionMode == 'difference'
         ? <_SegmentPanelConfig>[
             _buildConditionDifferencePanelConfig(
@@ -1442,7 +1440,7 @@ class _SegmentedChartState extends State<_SegmentedChart> {
               spacingFactor: spacingFactor,
             ),
           ]
-        : conditionMode == 'butterfly' || stackConditionRows
+        : segmentationConditionsAreOverlaid(conditionMode)
         ? <_SegmentPanelConfig>[
             _buildConditionOverlayPanelConfig(
               segmented: segmented,
@@ -1675,6 +1673,10 @@ class _SegmentedChartState extends State<_SegmentedChart> {
       ),
     );
   }
+}
+
+bool segmentationConditionsAreOverlaid(String conditionMode) {
+  return conditionMode == 'butterfly';
 }
 
 class _SegmentPanelView extends StatelessWidget {
