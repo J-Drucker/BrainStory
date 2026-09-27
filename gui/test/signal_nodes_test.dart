@@ -5676,6 +5676,10 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(factor.isValid, isFalse);
   });
 
+  test('segmentation enables event baseline correction by default', () {
+    expect(SegmentationNodeType().defaultParams['eventApplyBaseline'], isTrue);
+  });
+
   test('segmentation node creates event-based segments', () async {
     final Dataset dataset = Dataset('segments', label: 'Segmented');
     dataset.timeSeries = TimeSeriesData(

@@ -23,7 +23,7 @@ class SegmentationNodeType extends NodeType {
     'considerBadMarkers': <String, dynamic>{},
     'eventWindowStartMs': -200.0,
     'eventWindowStopMs': 800.0,
-    'eventApplyBaseline': false,
+    'eventApplyBaseline': true,
     'eventBaselineConfigured': false,
     'eventBaselineStartMs': -200.0,
     'eventBaselineStopMs': 0.0,
@@ -56,7 +56,7 @@ class SegmentationNodeType extends NodeType {
     params.putIfAbsent('considerBadMarkers', () => <String, dynamic>{});
     params.putIfAbsent('eventWindowStartMs', () => -200.0);
     params.putIfAbsent('eventWindowStopMs', () => 800.0);
-    params.putIfAbsent('eventApplyBaseline', () => false);
+    params.putIfAbsent('eventApplyBaseline', () => true);
     params.putIfAbsent('eventBaselineConfigured', () => false);
     params.putIfAbsent('eventBaselineStartMs', () => -200.0);
     params.putIfAbsent('eventBaselineStopMs', () => 0.0);
@@ -229,7 +229,7 @@ class SegmentationNodeType extends NodeType {
                 windowStopMs:
                     (params['eventWindowStopMs'] as num?)?.toDouble() ?? 800.0,
               );
-        segments = params['eventApplyBaseline'] as bool? ?? false
+        segments = params['eventApplyBaseline'] as bool? ?? true
             ? _baselineCorrectEventSegments(
                 timeSeries: timeSeries,
                 segments: eventSegments,
@@ -948,7 +948,8 @@ List<Widget> _eventOptions({
     CheckboxListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      value: params['eventApplyBaseline'] as bool? ?? false,
+      controlAffinity: ListTileControlAffinity.leading,
+      value: params['eventApplyBaseline'] as bool? ?? true,
       title: const Text('Baseline-correct segment artifact'),
       subtitle: const Text(
         'If off, segments preserve source signal values. Visualization still baseline-corrects for display.',
