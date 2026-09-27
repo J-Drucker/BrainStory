@@ -4096,6 +4096,7 @@ List<double> _constrainedSegmentTimeSpanOptions(double? limitSeconds) {
 class _SegmentAggregateSeriesInput {
   const _SegmentAggregateSeriesInput({
     required this.traces,
+    required this.label,
     required this.lineColor,
     required this.fillColor,
     this.barWidth = 2.0,
@@ -4103,6 +4104,7 @@ class _SegmentAggregateSeriesInput {
   });
 
   final List<_AlignedTrace> traces;
+  final String label;
   final Color lineColor;
   final Color fillColor;
   final double barWidth;
@@ -4289,6 +4291,7 @@ _SegmentPanelConfig _buildSingleConditionPanelConfig({
               baselineStartMs: baselineStartMs,
               baselineStopMs: baselineStopMs,
             ),
+            label: _segmentChannelLabel(segmented, channelIndex),
             lineColor: _channelOverlayColor(group.color, channelIndex),
             fillColor: _channelOverlayColor(
               group.color,
@@ -4341,6 +4344,7 @@ _SegmentPanelConfig _buildSingleConditionPanelConfig({
               baselineStartMs: baselineStartMs,
               baselineStopMs: baselineStopMs,
             ),
+            label: 'Average',
             lineColor: group.color,
             fillColor: group.color.withValues(alpha: 0.14),
           ),
@@ -4449,6 +4453,7 @@ _SegmentPanelConfig _buildConditionOverlayPanelConfig({
                     baselineStartMs: baselineStartMs,
                     baselineStopMs: baselineStopMs,
                   ),
+                  label: _segmentChannelLabel(segmented, channelIndex),
                   lineColor: _channelOverlayColor(group.color, channelIndex),
                   fillColor: _channelOverlayColor(
                     group.color,
@@ -4497,6 +4502,7 @@ _SegmentPanelConfig _buildConditionOverlayPanelConfig({
                     baselineStartMs: baselineStartMs,
                     baselineStopMs: baselineStopMs,
                   ),
+                  label: group.label,
                   lineColor: group.color,
                   fillColor: group.color.withValues(alpha: 0.12),
                 ),
@@ -4558,6 +4564,7 @@ _SegmentPanelConfig _buildConditionDifferencePanelConfig({
     return _buildSegmentAggregatePlotData(<_SegmentAggregateSeriesInput>[
       _SegmentAggregateSeriesInput(
         traces: differenceForChannel(channelIndex),
+        label: _segmentChannelLabel(segmented, channelIndex),
         lineColor:
             rawSignalChannelPalette[channelIndex %
                 rawSignalChannelPalette.length],
@@ -4614,6 +4621,7 @@ _SegmentPanelConfig _buildConditionDifferencePanelConfig({
             baselineStopMs: baselineStopMs,
           ),
         ),
+        label: 'Average',
         lineColor: rawSignalChannelPalette.first,
         fillColor: Colors.transparent,
         showSpread: false,
@@ -4804,6 +4812,7 @@ _SegmentSequencePlotData _buildStackedChannelsSegmentPlotData({
                   baselineStartMs: baselineStartMs,
                   baselineStopMs: baselineStopMs,
                 ),
+                label: _segmentChannelLabel(segmented, channelIndex),
                 lineColor: _segmentTraceShade(color, channelIndex, 0),
                 fillColor: _segmentTraceShade(
                   color,
@@ -4861,6 +4870,7 @@ _SegmentSequencePlotData _buildStackedChannelsConditionOverlayPlotData({
                     baselineStartMs: baselineStartMs,
                     baselineStopMs: baselineStopMs,
                   ),
+                  label: group.label,
                   lineColor: group.color,
                   fillColor: group.color.withValues(alpha: 0.12),
                 ),
@@ -5266,6 +5276,7 @@ _SegmentSequencePlotData _buildSegmentAggregatePlotData(
 }) {
   final List<LineChartBarData> lineBars = <LineChartBarData>[];
   final List<BetweenBarsData> betweenBars = <BetweenBarsData>[];
+  final List<String> traceLabels = <String>[];
   double? minXValue;
   double? maxXValue;
   double? minYValue;
@@ -5358,6 +5369,7 @@ _SegmentSequencePlotData _buildSegmentAggregatePlotData(
           dotData: const FlDotData(show: false),
         ),
       );
+      traceLabels.add(input.label);
       upperIndex = lineBars.length;
       lineBars.add(
         LineChartBarData(
@@ -5368,6 +5380,7 @@ _SegmentSequencePlotData _buildSegmentAggregatePlotData(
           dotData: const FlDotData(show: false),
         ),
       );
+      traceLabels.add(input.label);
       betweenBars.add(
         BetweenBarsData(
           fromIndex: lowerIndex,
@@ -5386,6 +5399,7 @@ _SegmentSequencePlotData _buildSegmentAggregatePlotData(
         dotData: const FlDotData(show: false),
       ),
     );
+    traceLabels.add(input.label);
   }
 
   if (lineBars.isEmpty) {
@@ -5413,6 +5427,7 @@ _SegmentSequencePlotData _buildSegmentAggregatePlotData(
     minY: minY == maxY ? minY - 1 : minY - yPadding,
     maxY: minY == maxY ? maxY + 1 : maxY + yPadding,
     fitYToData: fitYToData,
+    traceLabels: traceLabels,
   );
 }
 
@@ -5713,9 +5728,10 @@ Widget _segmentLineChart(
               if (touchedIndex != 0) return null;
               final LineBarSpot spot = touchedSpots[touchedIndex];
               final int index = spot.barIndex;
-              final String label = index < plotData.traceLabels.length
-                  ? plotData.traceLabels[index]
-                  : 'Trace ${index + 1}';
+              final String label = segmentationTraceTooltipLabel(
+                plotData.traceLabels,
+                index,
+              );
               final double offset = index < plotData.traceValueOffsets.length
                   ? plotData.traceValueOffsets[index]
                   : 0;
@@ -6102,6 +6118,16 @@ List<FlSpot> _decimatedSegmentSpots({
     );
   }
   return spots;
+}
+
+String segmentationTraceTooltipLabel(List<String> labels, int traceIndex) {
+  if (traceIndex >= 0 && traceIndex < labels.length) {
+    final String label = labels[traceIndex].trim();
+    if (label.isNotEmpty) {
+      return label;
+    }
+  }
+  return 'Channel ${traceIndex + 1}';
 }
 
 double segmentationTimeAxisInterval({

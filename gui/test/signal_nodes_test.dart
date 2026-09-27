@@ -4105,6 +4105,11 @@ time,Fz,Cz
     );
   });
 
+  test('segmentation trace tooltips use channel labels', () {
+    expect(segmentationTraceTooltipLabel(<String>['Fp1', 'Cz'], 1), 'Cz');
+    expect(segmentationTraceTooltipLabel(const <String>[], 1), 'Channel 2');
+  });
+
   test('applyBandpassFilter notch attenuates the requested frequency', () {
     const double sampleRate = 256.0;
     const double targetFrequency = 60.0;
