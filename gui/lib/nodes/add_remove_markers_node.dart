@@ -357,21 +357,27 @@ class AddRemoveMarkersNodeType extends NodeType {
       );
     }
 
-    for (final Map<dynamic, dynamic> rawRule
-        in (operations['boundaryRules'] as List<dynamic>? ?? const <dynamic>[])
-            .whereType<Map>()) {
-      final Map<String, dynamic> rule = Map<String, dynamic>.from(rawRule);
-      final String originalStart = rule['startLabel']?.toString() ?? '';
-      final String originalStop = rule['stopLabel']?.toString() ?? '';
-      result = combineBoundaryMarkers(
-        result,
-        startLabel: renames[originalStart] ?? originalStart,
-        stopLabel: renames[originalStop] ?? originalStop,
-        blockLabel: rule['blockLabel']?.toString() ?? '',
-        replaceBoundaries: rule['replaceBoundaries'] != false,
-        fileEndMicros: fileEndMicros,
-      ).markers;
-    }
+    result = combineBoundaryMarkerRules(
+      result,
+      rules:
+          (operations['boundaryRules'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((Map<dynamic, dynamic> rawRule) {
+                final Map<String, dynamic> rule = Map<String, dynamic>.from(
+                  rawRule,
+                );
+                final String originalStart =
+                    rule['startLabel']?.toString() ?? '';
+                final String originalStop = rule['stopLabel']?.toString() ?? '';
+                return <String, dynamic>{
+                  ...rule,
+                  'startLabel': renames[originalStart] ?? originalStart,
+                  'stopLabel': renames[originalStop] ?? originalStop,
+                };
+              })
+              .toList(growable: false),
+      fileEndMicros: fileEndMicros,
+    ).markers;
 
     final Map<String, dynamic> enumeration = Map<String, dynamic>.from(
       operations['enumeration'] as Map? ?? const <String, dynamic>{},
@@ -542,6 +548,71 @@ class AddRemoveMarkersNodeType extends NodeType {
       markers: List<TimeMarker>.from(combined, growable: false),
       combinedCount: blocks.length,
       unmatchedStartCount: openStarts.length,
+      unmatchedStopCount: unmatchedStops,
+    );
+  }
+
+  static MarkerBoundaryCombinationResult combineBoundaryMarkerRules(
+    List<TimeMarker> markers, {
+    required List<Map<String, dynamic>> rules,
+    int? fileEndMicros,
+  }) {
+    if (rules.isEmpty) {
+      return MarkerBoundaryCombinationResult(
+        markers: List<TimeMarker>.from(markers, growable: false),
+        combinedCount: 0,
+        unmatchedStartCount: 0,
+        unmatchedStopCount: 0,
+      );
+    }
+    final Set<TimeMarker> sourceMarkers = Set<TimeMarker>.identity()
+      ..addAll(markers);
+    final Set<TimeMarker> consumed = Set<TimeMarker>.identity();
+    final List<TimeMarker> generated = <TimeMarker>[];
+    int combinedCount = 0;
+    int unmatchedStarts = 0;
+    int unmatchedStops = 0;
+
+    for (final Map<String, dynamic> rule in rules) {
+      final bool replaceBoundaries = rule['replaceBoundaries'] != false;
+      final MarkerBoundaryCombinationResult result = combineBoundaryMarkers(
+        markers,
+        startLabel: rule['startLabel']?.toString() ?? '',
+        stopLabel: rule['stopLabel']?.toString() ?? '',
+        blockLabel: rule['blockLabel']?.toString() ?? '',
+        replaceBoundaries: replaceBoundaries,
+        fileEndMicros: fileEndMicros,
+      );
+      combinedCount += result.combinedCount;
+      unmatchedStarts += result.unmatchedStartCount;
+      unmatchedStops += result.unmatchedStopCount;
+      generated.addAll(
+        result.markers.where(
+          (TimeMarker marker) => !sourceMarkers.contains(marker),
+        ),
+      );
+      if (replaceBoundaries) {
+        final Set<TimeMarker> retained = Set<TimeMarker>.identity()
+          ..addAll(result.markers.where(sourceMarkers.contains));
+        consumed.addAll(
+          markers.where((TimeMarker marker) => !retained.contains(marker)),
+        );
+      }
+    }
+
+    final List<TimeMarker> combined =
+        <TimeMarker>[
+          for (final TimeMarker marker in markers)
+            if (!consumed.contains(marker)) marker,
+          ...generated,
+        ]..sort(
+          (TimeMarker a, TimeMarker b) =>
+              a.onsetMicros.compareTo(b.onsetMicros),
+        );
+    return MarkerBoundaryCombinationResult(
+      markers: List<TimeMarker>.from(combined, growable: false),
+      combinedCount: combinedCount,
+      unmatchedStartCount: unmatchedStarts,
       unmatchedStopCount: unmatchedStops,
     );
   }

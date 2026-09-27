@@ -6188,6 +6188,42 @@ Mk2=Artifact,Bad Segment,11,5,0
     );
   });
 
+  test('boundary replacement waits until every block is generated', () {
+    const List<TimeMarker> markers = <TimeMarker>[
+      TimeMarker(onsetMicros: 1000, label: 'A'),
+      TimeMarker(onsetMicros: 2000, label: 'B'),
+      TimeMarker(onsetMicros: 3000, label: 'C'),
+    ];
+
+    final List<TimeMarker> result =
+        AddRemoveMarkersNodeType.applyMarkerEditOperations(
+          markers,
+          <String, dynamic>{
+            'boundaryRules': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'startLabel': 'A',
+                'stopLabel': 'B',
+                'blockLabel': 'A to B',
+                'replaceBoundaries': true,
+              },
+              <String, dynamic>{
+                'startLabel': 'B',
+                'stopLabel': 'C',
+                'blockLabel': 'B to C',
+                'replaceBoundaries': true,
+              },
+            ],
+          },
+        );
+
+    expect(result.map((TimeMarker marker) => marker.label), <String>[
+      'A to B',
+      'B to C',
+    ]);
+    expect(result[0].durationMicros, 1000);
+    expect(result[1].durationMicros, 1000);
+  });
+
   test('marker boundaries can use file edges', () {
     const List<TimeMarker> markers = <TimeMarker>[
       TimeMarker(onsetMicros: 2500, label: 'Stop'),

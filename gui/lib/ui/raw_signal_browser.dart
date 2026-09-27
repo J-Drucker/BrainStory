@@ -2408,27 +2408,26 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           return marker.copyWith(label: replacement);
         })
         .toList(growable: false);
-    int combinedCount = 0;
-    int unmatchedCount = 0;
-    for (final Map<String, dynamic> boundaryCombination
-        in boundaryCombinations) {
-      final String originalStart = boundaryCombination['startLabel'].toString();
-      final String originalStop = boundaryCombination['stopLabel'].toString();
-      final MarkerBoundaryCombinationResult combinationResult =
-          AddRemoveMarkersNodeType.combineBoundaryMarkers(
-            recoded,
-            startLabel: renamedLabels[originalStart] ?? originalStart,
-            stopLabel: renamedLabels[originalStop] ?? originalStop,
-            blockLabel: boundaryCombination['blockLabel'].toString(),
-            replaceBoundaries:
-                boundaryCombination['replaceBoundaries'] as bool? ?? true,
-          );
-      recoded = combinationResult.markers;
-      combinedCount += combinationResult.combinedCount;
-      unmatchedCount +=
-          combinationResult.unmatchedStartCount +
-          combinationResult.unmatchedStopCount;
-    }
+    final MarkerBoundaryCombinationResult combinationResult =
+        AddRemoveMarkersNodeType.combineBoundaryMarkerRules(
+          recoded,
+          rules: boundaryCombinations
+              .map((Map<String, dynamic> rule) {
+                final String originalStart = rule['startLabel'].toString();
+                final String originalStop = rule['stopLabel'].toString();
+                return <String, dynamic>{
+                  ...rule,
+                  'startLabel': renamedLabels[originalStart] ?? originalStart,
+                  'stopLabel': renamedLabels[originalStop] ?? originalStop,
+                };
+              })
+              .toList(growable: false),
+        );
+    recoded = combinationResult.markers;
+    final int combinedCount = combinationResult.combinedCount;
+    final int unmatchedCount =
+        combinationResult.unmatchedStartCount +
+        combinationResult.unmatchedStopCount;
     _setDraftMarkersForDataset(recoded);
     if (boundaryCombinations.isNotEmpty && mounted) {
       final String message = combinedCount == 0
