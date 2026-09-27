@@ -5668,7 +5668,10 @@ Widget _segmentLineChart(
   final double yInterval = _niceAxisStep(rawMaxY - rawMinY);
   final double minY = _floorToStep(rawMinY, yInterval);
   final double maxY = _ceilToStep(rawMaxY, yInterval);
-  final double xInterval = _niceAxisStep(visibleWindowMs);
+  final double xInterval = segmentationTimeAxisInterval(
+    stitchedSegments: plotData.stitchedSegments,
+    visibleWindowMs: visibleWindowMs,
+  );
   final double minX = plotData.stitchedSegments
       ? _floorToStep(plotData.minX, xInterval)
       : plotData.minX;
@@ -6099,6 +6102,13 @@ List<FlSpot> _decimatedSegmentSpots({
     );
   }
   return spots;
+}
+
+double segmentationTimeAxisInterval({
+  required bool stitchedSegments,
+  required double visibleWindowMs,
+}) {
+  return stitchedSegments ? _niceAxisStep(visibleWindowMs) : 50.0;
 }
 
 double _quantizeSegmentX(double valueMs) => (valueMs * 2).roundToDouble() / 2;
@@ -8467,6 +8477,8 @@ FlTitlesData _chartTitles({
         showTitles: true,
         reservedSize: 28,
         interval: xInterval,
+        minIncluded: true,
+        maxIncluded: true,
         getTitlesWidget: (double value, TitleMeta meta) {
           if (value < minX - 0.001 || value > maxX + 0.001) {
             return const SizedBox.shrink();

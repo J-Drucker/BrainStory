@@ -4088,6 +4088,23 @@ time,Fz,Cz
     expect(output.first, isNot(closeTo(input.first, 0.0001)));
   });
 
+  test('segmentation time axes use 50 ms ticks within each segment', () {
+    expect(
+      segmentationTimeAxisInterval(
+        stitchedSegments: false,
+        visibleWindowMs: 1000,
+      ),
+      50,
+    );
+    expect(
+      segmentationTimeAxisInterval(
+        stitchedSegments: true,
+        visibleWindowMs: 1000,
+      ),
+      greaterThan(50),
+    );
+  });
+
   test('applyBandpassFilter notch attenuates the requested frequency', () {
     const double sampleRate = 256.0;
     const double targetFrequency = 60.0;
