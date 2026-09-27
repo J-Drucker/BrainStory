@@ -7408,6 +7408,7 @@ class CanvasLogic {
             kinds.add(BrainStoryArtifactKind.spectrum);
           } else if (snapshot.timeSeries != null) {
             kinds.add(BrainStoryArtifactKind.timeSeries);
+            kinds.add(BrainStoryArtifactKind.markers);
           }
           break;
         case PortType.markers:
@@ -7547,12 +7548,34 @@ class CanvasLogic {
     ) {
       final Set<NodePersistenceArtifact> requiredArtifacts =
           _persistenceArtifactsForPort(node.inputPorts[inputIndex]);
-      final List<Map<String, dynamic>> portConnections = inputConnections
+      List<Map<String, dynamic>> portConnections = inputConnections
           .where(
             (Map<String, dynamic> connection) =>
                 (connection['toPort'] as int? ?? -1) == inputIndex,
           )
           .toList(growable: false);
+      // Markers are embedded in continuous time-series artifacts. A signal
+      // connection therefore satisfies an otherwise-unwired marker input
+      // without requiring a second, duplicate wire between the same nodes.
+      if (portConnections.isEmpty &&
+          node.inputPorts[inputIndex].type == PortType.markers) {
+        portConnections = inputConnections
+            .where((Map<String, dynamic> connection) {
+              final NodeModel? parent = _findNode(
+                connection['fromNode']?.toString() ?? '',
+              );
+              final int sourcePortIndex =
+                  (connection['fromPort'] as num?)?.toInt() ?? -1;
+              final PortSpec? sourcePort = parent == null
+                  ? null
+                  : _effectiveOutputPortAt(parent, sourcePortIndex);
+              return sourcePort != null &&
+                  _persistenceArtifactsForPort(
+                    sourcePort,
+                  ).contains(NodePersistenceArtifact.markers);
+            })
+            .toList(growable: false);
+      }
       if (portConnections.isEmpty) {
         for (final NodePersistenceArtifact artifact in requiredArtifacts) {
           final String id = 'input:unconnected:${artifact.name}';
@@ -7579,10 +7602,14 @@ class CanvasLogic {
           continue;
         }
         final int sourcePortIndex = connection['fromPort'] as int? ?? -1;
+        final PortSpec? sourcePort = _effectiveOutputPortAt(
+          parent,
+          sourcePortIndex,
+        );
         final Set<NodePersistenceArtifact> providedArtifacts =
-            sourcePortIndex >= 0 && sourcePortIndex < parent.outputPorts.length
-            ? _persistenceArtifactsForPort(parent.outputPorts[sourcePortIndex])
-            : const <NodePersistenceArtifact>{};
+            sourcePort == null
+            ? const <NodePersistenceArtifact>{}
+            : _persistenceArtifactsForPort(sourcePort);
         for (final NodePersistenceArtifact artifact in requiredArtifacts) {
           final String id = 'input:${parent.id}:${artifact.name}';
           final _PersistenceColumnBuild build = builds.putIfAbsent(
@@ -7608,8 +7635,8 @@ class CanvasLogic {
     for (final PortSpec input in node.inputPorts) {
       ownOutputArtifacts.addAll(_persistenceArtifactsForPort(input));
     }
-    for (final PortSpec output in node.outputPorts) {
-      ownOutputArtifacts.addAll(_persistenceArtifactsForPort(output));
+    for (final _EffectiveOutputPort output in _effectiveOutputPorts(node)) {
+      ownOutputArtifacts.addAll(_persistenceArtifactsForPort(output.port));
     }
     for (final NodePersistenceArtifact artifact in ownOutputArtifacts) {
       final String id = 'output:${node.id}:${artifact.name}';
@@ -7634,10 +7661,13 @@ class CanvasLogic {
         continue;
       }
       final int sourcePortIndex = connection['fromPort'] as int? ?? -1;
-      final Set<NodePersistenceArtifact> artifacts =
-          sourcePortIndex >= 0 && sourcePortIndex < node.outputPorts.length
-          ? _persistenceArtifactsForPort(node.outputPorts[sourcePortIndex])
-          : const <NodePersistenceArtifact>{};
+      final PortSpec? sourcePort = _effectiveOutputPortAt(
+        node,
+        sourcePortIndex,
+      );
+      final Set<NodePersistenceArtifact> artifacts = sourcePort == null
+          ? const <NodePersistenceArtifact>{}
+          : _persistenceArtifactsForPort(sourcePort);
       for (final NodePersistenceArtifact artifact in artifacts) {
         final String id = 'output:${child.id}:${artifact.name}';
         builds.putIfAbsent(
@@ -7880,6 +7910,7 @@ class CanvasLogic {
         return const <NodePersistenceArtifact>{
           NodePersistenceArtifact.timeSeries,
           NodePersistenceArtifact.channelNames,
+          NodePersistenceArtifact.markers,
         };
       case PortType.markers:
         return const <NodePersistenceArtifact>{NodePersistenceArtifact.markers};
@@ -10215,6 +10246,15 @@ class CanvasLogic {
       );
     }
     return ports;
+  }
+
+  PortSpec? _effectiveOutputPortAt(NodeModel node, int portIndex) {
+    for (final _EffectiveOutputPort output in _effectiveOutputPorts(node)) {
+      if (output.portIndex == portIndex) {
+        return output.port;
+      }
+    }
+    return null;
   }
 
   bool _hasAnyDiskSnapshot(String nodeId) =>

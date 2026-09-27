@@ -1323,6 +1323,58 @@ void main() {
     );
   });
 
+  test('bandpass passes markers through to downstream segmentation', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset('bandpass-marker-input', label: 'PVT')
+      ..timeSeries = TimeSeriesData(
+        samples: List<double>.generate(
+          256,
+          (int index) => math.sin(2 * math.pi * 10 * index / 128),
+        ),
+        sampleRate: 128,
+        markers: const <TimeMarker>[
+          TimeMarker(label: 'target', onsetMicros: 500000),
+        ],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(BandpassNodeType());
+    logic.addNode(SegmentationNodeType());
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel bandpassNode = logic.nodes[1];
+    final NodeModel segmentationNode = logic.nodes[2];
+    importNode.params['selectedDatasetIds'] = <String>[dataset.id];
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+    bandpassNode.params['selectedDatasetIds'] = <String>[dataset.id];
+    bandpassNode.datasetStates[dataset.id] = DatasetState.ready;
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': bandpassNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': bandpassNode.id,
+        'fromPort': 0,
+        'toNode': segmentationNode.id,
+        'toPort': 0,
+      },
+    ]);
+
+    await logic.runThisStep(bandpassNode.id, datasetIds: <String>{dataset.id});
+    final Map<String, Dataset> inputs = await logic.inputDatasetViewsForNode(
+      segmentationNode.id,
+    );
+
+    expect(
+      inputs[dataset.id]!.timeSeries!.markers.map(
+        (TimeMarker marker) => marker.label,
+      ),
+      contains('target'),
+    );
+  });
+
   test(
     'unconsumed channel coordinates pass through to daughter nodes',
     () async {
@@ -1532,7 +1584,7 @@ void main() {
     },
   );
 
-  test('persistence table represents unconnected required artifacts', () async {
+  test('signal connections satisfy embedded marker requirements', () async {
     final CanvasLogic logic = CanvasLogic();
     logic.addNode(ImportNodeType());
     logic.addNode(VisualizationNodeType());
@@ -1555,15 +1607,16 @@ void main() {
         (await logic.datasetStatusSnapshotForNode(
           viewerNode.id,
         )).persistenceTable;
-    final NodePersistenceColumn missingMarkers = table.columns.singleWhere(
+    final NodePersistenceColumn markerInput = table.columns.singleWhere(
       (NodePersistenceColumn column) =>
-          column.synthetic &&
+          column.direction == NodePersistenceDirection.input &&
           column.artifact == NodePersistenceArtifact.markers,
     );
 
+    expect(markerInput.synthetic, isFalse);
     expect(
-      table.rows.single.cells[missingMarkers.id]!.status,
-      NodePersistenceStatus.absent,
+      table.rows.single.cells[markerInput.id]!.status,
+      NodePersistenceStatus.inputReady,
     );
   });
 
