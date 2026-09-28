@@ -1333,11 +1333,13 @@ class _SegmentedChartState extends State<_SegmentedChart> {
     params.putIfAbsent('segmented_exclude_bad', () => false);
     params.putIfAbsent('segmented_visible_marker_labels', () => <String>[]);
     params.putIfAbsent('segmented_marker_filter_initialized', () => false);
+    params.putIfAbsent('segmented_options_collapsed', () => false);
     params.putIfAbsent('window_sec', () => 1.0);
     params.putIfAbsent('y_scale_uv', () => 100.0);
     params.putIfAbsent('channel_spacing_factor', () => 1.0);
 
     final bool excludeBad = params['segmented_exclude_bad'] as bool? ?? false;
+    final bool optionsCollapsed = segmentationDisplayOptionsCollapsed(params);
     final Set<String> excludedLabels = _excludedSegmentationMarkerLabels(
       params['includedMarkers'],
     );
@@ -1504,84 +1506,112 @@ class _SegmentedChartState extends State<_SegmentedChart> {
           toolbar: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Wrap(
-                spacing: 10,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Tooltip(
-                    message: badTooltip,
-                    child: _SegmentInlineToggleButton(
-                      label: 'Exclude bads',
-                      selected: excludeBad,
-                      onPressed: () {
-                        setState(() {
-                          params['segmented_exclude_bad'] = !excludeBad;
-                        });
-                      },
+                  Expanded(
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        Tooltip(
+                          message: badTooltip,
+                          child: _SegmentInlineToggleButton(
+                            label: 'Exclude bads',
+                            selected: excludeBad,
+                            onPressed: () {
+                              setState(() {
+                                params['segmented_exclude_bad'] = !excludeBad;
+                              });
+                            },
+                          ),
+                        ),
+                        const _SegmentControlStripDivider(),
+                        _SegmentViewerScaleControls(
+                          timeSeconds: displayedWindowSeconds,
+                          timeOptionsSeconds: timeOptionsSeconds,
+                          onTimeSelected: (double value) {
+                            setState(() {
+                              params['window_sec'] = value;
+                            });
+                          },
+                          rangeUv: rangeUv,
+                          rangeOptionsUv: _yScaleOptionsUv,
+                          onRangeSelected: (double value) {
+                            setState(() {
+                              params['y_scale_uv'] = value;
+                            });
+                          },
+                          spacingFactor: spacingFactor,
+                          spacingOptions: _channelSpacingOptions,
+                          onSpacingSelected: (double value) {
+                            setState(() {
+                              params['channel_spacing_factor'] = value;
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   ),
-                  const _SegmentControlStripDivider(),
-                  _SegmentViewerScaleControls(
-                    timeSeconds: displayedWindowSeconds,
-                    timeOptionsSeconds: timeOptionsSeconds,
-                    onTimeSelected: (double value) {
+                  const SizedBox(width: 8),
+                  IconButton(
+                    key: const ValueKey<String>('segmentation-options-toggle'),
+                    tooltip: optionsCollapsed
+                        ? 'Show display options'
+                        : 'Collapse display options',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
                       setState(() {
-                        params['window_sec'] = value;
+                        params['segmented_options_collapsed'] =
+                            !optionsCollapsed;
                       });
                     },
-                    rangeUv: rangeUv,
-                    rangeOptionsUv: _yScaleOptionsUv,
-                    onRangeSelected: (double value) {
-                      setState(() {
-                        params['y_scale_uv'] = value;
-                      });
-                    },
-                    spacingFactor: spacingFactor,
-                    spacingOptions: _channelSpacingOptions,
-                    onSpacingSelected: (double value) {
-                      setState(() {
-                        params['channel_spacing_factor'] = value;
-                      });
-                    },
+                    icon: Icon(
+                      optionsCollapsed
+                          ? Icons.keyboard_arrow_down
+                          : Icons.keyboard_arrow_up,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              _SegmentModeTileRow(
-                groups: allGroups,
-                selectedLabels: selectedLabels,
-                excludeBad: excludeBad,
-                conditionMode: conditionMode,
-                channelMode: channelMode,
-                segmentMode: segmentMode,
-                selectedConditionCount: groups.length,
-                totalConditionCount: allGroups.length,
-                totalSegmentCount: segmented.segmentCount,
-                visibleSegmentCount: visibleSegments.length,
-                onConditionLabelsChanged: (Set<String> nextLabels) {
-                  setState(() {
-                    params['segmented_visible_marker_labels'] = nextLabels
-                        .toList(growable: false);
-                    params['segmented_marker_filter_initialized'] = true;
-                  });
-                },
-                onConditionModeChanged: (String value) {
-                  setState(() {
-                    params['segmented_condition_mode'] = value;
-                  });
-                },
-                onChannelModeChanged: (String value) {
-                  setState(() {
-                    params['segmented_channel_mode'] = value;
-                  });
-                },
-                onSegmentModeChanged: (String value) {
-                  setState(() {
-                    params['segmented_segment_mode'] = value;
-                  });
-                },
-              ),
+              if (!optionsCollapsed) ...<Widget>[
+                const SizedBox(height: 12),
+                _SegmentModeTileRow(
+                  groups: allGroups,
+                  selectedLabels: selectedLabels,
+                  excludeBad: excludeBad,
+                  conditionMode: conditionMode,
+                  channelMode: channelMode,
+                  segmentMode: segmentMode,
+                  selectedConditionCount: groups.length,
+                  totalConditionCount: allGroups.length,
+                  totalSegmentCount: segmented.segmentCount,
+                  visibleSegmentCount: visibleSegments.length,
+                  onConditionLabelsChanged: (Set<String> nextLabels) {
+                    setState(() {
+                      params['segmented_visible_marker_labels'] = nextLabels
+                          .toList(growable: false);
+                      params['segmented_marker_filter_initialized'] = true;
+                    });
+                  },
+                  onConditionModeChanged: (String value) {
+                    setState(() {
+                      params['segmented_condition_mode'] = value;
+                    });
+                  },
+                  onChannelModeChanged: (String value) {
+                    setState(() {
+                      params['segmented_channel_mode'] = value;
+                    });
+                  },
+                  onSegmentModeChanged: (String value) {
+                    setState(() {
+                      params['segmented_segment_mode'] = value;
+                    });
+                  },
+                ),
+              ],
             ],
           ),
           child: Column(
@@ -1677,6 +1707,10 @@ class _SegmentedChartState extends State<_SegmentedChart> {
 
 bool segmentationConditionsAreOverlaid(String conditionMode) {
   return conditionMode == 'butterfly';
+}
+
+bool segmentationDisplayOptionsCollapsed(Map<String, dynamic> params) {
+  return params['segmented_options_collapsed'] as bool? ?? false;
 }
 
 class _SegmentPanelView extends StatelessWidget {

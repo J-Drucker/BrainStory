@@ -4143,6 +4143,16 @@ time,Fz,Cz
     expect(segmentationConditionsAreOverlaid('butterfly'), isTrue);
   });
 
+  test('segmentation display options preserve their collapsed state', () {
+    expect(segmentationDisplayOptionsCollapsed(<String, dynamic>{}), isFalse);
+    expect(
+      segmentationDisplayOptionsCollapsed(<String, dynamic>{
+        'segmented_options_collapsed': true,
+      }),
+      isTrue,
+    );
+  });
+
   test('applyBandpassFilter notch attenuates the requested frequency', () {
     const double sampleRate = 256.0;
     const double targetFrequency = 60.0;
