@@ -3,6 +3,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ "${1:-}" == "--reuse-engine" ]]; then
+  if [[ ! -f gui/web/brainstory_web.wasm ]]; then
+    if [[ ! -f packaging/webflow/brainstory-web.zip ]]; then
+      printf '%s\n' 'Missing browser engine and Webflow release archive.' >&2
+      exit 1
+    fi
+    unzip -p packaging/webflow/brainstory-web.zip brainstory_web.wasm \
+      > gui/web/brainstory_web.wasm
+  fi
   for asset in \
     gui/web/brainstory_web.wasm \
     gui/web/brainstory_cnt.js \
