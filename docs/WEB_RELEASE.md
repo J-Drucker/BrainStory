@@ -53,6 +53,10 @@ Both `/` and a path such as `/brainstory/` are supported without rebuilding Rust
 To publish future code changes, run `bash scripts/prepare_webflow.sh`, commit
 the changed source and `packaging/webflow/brainstory-web.zip`, then push when
 ready to deploy. A source-only push does not refresh the compiled release.
+For Flutter-only changes, `bash scripts/prepare_webflow.sh --reuse-engine`
+reuses the checked-in Rust and CNT browser engine assets and does not require
+Emscripten. Use the default full build whenever engine or CNT reader sources
+change.
 The build configuration unpacks the archive during Vite configuration, so it
 also works when Webflow invokes Vite directly rather than an npm lifecycle hook.
 
