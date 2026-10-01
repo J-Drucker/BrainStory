@@ -1,4 +1,5 @@
 import 'node_type.dart';
+import 'code_node.dart';
 
 import 'import_node.dart';
 import 'bridge_detector_node.dart';
@@ -97,6 +98,7 @@ class NodeRegistry {
     ),
 
     // Signal processing
+    NodeRegistryEntry(group: NodeGroup.transform, create: () => CodeNodeType()),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => BandpassNodeType(),

@@ -7,6 +7,7 @@ A high-performance, modular neural dataflow engine for real-time and offline bra
 - Node-based architecture for EEG, BCI, and biosignal workflows
 - Real-time + batch modes
 - Extensible node system
+- [Python code nodes](docs/code_nodes.md): embedded code, local projects or Git repositories with a selectable interpreter and typed artifact exchange
 - GUI and scripting APIs (coming soon)
 
 ### Tech Stack

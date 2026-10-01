@@ -14,6 +14,8 @@ import '../model/dataset_state.dart';
 import '../model/node.dart';
 import '../nodes/add_remove_markers_node.dart';
 import '../nodes/bandpass_node.dart';
+import '../nodes/code_node.dart';
+import '../nodes/code_contract.dart';
 import '../nodes/bridge_detector_node.dart';
 import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
@@ -2196,6 +2198,8 @@ class CanvasLogic {
               'x': node.position.dx,
               'y': node.position.dy,
               'params': _exportableNodeParams(node.params),
+              if (node.type is CodeNodeType && node.params['_codeRuns'] is Map)
+                'codeRuns': node.params['_codeRuns'],
               'markerChange': node.markerChange.toJson(),
               'datasetStates': node.datasetStates.map(
                 (dynamic key, DatasetState value) =>
@@ -2318,6 +2322,11 @@ class CanvasLogic {
               )
             : const MarkerChange(),
       );
+      if (type is CodeNodeType && data['codeRuns'] is Map) {
+        node.params['_codeRuns'] = Map<String, dynamic>.from(
+          data['codeRuns'] as Map,
+        );
+      }
       final Map<String, dynamic> rawStates = Map<String, dynamic>.from(
         data['datasetStates'] as Map? ?? <String, dynamic>{},
       );
@@ -5289,7 +5298,16 @@ class CanvasLogic {
           continue;
         }
 
-        if (node.datasetStates[dataset.id] == DatasetState.done) {
+        // Pipeline-only saves can retain a completed Import status without
+        // its artifact cache. Reload the source before executing downstream
+        // work when neither live signal nor a saved snapshot is available.
+        final bool missingImportOutput =
+            node.type is ImportNodeType &&
+            dataset.timeSeries == null &&
+            await _loadSnapshotForNodeDataset(node.id, dataset.id) == null;
+        if (node.datasetStates[dataset.id] == DatasetState.done &&
+            node.type is! CodeNodeType &&
+            !missingImportOutput) {
           _lastSkippedNodeCount += 1;
           _runWaitingNodeIds.remove(node.id);
           await setRunDetail(
@@ -7326,6 +7344,11 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) {
+    if (node.type is CodeNodeType) {
+      return codeSnapshotKinds(
+        DatasetArtifactSnapshot.fromDataset(dataset, copyTimeSeries: false),
+      );
+    }
     if (node.type is AddRemoveMarkersNodeType) {
       return dataset.timeSeries == null
           ? <BrainStoryArtifactKind>{}
@@ -7407,6 +7430,7 @@ class CanvasLogic {
     NodeModel node,
     DatasetArtifactSnapshot snapshot,
   ) {
+    if (node.type is CodeNodeType) return codeSnapshotKinds(snapshot);
     if (node.type is AddRemoveMarkersNodeType) {
       return snapshot.markers != null || snapshot.timeSeries != null
           ? <BrainStoryArtifactKind>{BrainStoryArtifactKind.markers}
@@ -7591,6 +7615,9 @@ class CanvasLogic {
             .toList(growable: false);
       }
       if (portConnections.isEmpty) {
+        // Python scripts choose which inputs they require. Unwired ports are
+        // optional and must not appear as missing requirements in the dialog.
+        if (node.type is CodeNodeType) continue;
         for (final NodePersistenceArtifact artifact in requiredArtifacts) {
           final String id = 'input:unconnected:${artifact.name}';
           builds.putIfAbsent(
