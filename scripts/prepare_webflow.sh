@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+revision="$(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
 
 if [[ "${1:-}" == "--reuse-engine" ]]; then
   if [[ ! -f gui/web/brainstory_web.wasm ]]; then
@@ -21,7 +22,8 @@ if [[ "${1:-}" == "--reuse-engine" ]]; then
     fi
   done
   pushd gui >/dev/null
-  flutter build web --release --no-web-resources-cdn --base-href /
+  flutter build web --release --no-web-resources-cdn --base-href / \
+    --dart-define="BRAINSTORY_GIT_REVISION=$revision"
   popd >/dev/null
   mkdir -p dist
   python3 scripts/package_web.py

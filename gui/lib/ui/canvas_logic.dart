@@ -3030,6 +3030,10 @@ class CanvasLogic {
           value: 'memory',
           child: Text('Persistence'),
         ),
+        const PopupMenuItem<String>(
+          value: 'algorithm',
+          child: Text('Review Algorithm'),
+        ),
         const PopupMenuItem<String>(value: 'export', child: Text('Export')),
         if (showSelectedCombination)
           PopupMenuItem<String>(
@@ -3160,6 +3164,14 @@ class CanvasLogic {
           node: node,
           update: update,
           initialTabIndex: 1,
+        );
+        return;
+      case 'algorithm':
+        _openNodeEditor(
+          context: context,
+          node: node,
+          update: update,
+          initialTabIndex: 2,
         );
         return;
       case 'export':

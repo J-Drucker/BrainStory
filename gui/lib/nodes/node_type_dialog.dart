@@ -4,6 +4,7 @@ class _NodeConfigDialog extends StatefulWidget {
   const _NodeConfigDialog({
     required this.title,
     required this.helpText,
+    required this.algorithmReview,
     required this.params,
     required this.datasets,
     required this.availableDatasetIds,
@@ -23,6 +24,7 @@ class _NodeConfigDialog extends StatefulWidget {
 
   final String title;
   final String? helpText;
+  final AlgorithmReview? algorithmReview;
   final Map<String, dynamic> params;
   final Map<String, Dataset> datasets;
   final Set<String> availableDatasetIds;
@@ -59,9 +61,9 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 2,
+      length: 3,
       vsync: this,
-      initialIndex: widget.initialTabIndex.clamp(0, 1),
+      initialIndex: widget.initialTabIndex.clamp(0, 2),
     );
     localParams = Map<String, dynamic>.from(widget.params);
     final Set<String> selectedDatasetIds = Set<String>.from(
@@ -201,6 +203,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
           tabs: const <Widget>[
             Tab(text: 'Parameters'),
             Tab(text: 'Persistence'),
+            Tab(text: 'Algorithm'),
           ],
         ),
         const SizedBox(height: 12),
@@ -263,6 +266,7 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
                 },
                 startInExportMode: widget.startInExportMode,
               ),
+              _NodeAlgorithmTab(review: widget.algorithmReview),
             ],
           ),
         ),
@@ -332,6 +336,92 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
         child: const Text('Save'),
       ),
     ];
+  }
+}
+
+class _NodeAlgorithmTab extends StatelessWidget {
+  const _NodeAlgorithmTab({required this.review});
+
+  final AlgorithmReview? review;
+
+  static const String _buildRevision = String.fromEnvironment(
+    'BRAINSTORY_GIT_REVISION',
+    defaultValue: 'development build',
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final AlgorithmReview? value = review;
+    if (value == null) {
+      return const Center(
+        child: Text(
+          'No reviewed algorithm description has been attached to this node yet.',
+        ),
+      );
+    }
+    return SingleChildScrollView(
+      key: const ValueKey<String>('node-algorithm-tab-content'),
+      padding: const EdgeInsets.only(right: 8, bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              Chip(
+                avatar: const Icon(Icons.memory, size: 17),
+                label: Text(value.implementation.label),
+              ),
+              const Chip(
+                avatar: Icon(Icons.commit, size: 17),
+                label: Text(_buildRevision),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SelectableText(value.summary),
+          _algorithmSection('Procedure', value.procedure, numbered: true),
+          _algorithmSection('Parameters and units', value.parameters),
+          _algorithmSection('Assumptions and limitations', value.assumptions),
+          _algorithmSection('Implementation source', value.sourceFiles),
+          if (value.testFiles.isNotEmpty)
+            _algorithmSection('Verification tests', value.testFiles),
+        ],
+      ),
+    );
+  }
+
+  Widget _algorithmSection(
+    String title,
+    List<String> lines, {
+    bool numbered = false,
+  }) {
+    if (lines.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          for (int index = 0; index < lines.length; index++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  SizedBox(
+                    width: 28,
+                    child: Text(numbered ? '${index + 1}.' : '•'),
+                  ),
+                  Expanded(child: SelectableText(lines[index])),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 

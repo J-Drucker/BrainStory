@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../model/dataset_state.dart';
+import 'algorithm_review.dart';
 
 part 'node_type_dialog.dart';
 
@@ -405,6 +406,7 @@ class NodeExecutionContext {
 abstract class NodeType {
   String get title;
   String? get helpText => null;
+  AlgorithmReview? get algorithmReview => nodeAlgorithmReviews[title];
   NodeCategory get category => NodeCategory.other;
   String get subcategory => 'Subcategory 1';
   List<NodePlacement> get additionalPlacements => const <NodePlacement>[];
@@ -498,6 +500,7 @@ abstract class NodeType {
     return _NodeConfigDialog(
       title: title,
       helpText: helpText,
+      algorithmReview: algorithmReview,
       params: params,
       datasets: datasets,
       availableDatasetIds: availableDatasetIds,
