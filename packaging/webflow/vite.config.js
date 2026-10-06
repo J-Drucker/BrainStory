@@ -12,9 +12,10 @@ for (const [name, bytes] of Object.entries(files)) {
   const path = resolve(destination, name);
   if (!path.startsWith(destination + sep)) throw new Error('Invalid release archive path');
   mkdirSync(dirname(path), { recursive: true });
-  // The embedded application resolves assets within its own directory at any mount path.
+  // Webflow canonicalizes /app/brainstory/ to /app/brainstory, so use an
+  // absolute base path to keep the embedded app's relative assets in place.
   const content = name === 'index.html'
-    ? strToU8(strFromU8(bytes).replace(/<base href="[^"]*">/, '<base href="./">'))
+    ? strToU8(strFromU8(bytes).replace(/<base href="[^"]*">/, '<base href="/app/brainstory/">'))
     : bytes;
   writeFileSync(path, content);
 }
