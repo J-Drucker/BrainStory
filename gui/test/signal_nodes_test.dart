@@ -73,6 +73,46 @@ bool _orthogonalRouteIntersectsRect(List<Offset> route, Rect rect) {
   return false;
 }
 
+bool _orthogonalRoutesConflict(List<Offset> first, List<Offset> second) {
+  const double epsilon = 0.001;
+  for (int firstIndex = 1; firstIndex < first.length; firstIndex++) {
+    final Offset a = first[firstIndex - 1];
+    final Offset b = first[firstIndex];
+    final bool abVertical = (a.dx - b.dx).abs() < epsilon;
+    for (int secondIndex = 1; secondIndex < second.length; secondIndex++) {
+      final Offset c = second[secondIndex - 1];
+      final Offset d = second[secondIndex];
+      final bool cdVertical = (c.dx - d.dx).abs() < epsilon;
+      if (abVertical == cdVertical) {
+        if (abVertical && (a.dx - c.dx).abs() >= epsilon) continue;
+        if (!abVertical && (a.dy - c.dy).abs() >= epsilon) continue;
+        final double overlap = abVertical
+            ? math.min(math.max(a.dy, b.dy), math.max(c.dy, d.dy)) -
+                  math.max(math.min(a.dy, b.dy), math.min(c.dy, d.dy))
+            : math.min(math.max(a.dx, b.dx), math.max(c.dx, d.dx)) -
+                  math.max(math.min(a.dx, b.dx), math.min(c.dx, d.dx));
+        if (overlap > epsilon) return true;
+        continue;
+      }
+      final Offset verticalStart = abVertical ? a : c;
+      final Offset verticalEnd = abVertical ? b : d;
+      final Offset horizontalStart = abVertical ? c : a;
+      final Offset horizontalEnd = abVertical ? d : b;
+      if (verticalStart.dx >=
+              math.min(horizontalStart.dx, horizontalEnd.dx) - epsilon &&
+          verticalStart.dx <=
+              math.max(horizontalStart.dx, horizontalEnd.dx) + epsilon &&
+          horizontalStart.dy >=
+              math.min(verticalStart.dy, verticalEnd.dy) - epsilon &&
+          horizontalStart.dy <=
+              math.max(verticalStart.dy, verticalEnd.dy) + epsilon) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void main() {
   test('node palette hides unfinished implementations', () {
     final Set<String> visibleTitles = NodeRegistry.entries
@@ -209,6 +249,33 @@ void main() {
     );
     expect(_orthogonalRouteIntersectsRect(route, obstacleRect), isFalse);
   });
+
+  test(
+    'connection to a child above its parent exits right and enters left',
+    () {
+      final CanvasLogic logic = CanvasLogic();
+      logic.addNode(ImportNodeType());
+      logic.addNode(ResampleNodeType());
+      final NodeModel parent = logic.nodes[0]
+        ..position = const Offset(100, 300);
+      final NodeModel child = logic.nodes[1]..position = const Offset(100, 80);
+      logic.connections.add(<String, dynamic>{
+        'fromNode': parent.id,
+        'fromPort': 0,
+        'toNode': child.id,
+        'toPort': 0,
+      });
+
+      final ConnectionPainter painter =
+          (logic.connectionWidgets().single as CustomPaint).painter!
+              as ConnectionPainter;
+
+      expect(painter.startDirection, const Offset(1, 0));
+      expect(painter.endDirection, const Offset(-1, 0));
+      expect(painter.preferVertical, isFalse);
+      expect(painter.endVertical, isFalse);
+    },
+  );
 
   test('connection endpoints follow a node during an active drag', () {
     final CanvasLogic logic = CanvasLogic();
@@ -408,6 +475,13 @@ void main() {
       ],
     );
     expect(aroundWire.any((Offset point) => point.dy.abs() >= 24), isTrue);
+    expect(
+      _orthogonalRoutesConflict(aroundWire, const <Offset>[
+        Offset(100, -20),
+        Offset(100, 20),
+      ]),
+      isFalse,
+    );
 
     final Rect parent = const Rect.fromLTWH(0, 0, 160, 72).inflate(12);
     final Rect child = const Rect.fromLTWH(240, 0, 160, 72).inflate(12);
@@ -811,6 +885,32 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Run All'), findsNWidgets(2));
+  });
+
+  testWidgets('selected node menu does not duplicate run all', (
+    WidgetTester tester,
+  ) async {
+    final CanvasLogic logic = CanvasLogic();
+    logic.addNode(ImportNodeType());
+    logic.selectedNodeId = logic.nodes.single.id;
+    logic.selectedNodeIds.add(logic.nodes.single.id);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CanvasView(logic: logic)),
+      ),
+    );
+
+    final Finder nodeTitle = find.descendant(
+      of: find.byType(NodeCard),
+      matching: find.text('Import'),
+    );
+    await tester.tap(nodeTitle, buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Run All'), findsOneWidget);
+    expect(find.text('Run This Step'), findsOneWidget);
+    expect(find.text('Run From Start'), findsOneWidget);
   });
 
   testWidgets('recent jobs is collapsible below the project controls', (

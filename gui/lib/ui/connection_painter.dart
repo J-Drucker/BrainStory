@@ -119,7 +119,11 @@ List<Offset> buildConnectionPolyline({
 
   List<Offset>? best;
   double bestScore = double.infinity;
-  for (final List<Offset> candidate in orderedCandidates) {
+  for (final List<Offset> rawCandidate in orderedCandidates) {
+    final List<Offset> candidate = _compressPolyline(rawCandidate);
+    if (candidate.length < 2) {
+      continue;
+    }
     if (_polylineIntersectsObstacles(candidate, inflatedObstacles)) {
       continue;
     }
@@ -132,9 +136,11 @@ List<Offset> buildConnectionPolyline({
                 endVertical)) {
       continue;
     }
+    if (_polylineConflictCount(candidate, existingPolylines) > 0) {
+      continue;
+    }
     final double score =
         _polylineLength(candidate) +
-        (_polylineConflictCount(candidate, existingPolylines) * 10000) +
         ((preferVertical == _isVerticalCandidate(candidate)) ? 0.0 : 4.0);
     if (score < bestScore) {
       best = candidate;
@@ -152,13 +158,182 @@ List<Offset> buildConnectionPolyline({
     );
   }
 
+  final List<Offset> searchedRoute = _findClearOrthogonalRoute(
+    start: routedStart,
+    end: routedEnd,
+    startVertical: preferVertical,
+    endVertical: endVertical,
+    obstacles: inflatedObstacles,
+    existingPolylines: existingPolylines,
+    seedXs: candidateXs,
+    seedYs: candidateYs,
+    clearance: clearance,
+  );
+  if (searchedRoute.length < 2) {
+    return <Offset>[start];
+  }
   return _withEndpointLeads(
-    candidates.first,
+    searchedRoute,
     start: start,
     end: end,
     hasStartLead: startDirection != null,
     hasEndLead: endDirection != null,
   );
+}
+
+List<Offset> _findClearOrthogonalRoute({
+  required Offset start,
+  required Offset end,
+  required bool startVertical,
+  required bool? endVertical,
+  required List<Rect> obstacles,
+  required List<List<Offset>> existingPolylines,
+  required List<double> seedXs,
+  required List<double> seedYs,
+  required double clearance,
+}) {
+  const double wireLaneSpacing = 7;
+  final Set<double> xs = <double>{start.dx, end.dx, ...seedXs};
+  final Set<double> ys = <double>{start.dy, end.dy, ...seedYs};
+  for (final Rect obstacle in obstacles) {
+    xs
+      ..add(obstacle.left)
+      ..add(obstacle.right);
+    ys
+      ..add(obstacle.top)
+      ..add(obstacle.bottom);
+  }
+  for (final List<Offset> polyline in existingPolylines) {
+    for (final Offset point in polyline) {
+      xs
+        ..add(point.dx)
+        ..add(point.dx - wireLaneSpacing)
+        ..add(point.dx + wireLaneSpacing);
+      ys
+        ..add(point.dy)
+        ..add(point.dy - wireLaneSpacing)
+        ..add(point.dy + wireLaneSpacing);
+    }
+  }
+
+  final Iterable<double> allXs = <double>[
+    start.dx,
+    end.dx,
+    ...obstacles.expand((Rect rect) => <double>[rect.left, rect.right]),
+    ...existingPolylines.expand(
+      (List<Offset> route) => route.map((Offset point) => point.dx),
+    ),
+  ];
+  final Iterable<double> allYs = <double>[
+    start.dy,
+    end.dy,
+    ...obstacles.expand((Rect rect) => <double>[rect.top, rect.bottom]),
+    ...existingPolylines.expand(
+      (List<Offset> route) => route.map((Offset point) => point.dy),
+    ),
+  ];
+  final double outerMargin = math.max(64, clearance * 4);
+  xs
+    ..add(allXs.reduce(math.min) - outerMargin)
+    ..add(allXs.reduce(math.max) + outerMargin);
+  ys
+    ..add(allYs.reduce(math.min) - outerMargin)
+    ..add(allYs.reduce(math.max) + outerMargin);
+
+  final List<double> sortedXs = xs.toList()..sort();
+  final List<double> sortedYs = ys.toList()..sort();
+  final int width = sortedXs.length;
+  final int height = sortedYs.length;
+  final int startX = sortedXs.indexOf(start.dx);
+  final int startY = sortedYs.indexOf(start.dy);
+  final int endX = sortedXs.indexOf(end.dx);
+  final int endY = sortedYs.indexOf(end.dy);
+  final int startPoint = (startY * width) + startX;
+  final int endPoint = (endY * width) + endX;
+  final Map<int, double> distances = <int, double>{};
+  final Map<int, int> previous = <int, int>{};
+  final _RoutePriorityQueue queue = _RoutePriorityQueue();
+
+  Offset pointForIndex(int pointIndex) {
+    return Offset(
+      sortedXs[pointIndex % width],
+      sortedYs[pointIndex ~/ width],
+    );
+  }
+
+  Iterable<int> neighborPoints(int pointIndex) sync* {
+    final int x = pointIndex % width;
+    final int y = pointIndex ~/ width;
+    if (x > 0) yield pointIndex - 1;
+    if (x + 1 < width) yield pointIndex + 1;
+    if (y > 0) yield pointIndex - width;
+    if (y + 1 < height) yield pointIndex + width;
+  }
+
+  bool segmentIsClear(Offset a, Offset b) {
+    return !_segmentIntersectsObstacles(a, b, obstacles) &&
+        _polylineConflictCount(<Offset>[a, b], existingPolylines) == 0;
+  }
+
+  for (final int neighbor in neighborPoints(startPoint)) {
+    final Offset neighborPoint = pointForIndex(neighbor);
+    final bool vertical = _segmentIsVertical(start, neighborPoint);
+    if (vertical != startVertical || !segmentIsClear(start, neighborPoint)) {
+      continue;
+    }
+    final int state = (neighbor * 2) + (vertical ? 1 : 0);
+    final double distance = (neighborPoint - start).distance;
+    distances[state] = distance;
+    previous[state] = -1;
+    queue.add(_RouteQueueEntry(state: state, distance: distance));
+  }
+
+  int? goalState;
+  while (queue.isNotEmpty) {
+    final _RouteQueueEntry current = queue.removeFirst();
+    if (current.distance != distances[current.state]) {
+      continue;
+    }
+    final int pointIndex = current.state ~/ 2;
+    final bool arrivedVertically = current.state.isOdd;
+    if (pointIndex == endPoint &&
+        (endVertical == null || arrivedVertically == endVertical)) {
+      goalState = current.state;
+      break;
+    }
+    final Offset currentPoint = pointForIndex(pointIndex);
+    for (final int neighbor in neighborPoints(pointIndex)) {
+      final Offset neighborPoint = pointForIndex(neighbor);
+      final bool vertical = _segmentIsVertical(currentPoint, neighborPoint);
+      if (!segmentIsClear(currentPoint, neighborPoint)) {
+        continue;
+      }
+      final int nextState = (neighbor * 2) + (vertical ? 1 : 0);
+      final double bendPenalty = vertical == arrivedVertically ? 0 : 16;
+      final double nextDistance =
+          current.distance +
+          (neighborPoint - currentPoint).distance +
+          bendPenalty;
+      if (nextDistance >= (distances[nextState] ?? double.infinity)) {
+        continue;
+      }
+      distances[nextState] = nextDistance;
+      previous[nextState] = current.state;
+      queue.add(_RouteQueueEntry(state: nextState, distance: nextDistance));
+    }
+  }
+
+  if (goalState == null) {
+    // A connection is withheld rather than drawn through a node or another wire.
+    return <Offset>[start];
+  }
+  final List<Offset> reversed = <Offset>[];
+  int state = goalState;
+  while (state >= 0) {
+    reversed.add(pointForIndex(state ~/ 2));
+    state = previous[state] ?? -1;
+  }
+  return _compressPolyline(<Offset>[start, ...reversed.reversed]);
 }
 
 List<Offset> _withEndpointLeads(
@@ -259,6 +434,9 @@ int _polylineConflictCount(
 
 bool _orthogonalSegmentsConflict(Offset a, Offset b, Offset c, Offset d) {
   const double epsilon = 0.001;
+  if ((a - b).distance < epsilon || (c - d).distance < epsilon) {
+    return false;
+  }
   final bool abVertical = (a.dx - b.dx).abs() < epsilon;
   final bool cdVertical = (c.dx - d.dx).abs() < epsilon;
   if (abVertical && cdVertical) {
@@ -282,10 +460,10 @@ bool _orthogonalSegmentsConflict(Offset a, Offset b, Offset c, Offset d) {
   final double x = verticalStart.dx;
   final double y = horizontalStart.dy;
   final bool crosses =
-      x > math.min(horizontalStart.dx, horizontalEnd.dx) + epsilon &&
-      x < math.max(horizontalStart.dx, horizontalEnd.dx) - epsilon &&
-      y > math.min(verticalStart.dy, verticalEnd.dy) + epsilon &&
-      y < math.max(verticalStart.dy, verticalEnd.dy) - epsilon;
+      x >= math.min(horizontalStart.dx, horizontalEnd.dx) - epsilon &&
+      x <= math.max(horizontalStart.dx, horizontalEnd.dx) + epsilon &&
+      y >= math.min(verticalStart.dy, verticalEnd.dy) - epsilon &&
+      y <= math.max(verticalStart.dy, verticalEnd.dy) + epsilon;
   return crosses;
 }
 
@@ -383,9 +561,67 @@ List<Offset> _compressPolyline(List<Offset> points) {
     if ((compact.last - point).distance < 0.001) {
       continue;
     }
+    if (compact.length >= 2) {
+      final Offset a = compact[compact.length - 2];
+      final Offset b = compact.last;
+      final bool sameVertical =
+          (a.dx - b.dx).abs() < 0.001 && (b.dx - point.dx).abs() < 0.001;
+      final bool sameHorizontal =
+          (a.dy - b.dy).abs() < 0.001 && (b.dy - point.dy).abs() < 0.001;
+      if (sameVertical || sameHorizontal) {
+        compact[compact.length - 1] = point;
+        continue;
+      }
+    }
     compact.add(point);
   }
   return compact;
+}
+
+class _RouteQueueEntry {
+  const _RouteQueueEntry({required this.state, required this.distance});
+
+  final int state;
+  final double distance;
+}
+
+class _RoutePriorityQueue {
+  final List<_RouteQueueEntry> _entries = <_RouteQueueEntry>[];
+
+  bool get isNotEmpty => _entries.isNotEmpty;
+
+  void add(_RouteQueueEntry entry) {
+    _entries.add(entry);
+    int index = _entries.length - 1;
+    while (index > 0) {
+      final int parent = (index - 1) ~/ 2;
+      if (_entries[parent].distance <= entry.distance) break;
+      _entries[index] = _entries[parent];
+      index = parent;
+    }
+    _entries[index] = entry;
+  }
+
+  _RouteQueueEntry removeFirst() {
+    final _RouteQueueEntry first = _entries.first;
+    final _RouteQueueEntry last = _entries.removeLast();
+    if (_entries.isEmpty) return first;
+    int index = 0;
+    while (true) {
+      final int left = (index * 2) + 1;
+      if (left >= _entries.length) break;
+      final int right = left + 1;
+      final int child = right < _entries.length &&
+              _entries[right].distance < _entries[left].distance
+          ? right
+          : left;
+      if (_entries[child].distance >= last.distance) break;
+      _entries[index] = _entries[child];
+      index = child;
+    }
+    _entries[index] = last;
+    return first;
+  }
 }
 
 class ConnectionPainter extends CustomPainter {

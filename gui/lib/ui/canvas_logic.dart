@@ -3018,10 +3018,6 @@ class CanvasLogic {
           child: Text(queueRun ? 'Queue From Start' : 'Run From Start'),
         ),
         PopupMenuItem<String>(
-          value: 'run_all',
-          child: Text(queueRun ? 'Queue Run All' : 'Run All'),
-        ),
-        PopupMenuItem<String>(
           value: 'load_from_disk',
           enabled: canLoadFromDisk,
           child: const Text('Load from disk'),
@@ -3144,9 +3140,6 @@ class CanvasLogic {
             _showStatusSnackBar(context, finalDetail);
           }
         }
-        return;
-      case 'run_all':
-        await runAllFromUi(context: context, update: update);
         return;
       case 'load_from_disk':
         final String message = await _loadNodeSnapshotsToRam(
@@ -3339,6 +3332,9 @@ class CanvasLogic {
     NodeModel toNode,
   ) {
     final Offset delta = toNode.position - fromNode.position;
+    if (delta.dy < 0) {
+      return (NodeConnectionEdge.right, NodeConnectionEdge.left);
+    }
     if (delta.dy.abs() >= delta.dx.abs()) {
       return (NodeConnectionEdge.bottom, NodeConnectionEdge.top);
     }
@@ -10247,15 +10243,11 @@ class CanvasLogic {
     required bool output,
   }) {
     const double preferredLaneSpacing = 7;
-    final Map<String, dynamic> connection = connections[connectionIndex];
     final String nodeKey = output ? 'fromNode' : 'toNode';
-    final String portKey = output ? 'fromPort' : 'toPort';
-    final int portIndex = (connection[portKey] as num?)?.toInt() ?? 0;
     final List<int> siblings = <int>[];
     for (final MapEntry<int, Map<String, dynamic>> candidate
         in connections.asMap().entries) {
-      if (candidate.value[nodeKey]?.toString() != node.id ||
-          ((candidate.value[portKey] as num?)?.toInt() ?? 0) != portIndex) {
+      if (candidate.value[nodeKey]?.toString() != node.id) {
         continue;
       }
       final NodeConnectionEdge candidateEdge;
