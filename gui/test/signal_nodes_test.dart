@@ -4314,6 +4314,30 @@ time,Fz,Cz
     expect(spectrum.freqs[peakIndex], closeTo(targetFrequency, 1.5));
   });
 
+  test('PSD butterfly trace shades preserve condition hue', () {
+    const Color frequent = Color(0xFFFFD23F);
+    const Color rare = Color(0xFF2F80ED);
+    final List<Color> frequentTraces = List<Color>.generate(
+      6,
+      (int index) => psdConditionTraceColor(frequent, index),
+    );
+    final List<Color> rareTraces = List<Color>.generate(
+      6,
+      (int index) => psdConditionTraceColor(rare, index),
+    );
+    final double frequentHue = HSLColor.fromColor(frequent).hue;
+    final double rareHue = HSLColor.fromColor(rare).hue;
+
+    for (final Color color in frequentTraces) {
+      expect(HSLColor.fromColor(color).hue, closeTo(frequentHue, 0.5));
+    }
+    for (final Color color in rareTraces) {
+      expect(HSLColor.fromColor(color).hue, closeTo(rareHue, 0.5));
+    }
+    expect((frequentHue - rareHue).abs(), greaterThan(20));
+    expect(frequentTraces.toSet().length, greaterThan(1));
+  });
+
   test('PSD node retains spectra for every channel', () async {
     final Dataset dataset = Dataset('psd-multichannel', label: 'Multi');
     dataset.segmentedTimeSeries = SegmentedTimeSeriesData(

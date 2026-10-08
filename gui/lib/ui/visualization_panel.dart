@@ -3088,7 +3088,6 @@ List<_SeriesData> _averagePsdChannels(
   Map<int, List<_SeriesData>> channels, {
   required String condition,
   required bool logY,
-  required int colorOffset,
 }) {
   final int datasetCount = channels.values.fold<int>(
     0,
@@ -3109,7 +3108,7 @@ List<_SeriesData> _averagePsdChannels(
         label: separator < 0
             ? '$condition average'
             : firstLabel.substring(0, separator),
-        color: _seriesColor(colorOffset + averages.length),
+        color: inputs.first.color,
         logY: logY,
       ),
     );
@@ -3144,7 +3143,6 @@ List<_PsdPanelData> _buildPsdPanels(
           condition.value,
           condition: condition.key,
           logY: logY,
-          colorOffset: panels.length,
         );
         if (averages.isNotEmpty) {
           panels.add(_PsdPanelData(title: condition.key, series: averages));
@@ -3169,7 +3167,6 @@ List<_PsdPanelData> _buildPsdPanels(
         .toSet();
     for (final int channelIndex in channelIndices) {
       final List<_SeriesData> conditionSeries = <_SeriesData>[];
-      int conditionIndex = 0;
       for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
           in source.entries) {
         final List<_SeriesData> values =
@@ -3180,7 +3177,7 @@ List<_PsdPanelData> _buildPsdPanels(
               label: values.length == 1
                   ? condition.key
                   : '${condition.key} · ${value.label.split(' · ').first}',
-              color: _seriesColor(conditionIndex++),
+              color: value.color,
               points: value.points,
               subtitle: value.subtitle,
             ),
@@ -3200,17 +3197,14 @@ List<_PsdPanelData> _buildPsdPanels(
     }
   } else if (channelMode == 'average') {
     final List<_SeriesData> conditionSeries = <_SeriesData>[];
-    int conditionIndex = 0;
     for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
         in source.entries) {
       final List<_SeriesData> averages = _averagePsdChannels(
         condition.value,
         condition: condition.key,
         logY: logY,
-        colorOffset: conditionIndex,
       );
       conditionSeries.addAll(averages);
-      conditionIndex += averages.length;
     }
     if (conditionSeries.isNotEmpty) {
       panels.add(_PsdPanelData(title: 'Conditions', series: conditionSeries));
@@ -3284,7 +3278,7 @@ class _PsdChart extends StatelessWidget {
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
     final Map<String, Map<int, List<_SeriesData>>> seriesByConditionAndChannel =
         <String, Map<int, List<_SeriesData>>>{};
-    int seriesIndex = 0;
+    final Map<String, Color> conditionColors = <String, Color>{};
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
       final FrequencySpectrumData? spectrum = dataset.spectrum;
@@ -3311,6 +3305,10 @@ class _PsdChart extends StatelessWidget {
             points.add(FlSpot(freqs[i], plotPower));
           }
           if (points.isEmpty) continue;
+          final Color conditionColor = conditionColors.putIfAbsent(
+            entry.key,
+            () => _segmentLabelColor(entry.key, conditionColors.length),
+          );
           final String channelLabel = channelIndex < channelLabels.length
               ? channelLabels[channelIndex]
               : 'Channel ${channelIndex + 1}';
@@ -3322,7 +3320,10 @@ class _PsdChart extends StatelessWidget {
                   label: datasets.length == 1
                       ? channelLabel
                       : '${dataset.label} · $channelLabel',
-                  color: _seriesColor(seriesIndex++),
+                  color: psdConditionTraceColor(
+                    conditionColor,
+                    (datasetIndex * channelCount) + channelIndex,
+                  ),
                   points: points,
                   subtitle: '$count bins',
                 ),
@@ -5909,6 +5910,10 @@ Color _channelOverlayColor(Color baseColor, int channelIndex) {
     Colors.white,
     (channelIndex % 5) * 0.08,
   )!.withValues(alpha: opacity);
+}
+
+Color psdConditionTraceColor(Color baseColor, int variantIndex) {
+  return _segmentTraceShade(baseColor, variantIndex, 0).withValues(alpha: 0.9);
 }
 
 Color _segmentTraceShade(Color baseColor, int channelIndex, int segmentIndex) {
