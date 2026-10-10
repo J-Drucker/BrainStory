@@ -46,6 +46,7 @@ import 'package:brainstory_gui/ui/node_card.dart';
 import 'package:brainstory_gui/ui/raw_signal_browser.dart';
 import 'package:brainstory_gui/ui/topomap_view.dart';
 import 'package:brainstory_gui/ui/visualization_panel.dart';
+import 'package:brainstory_gui/ui/viewer_chrome.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1945,6 +1946,10 @@ void main() {
     expect(find.text('Close'), findsOneWidget);
     expect(find.text('Quit'), findsNothing);
     expect(find.text('Save and run'), findsNothing);
+    expect(find.byType(ViewerTraceSurface), findsOneWidget);
+    expect(find.byType(ViewerScaleCluster), findsOneWidget);
+    expect(find.byType(ViewerTimeAxisBar), findsOneWidget);
+    expect(find.byType(ViewerTimelineBar), findsOneWidget);
   });
 
   test('impedance visualization selects imported impedance datasets', () {

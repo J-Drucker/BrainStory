@@ -11,6 +11,7 @@ import 'package:brainstory_gui/nodes/visualization_node.dart';
 import 'package:brainstory_gui/ui/canvas_logic.dart';
 import 'package:brainstory_gui/ui/ica_viewer.dart';
 import 'package:brainstory_gui/ui/topomap_view.dart';
+import 'package:brainstory_gui/ui/viewer_chrome.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -55,7 +56,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey<String>('ica-preview')));
     await tester.pump();
-    expect(find.text('Sensor-space preview'), findsOneWidget);
+    expect(find.text('sensor preview'), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('ica-preview-traces')),
       findsOneWidget,
@@ -69,7 +70,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('ica-reset')));
     await tester.pump();
     expect(find.text('0 excluded'), findsOneWidget);
-    expect(find.text('Component activation traces'), findsOneWidget);
+    expect(find.text('components'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -110,6 +111,18 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('IC 1'), findsWidgets);
+    expect(find.byType(ViewerTraceSurface), findsOneWidget);
+    expect(find.byType(ViewerScaleCluster), findsOneWidget);
+    expect(find.byType(ViewerTimeAxisBar), findsOneWidget);
+    expect(find.byType(ViewerTimelineBar), findsOneWidget);
+  });
+
+  test('ICA component traces stay warm and sensor previews stay cool', () {
+    final HSLColor component = HSLColor.fromColor(icaComponentTraceColor(0));
+    final HSLColor sensor = HSLColor.fromColor(icaSensorTraceColor(0));
+
+    expect(component.hue, inInclusiveRange(0, 60));
+    expect(sensor.hue, inInclusiveRange(170, 240));
   });
 
   testWidgets('ICA topomaps use the lighter review palette', (
@@ -170,8 +183,10 @@ void main() {
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendEventToBinding(
-      const PointerScrollEvent(
-        position: Offset(200, 200),
+      PointerScrollEvent(
+        position: tester.getCenter(
+          find.byKey(const ValueKey<String>('ica-trace-viewport')),
+        ),
         scrollDelta: Offset(0, -20),
       ),
     );

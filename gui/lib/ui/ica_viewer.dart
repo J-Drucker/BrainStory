@@ -9,6 +9,25 @@ import '../model/dataset.dart';
 import '../nodes/channel_coordinates_node.dart';
 import 'raw_signal_browser.dart';
 import 'topomap_view.dart';
+import 'viewer_chrome.dart';
+
+String _scaleFactorText(double value) {
+  return '${value.toStringAsFixed(value < 1 ? 2 : 0)}x';
+}
+
+Color icaSensorTraceColor(int index) {
+  return rawSignalChannelPalette[index % rawSignalChannelPalette.length];
+}
+
+Color icaComponentTraceColor(int index) {
+  final int value = icaSensorTraceColor(index).toARGB32();
+  return Color(
+    0xFF000000 |
+        ((255 - ((value >> 16) & 0xFF)) << 16) |
+        ((255 - ((value >> 8) & 0xFF)) << 8) |
+        (255 - (value & 0xFF)),
+  );
+}
 
 class IcaViewer extends StatefulWidget {
   const IcaViewer({
@@ -185,16 +204,36 @@ class _IcaViewerState extends State<IcaViewer> {
     bool trustworthy,
   ) {
     return Wrap(
-      spacing: 8,
+      spacing: 10,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
-        FilledButton.icon(
-          key: const ValueKey<String>('ica-preview'),
-          onPressed: () => setState(() => _previewing = !_previewing),
-          icon: Icon(_previewing ? Icons.visibility_off : Icons.visibility),
-          label: Text(_previewing ? 'Components' : 'Preview'),
+        Text(
+          '$componentCount IC  •  ${transform.originalSampleRate.toStringAsFixed(1)} Hz',
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
         ),
+        const ViewerControlStripDivider(),
+        ViewerChoiceGroup(
+          label: 'View:',
+          options: <ViewerChoiceOption>[
+            ViewerChoiceOption(
+              label: 'components',
+              selected: !_previewing,
+              onPressed: () => setState(() => _previewing = false),
+            ),
+            ViewerChoiceOption(
+              key: const ValueKey<String>('ica-preview'),
+              label: 'sensor preview',
+              selected: _previewing,
+              onPressed: () => setState(() => _previewing = true),
+            ),
+          ],
+        ),
+        const ViewerControlStripDivider(),
         FilledButton.icon(
           key: const ValueKey<String>('ica-create-node'),
           onPressed: !trustworthy || _excluded.isEmpty || _saving
@@ -245,29 +284,24 @@ class _IcaViewerState extends State<IcaViewer> {
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(width: 6),
-        _scaleDropdown(
-          label: 'Time',
-          value: _windowSeconds,
-          options: _windowOptions,
-          format: (double value) => '${value.toStringAsFixed(0)} s',
-          onChanged: (double value) => _windowSeconds = value,
+        const ViewerControlStripDivider(),
+        ViewerScaleCluster(
+          timeSeconds: _windowSeconds,
+          timeOptionsSeconds: _windowOptions,
+          onTimeSelected: (double value) =>
+              setState(() => _windowSeconds = value),
+          rangeLabel: 'Amplitude',
+          rangeValue: _verticalScale,
+          rangeOptions: _amplitudeOptions,
+          rangeValueText: _scaleFactorText,
+          rangeItemText: _scaleFactorText,
+          onRangeSelected: (double value) =>
+              setState(() => _verticalScale = value),
+          spacingFactor: _spacing,
+          spacingOptions: _spacingOptions,
+          onSpacingSelected: (double value) => setState(() => _spacing = value),
         ),
-        _scaleDropdown(
-          label: 'Amplitude',
-          value: _verticalScale,
-          options: _amplitudeOptions,
-          format: (double value) =>
-              '${value.toStringAsFixed(value < 1 ? 2 : 0)}×',
-          onChanged: (double value) => _verticalScale = value,
-        ),
-        _scaleDropdown(
-          label: 'Spacing',
-          value: _spacing,
-          options: _spacingOptions,
-          format: (double value) => '${value.toStringAsFixed(2)}×',
-          onChanged: (double value) => _spacing = value,
-        ),
+        const ViewerControlStripDivider(),
         Tooltip(
           message:
               'On gives each mean-centered log topography its own symmetric color range.',
@@ -318,201 +352,159 @@ class _IcaViewerState extends State<IcaViewer> {
         (int index) => _previewing ? 'Channel ${index + 1}' : 'IC ${index + 1}',
       );
     }
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.035),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            Text(
-              _previewing
-                  ? 'Sensor-space preview'
-                  : 'Component activation traces',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (BuildContext context, BoxConstraints constraints) {
-                  const double labelWidth = 58;
-                  const double labelGap = 8;
-                  final double viewportWidth = math.max(
-                    1,
-                    constraints.maxWidth - labelWidth - labelGap,
-                  );
-                  final double duration = sampleCount / activations.sampleRate;
-                  final double canvasWidth = math.max(
-                    viewportWidth,
-                    viewportWidth * duration / _windowSeconds,
-                  );
-                  final double canvasHeight = math.max(
-                    constraints.maxHeight,
-                    traces.length * 52.0 * _spacing,
-                  );
-                  final List<Color>? colors = _previewing
-                      ? null
-                      : List<Color>.generate(traces.length, _componentColor);
-                  return Column(
-                    children: <Widget>[
-                      Expanded(
-                        child: Listener(
-                          key: const ValueKey<String>('ica-trace-viewport'),
-                          onPointerSignal: _handleTracePointerSignal,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onHorizontalDragUpdate:
-                                (DragUpdateDetails details) =>
-                                    _scrollHorizontal(-details.delta.dx),
-                            onDoubleTap: () {
-                              if (_horizontalController.hasClients) {
-                                _horizontalController.jumpTo(0);
-                              }
-                            },
-                            child: Scrollbar(
+    return ViewerTraceSurface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final double labelWidth = labels
+                    .map((String label) => 24.0 + (label.length * 7.0))
+                    .fold<double>(58, math.max)
+                    .clamp(58, 180);
+                const double labelGap = 8;
+                final double viewportWidth = math.max(
+                  1,
+                  constraints.maxWidth - labelWidth - labelGap,
+                );
+                final double duration = sampleCount / activations.sampleRate;
+                final double canvasWidth = math.max(
+                  viewportWidth,
+                  viewportWidth * duration / _windowSeconds,
+                );
+                final double canvasHeight = math.max(
+                  constraints.maxHeight,
+                  traces.length * 52.0 * _spacing,
+                );
+                final List<Color> colors = List<Color>.generate(
+                  traces.length,
+                  _previewing ? icaSensorTraceColor : icaComponentTraceColor,
+                );
+                return Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: Listener(
+                        key: const ValueKey<String>('ica-trace-viewport'),
+                        onPointerSignal: _handleTracePointerSignal,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (DragUpdateDetails details) =>
+                              _scrollHorizontal(-details.delta.dx),
+                          onDoubleTap: () {
+                            if (_horizontalController.hasClients) {
+                              _horizontalController.jumpTo(0);
+                            }
+                          },
+                          child: Scrollbar(
+                            controller: _verticalController,
+                            thumbVisibility:
+                                canvasHeight > constraints.maxHeight,
+                            child: SingleChildScrollView(
                               controller: _verticalController,
-                              thumbVisibility:
-                                  canvasHeight > constraints.maxHeight,
-                              child: SingleChildScrollView(
-                                controller: _verticalController,
-                                child: SizedBox(
-                                  height: canvasHeight,
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: <Widget>[
-                                      SizedBox(
-                                        key: const ValueKey<String>(
-                                          'ica-frozen-labels',
-                                        ),
-                                        width: labelWidth,
-                                        height: canvasHeight,
-                                        child: _IcaLabelColumn(
-                                          labels: labels,
-                                          colors: colors,
-                                          excluded: _previewing
-                                              ? const <int>{}
-                                              : _excluded,
-                                        ),
+                              child: SizedBox(
+                                height: canvasHeight,
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    SizedBox(
+                                      key: const ValueKey<String>(
+                                        'ica-frozen-labels',
                                       ),
-                                      const SizedBox(width: labelGap),
-                                      Expanded(
-                                        child: Scrollbar(
+                                      width: labelWidth,
+                                      height: canvasHeight,
+                                      child: _IcaLabelColumn(
+                                        labels: labels,
+                                        colors: colors,
+                                        excluded: _previewing
+                                            ? const <int>{}
+                                            : _excluded,
+                                      ),
+                                    ),
+                                    const SizedBox(width: labelGap),
+                                    Expanded(
+                                      child: Scrollbar(
+                                        controller: _horizontalController,
+                                        thumbVisibility:
+                                            canvasWidth > viewportWidth,
+                                        notificationPredicate:
+                                            (ScrollNotification notice) =>
+                                                notice.metrics.axis ==
+                                                Axis.horizontal,
+                                        child: SingleChildScrollView(
                                           controller: _horizontalController,
-                                          thumbVisibility:
-                                              canvasWidth > viewportWidth,
-                                          notificationPredicate:
-                                              (ScrollNotification notice) =>
-                                                  notice.metrics.axis ==
-                                                  Axis.horizontal,
-                                          child: SingleChildScrollView(
-                                            controller: _horizontalController,
-                                            scrollDirection: Axis.horizontal,
-                                            child: SizedBox(
-                                              width: canvasWidth,
-                                              height: canvasHeight,
-                                              child: CustomPaint(
-                                                key: ValueKey<String>(
-                                                  _previewing
-                                                      ? 'ica-preview-traces'
-                                                      : 'ica-component-traces',
-                                                ),
-                                                painter: _StackedTracePainter(
-                                                  traces: traces,
-                                                  colors: colors,
-                                                  excluded: _previewing
-                                                      ? const <int>{}
-                                                      : _excluded,
-                                                  verticalScale: _verticalScale,
-                                                ),
-                                                child: const SizedBox.expand(),
+                                          scrollDirection: Axis.horizontal,
+                                          child: SizedBox(
+                                            width: canvasWidth,
+                                            height: canvasHeight,
+                                            child: CustomPaint(
+                                              key: ValueKey<String>(
+                                                _previewing
+                                                    ? 'ica-preview-traces'
+                                                    : 'ica-component-traces',
                                               ),
+                                              painter: _StackedTracePainter(
+                                                traces: traces,
+                                                colors: colors,
+                                                excluded: _previewing
+                                                    ? const <int>{}
+                                                    : _excluded,
+                                                verticalScale: _verticalScale,
+                                              ),
+                                              child: const SizedBox.expand(),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: <Widget>[
-                          const SizedBox(width: labelWidth + labelGap),
-                          Expanded(
-                            child: _IcaTimeAxisBar(
-                              controller: _horizontalController,
-                              pixelsPerSecond: canvasWidth / duration,
-                              viewportWidth: viewportWidth,
-                              durationSeconds: duration,
-                            ),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: <Widget>[
+                        SizedBox(width: labelWidth + labelGap),
+                        Expanded(
+                          child: ViewerTimeAxisBar(
+                            key: const ValueKey<String>('ica-time-axis'),
+                            controller: _horizontalController,
+                            pixelsPerSecond: canvasWidth / duration,
+                            viewportWidth: viewportWidth,
+                            durationSeconds: duration,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: <Widget>[
-                          const SizedBox(width: labelWidth + labelGap),
-                          Expanded(
-                            child: _IcaTimelineBar(
-                              controller: _horizontalController,
-                              totalWidth: canvasWidth,
-                              viewportWidth: viewportWidth,
-                              durationSeconds: duration,
-                            ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: <Widget>[
+                        SizedBox(width: labelWidth + labelGap),
+                        Expanded(
+                          child: ViewerTimelineBar(
+                            key: const ValueKey<String>('ica-timeline-slider'),
+                            controller: _horizontalController,
+                            totalWidth: canvasWidth,
+                            viewportWidth: viewportWidth,
+                            durationSeconds: duration,
+                            accentColor: _previewing
+                                ? Colors.cyanAccent
+                                : Colors.orangeAccent,
                           ),
-                        ],
-                      ),
-                    ],
-                  );
-                },
-              ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              },
             ),
-            const Text(
-              'Drag or scroll to pan. Ctrl-scroll changes amplitude; Ctrl-Shift-scroll changes time.',
-              textAlign: TextAlign.right,
-              style: TextStyle(color: Colors.white54, fontSize: 11),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
-
-  Widget _scaleDropdown({
-    required String label,
-    required double value,
-    required List<double> options,
-    required String Function(double value) format,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Text('$label: ', style: const TextStyle(color: Colors.white70)),
-        DropdownButton<double>(
-          value: value,
-          items: options
-              .map(
-                (double option) => DropdownMenuItem<double>(
-                  value: option,
-                  child: Text(format(option)),
-                ),
-              )
-              .toList(growable: false),
-          onChanged: (double? next) {
-            if (next != null) setState(() => onChanged(next));
-          },
-        ),
-      ],
     );
   }
 
@@ -612,7 +604,7 @@ class _IcaViewerState extends State<IcaViewer> {
                           fontWeight: FontWeight.w700,
                           color: selected
                               ? Colors.white54
-                              : _componentColor(componentIndex),
+                              : icaComponentTraceColor(componentIndex),
                         ),
                       ),
                     ),
@@ -676,18 +668,6 @@ class _IcaViewerState extends State<IcaViewer> {
           ? _excluded.remove(componentIndex)
           : _excluded.add(componentIndex);
     });
-  }
-
-  Color _componentColor(int index) {
-    final int value =
-        rawSignalChannelPalette[index % rawSignalChannelPalette.length]
-            .toARGB32();
-    return Color(
-      0xFF000000 |
-          ((255 - ((value >> 16) & 0xFF)) << 16) |
-          ((255 - ((value >> 8) & 0xFF)) << 8) |
-          (255 - (value & 0xFF)),
-    );
   }
 
   void _scrollHorizontal(double delta) {
@@ -945,207 +925,6 @@ class _IcaLabelColumn extends StatelessWidget {
           ),
         );
       }),
-    );
-  }
-}
-
-class _IcaTimeAxisBar extends StatelessWidget {
-  const _IcaTimeAxisBar({
-    required this.controller,
-    required this.pixelsPerSecond,
-    required this.viewportWidth,
-    required this.durationSeconds,
-  });
-
-  final ScrollController controller;
-  final double pixelsPerSecond;
-  final double viewportWidth;
-  final double durationSeconds;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      key: const ValueKey<String>('ica-time-axis'),
-      height: 26,
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (BuildContext context, Widget? child) {
-          final double offset = controller.hasClients ? controller.offset : 0;
-          final double startSeconds = offset / pixelsPerSecond;
-          final double endSeconds = (offset + viewportWidth) / pixelsPerSecond;
-          final int firstTick = math.max(0, startSeconds.floor());
-          final int lastTick = math.min(
-            durationSeconds.ceil(),
-            endSeconds.ceil(),
-          );
-          return Container(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
-              ),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: <Widget>[
-                for (int second = firstTick; second <= lastTick; second++)
-                  ..._icaTimeTick(
-                    second: second,
-                    x: (second * pixelsPerSecond) - offset,
-                  ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-List<Widget> _icaTimeTick({required int second, required double x}) {
-  const double labelWidth = 44;
-  return <Widget>[
-    Positioned(
-      left: x - 0.5,
-      top: 0,
-      child: Container(
-        width: 1,
-        height: 8,
-        color: Colors.white.withValues(alpha: 0.28),
-      ),
-    ),
-    Positioned(
-      left: x - (labelWidth / 2),
-      top: 10,
-      child: SizedBox(
-        width: labelWidth,
-        child: Text(
-          '${second}s',
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white70, fontSize: 10),
-        ),
-      ),
-    ),
-  ];
-}
-
-class _IcaTimelineBar extends StatelessWidget {
-  const _IcaTimelineBar({
-    required this.controller,
-    required this.totalWidth,
-    required this.viewportWidth,
-    required this.durationSeconds,
-  });
-
-  final ScrollController controller;
-  final double totalWidth;
-  final double viewportWidth;
-  final double durationSeconds;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      key: const ValueKey<String>('ica-timeline-slider'),
-      height: 28,
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (BuildContext context, Widget? child) {
-          return LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final double barWidth = constraints.maxWidth;
-              final double windowFraction = totalWidth <= 0
-                  ? 1
-                  : (viewportWidth / totalWidth).clamp(0.02, 1.0);
-              final double thumbWidth = math.max(18, barWidth * windowFraction);
-              final double maxOffset = math.max(0, totalWidth - viewportWidth);
-              final double offset = controller.hasClients
-                  ? controller.offset
-                  : 0;
-              final double normalized = maxOffset == 0
-                  ? 0
-                  : (offset / maxOffset).clamp(0.0, 1.0);
-              final double travel = math.max(0, barWidth - thumbWidth);
-              final double thumbLeft = travel * normalized;
-              final double startSeconds = durationSeconds * normalized;
-              final double visibleSeconds = durationSeconds * windowFraction;
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragUpdate: (DragUpdateDetails details) {
-                  if (!controller.hasClients || maxOffset == 0 || travel == 0) {
-                    return;
-                  }
-                  final double left = (thumbLeft + details.delta.dx).clamp(
-                    0.0,
-                    travel,
-                  );
-                  controller.jumpTo((left / travel) * maxOffset);
-                },
-                onTapDown: (TapDownDetails details) {
-                  if (!controller.hasClients || maxOffset == 0 || travel == 0) {
-                    return;
-                  }
-                  final double left =
-                      (details.localPosition.dx - (thumbWidth / 2)).clamp(
-                        0.0,
-                        travel,
-                      );
-                  controller.jumpTo((left / travel) * maxOffset);
-                },
-                child: Stack(
-                  children: <Widget>[
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: thumbLeft,
-                      top: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: thumbWidth,
-                        decoration: BoxDecoration(
-                          color: Colors.cyanAccent.withValues(alpha: 0.32),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: Colors.cyanAccent.withValues(alpha: 0.72),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Row(
-                          children: <Widget>[
-                            Text(
-                              '${startSeconds.toStringAsFixed(1)} s',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '${visibleSeconds.toStringAsFixed(1)} s window / ${durationSeconds.toStringAsFixed(1)} s total',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
     );
   }
 }

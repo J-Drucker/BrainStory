@@ -15,6 +15,7 @@ import '../nodes/interactive_artifact_detection_node.dart';
 import 'artifact_template_preview.dart';
 import 'channel_positions_dialog.dart';
 import 'topomap_view.dart';
+import 'viewer_chrome.dart';
 
 const List<Color> rawSignalChannelPalette = <Color>[
   Color(0xFF7FDBFF),
@@ -318,133 +319,87 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                   'raw-trace-viewport',
                                 ),
                                 onPointerSignal: _handleTracePointerSignal,
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(10),
-                                    child: Scrollbar(
+                                child: ViewerTraceSurface(
+                                  child: Scrollbar(
+                                    controller: _verticalController,
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
                                       controller: _verticalController,
-                                      thumbVisibility: true,
-                                      child: SingleChildScrollView(
-                                        controller: _verticalController,
-                                        scrollDirection: Axis.vertical,
-                                        child: SizedBox(
-                                          width: leftContentWidth,
-                                          height: totalHeight,
-                                          child: Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: <Widget>[
-                                              if (!hideSignals)
-                                                SizedBox(
-                                                  width: labelWidth,
-                                                  child: _ChannelLabelColumn(
-                                                    labels: labels,
-                                                    colors: channelColors,
-                                                    removed: removedRows,
-                                                    channelHeight:
-                                                        _channelHeight(
-                                                          traceAreaHeight,
-                                                          channelCount,
-                                                        ),
-                                                    onCycleColor:
-                                                        _cycleChannelColor,
-                                                    channelEditEnabled:
-                                                        markerEditingEnabled,
-                                                    onEditChannel:
-                                                        (
-                                                          int rowIndex,
-                                                        ) => _showChannelEditPanel(
-                                                          channelRows[rowIndex]
-                                                              .sourceIndex,
-                                                        ),
+                                      scrollDirection: Axis.vertical,
+                                      child: SizedBox(
+                                        width: leftContentWidth,
+                                        height: totalHeight,
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: <Widget>[
+                                            if (!hideSignals)
+                                              SizedBox(
+                                                width: labelWidth,
+                                                child: _ChannelLabelColumn(
+                                                  labels: labels,
+                                                  colors: channelColors,
+                                                  removed: removedRows,
+                                                  channelHeight: _channelHeight(
+                                                    traceAreaHeight,
+                                                    channelCount,
                                                   ),
+                                                  onCycleColor:
+                                                      _cycleChannelColor,
+                                                  channelEditEnabled:
+                                                      markerEditingEnabled,
+                                                  onEditChannel:
+                                                      (int rowIndex) =>
+                                                          _showChannelEditPanel(
+                                                            channelRows[rowIndex]
+                                                                .sourceIndex,
+                                                          ),
                                                 ),
-                                              if (!hideSignals)
-                                                const SizedBox(width: 4),
-                                              if (!hideSignals)
-                                                _PanelResizeHandle(
-                                                  onDoubleTap: () =>
-                                                      setState(() {
-                                                        widget.params.remove(
-                                                          'left_panel_width',
-                                                        );
-                                                      }),
-                                                  onDragUpdate: (double delta) {
-                                                    _updateParam(
-                                                      'left_panel_width',
-                                                      (_resolvedLeftPanelWidth(
-                                                                defaultLabelWidth,
-                                                              ) +
-                                                              delta)
-                                                          .clamp(88.0, 260.0),
-                                                    );
-                                                  },
-                                                ),
-                                              if (!hideSignals)
-                                                const SizedBox(width: 4),
-                                              Expanded(
-                                                child: Scrollbar(
+                                              ),
+                                            if (!hideSignals)
+                                              const SizedBox(width: 4),
+                                            if (!hideSignals)
+                                              _PanelResizeHandle(
+                                                onDoubleTap: () => setState(() {
+                                                  widget.params.remove(
+                                                    'left_panel_width',
+                                                  );
+                                                }),
+                                                onDragUpdate: (double delta) {
+                                                  _updateParam(
+                                                    'left_panel_width',
+                                                    (_resolvedLeftPanelWidth(
+                                                              defaultLabelWidth,
+                                                            ) +
+                                                            delta)
+                                                        .clamp(88.0, 260.0),
+                                                  );
+                                                },
+                                              ),
+                                            if (!hideSignals)
+                                              const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Scrollbar(
+                                                controller:
+                                                    _horizontalController,
+                                                thumbVisibility: true,
+                                                notificationPredicate:
+                                                    (
+                                                      ScrollNotification
+                                                      notification,
+                                                    ) =>
+                                                        notification
+                                                            .metrics
+                                                            .axis ==
+                                                        Axis.horizontal,
+                                                child: SingleChildScrollView(
                                                   controller:
                                                       _horizontalController,
-                                                  thumbVisibility: true,
-                                                  notificationPredicate:
-                                                      (
-                                                        ScrollNotification
-                                                        notification,
-                                                      ) =>
-                                                          notification
-                                                              .metrics
-                                                              .axis ==
-                                                          Axis.horizontal,
-                                                  child: SingleChildScrollView(
-                                                    controller:
-                                                        _horizontalController,
-                                                    scrollDirection:
-                                                        Axis.horizontal,
-                                                    child: MouseRegion(
-                                                      onHover:
-                                                          (
-                                                            PointerHoverEvent
-                                                            details,
-                                                          ) {
-                                                            if (!markerEditingEnabled) {
-                                                              if (_hoveredMarkerReferenceId !=
-                                                                  null) {
-                                                                setState(() {
-                                                                  _hoveredMarkerReferenceId =
-                                                                      null;
-                                                                });
-                                                              }
-                                                              return;
-                                                            }
-                                                            final TimeMarker?
-                                                            hoveredMarker =
-                                                                _markerAtLabelPosition(
-                                                                  details
-                                                                      .localPosition,
-                                                                  pixelsPerSecond,
-                                                                );
-                                                            final String?
-                                                            nextId =
-                                                                hoveredMarker ==
-                                                                    null
-                                                                ? null
-                                                                : _markerReferenceId(
-                                                                    hoveredMarker,
-                                                                  );
-                                                            if (nextId !=
-                                                                _hoveredMarkerReferenceId) {
-                                                              setState(() {
-                                                                _hoveredMarkerReferenceId =
-                                                                    nextId;
-                                                              });
-                                                            }
-                                                          },
-                                                      onExit: (_) {
+                                                  scrollDirection:
+                                                      Axis.horizontal,
+                                                  child: MouseRegion(
+                                                    onHover: (PointerHoverEvent details) {
+                                                      if (!markerEditingEnabled) {
                                                         if (_hoveredMarkerReferenceId !=
                                                             null) {
                                                           setState(() {
@@ -452,162 +407,196 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                                 null;
                                                           });
                                                         }
-                                                      },
-                                                      child: GestureDetector(
-                                                        behavior:
-                                                            HitTestBehavior
-                                                                .opaque,
-                                                        onTapDown: null,
-                                                        onPanStart:
-                                                            markerEditingEnabled
-                                                            ? (
-                                                                DragStartDetails
-                                                                details,
-                                                              ) {
-                                                                _artifactDragActive =
-                                                                    interactiveMatchingEnabled &&
-                                                                    !HardwareKeyboard
-                                                                        .instance
-                                                                        .isShiftPressed;
-                                                                if (_artifactDragActive) {
-                                                                  _handleArtifactDragStart(
-                                                                    details
-                                                                        .localPosition,
-                                                                    details
-                                                                        .globalPosition,
-                                                                  );
-                                                                } else {
-                                                                  _handleMarkerDragStart(
-                                                                    details
-                                                                        .localPosition,
-                                                                  );
-                                                                }
-                                                              }
-                                                            : null,
-                                                        onPanUpdate:
-                                                            markerEditingEnabled
-                                                            ? (
-                                                                DragUpdateDetails
-                                                                details,
-                                                              ) {
-                                                                if (_artifactDragActive) {
-                                                                  _handleArtifactDragUpdate(
-                                                                    details
-                                                                        .localPosition,
-                                                                    details
-                                                                        .globalPosition,
-                                                                  );
-                                                                } else {
-                                                                  _handleMarkerDragUpdate(
-                                                                    details
-                                                                        .localPosition,
-                                                                  );
-                                                                }
-                                                              }
-                                                            : null,
-                                                        onPanEnd:
-                                                            markerEditingEnabled
-                                                            ? (
-                                                                DragEndDetails
-                                                                details,
-                                                              ) {
-                                                                final bool
-                                                                artifactDrag =
-                                                                    _artifactDragActive;
-                                                                _artifactDragActive =
-                                                                    false;
-                                                                if (artifactDrag) {
-                                                                  _handleArtifactDragEnd(
-                                                                    pixelsPerSecond,
-                                                                  );
-                                                                } else {
-                                                                  _handleMarkerDragEnd(
-                                                                    pixelsPerSecond,
-                                                                  );
-                                                                }
-                                                              }
-                                                            : null,
-                                                        onTapUp:
-                                                            markerEditingEnabled
-                                                            ? (
-                                                                TapUpDetails
-                                                                details,
-                                                              ) {
-                                                                _handleMarkerTapOrRename(
+                                                        return;
+                                                      }
+                                                      final TimeMarker?
+                                                      hoveredMarker =
+                                                          _markerAtLabelPosition(
+                                                            details
+                                                                .localPosition,
+                                                            pixelsPerSecond,
+                                                          );
+                                                      final String? nextId =
+                                                          hoveredMarker == null
+                                                          ? null
+                                                          : _markerReferenceId(
+                                                              hoveredMarker,
+                                                            );
+                                                      if (nextId !=
+                                                          _hoveredMarkerReferenceId) {
+                                                        setState(() {
+                                                          _hoveredMarkerReferenceId =
+                                                              nextId;
+                                                        });
+                                                      }
+                                                    },
+                                                    onExit: (_) {
+                                                      if (_hoveredMarkerReferenceId !=
+                                                          null) {
+                                                        setState(() {
+                                                          _hoveredMarkerReferenceId =
+                                                              null;
+                                                        });
+                                                      }
+                                                    },
+                                                    child: GestureDetector(
+                                                      behavior: HitTestBehavior
+                                                          .opaque,
+                                                      onTapDown: null,
+                                                      onPanStart:
+                                                          markerEditingEnabled
+                                                          ? (
+                                                              DragStartDetails
+                                                              details,
+                                                            ) {
+                                                              _artifactDragActive =
+                                                                  interactiveMatchingEnabled &&
+                                                                  !HardwareKeyboard
+                                                                      .instance
+                                                                      .isShiftPressed;
+                                                              if (_artifactDragActive) {
+                                                                _handleArtifactDragStart(
                                                                   details
                                                                       .localPosition,
+                                                                  details
+                                                                      .globalPosition,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragStart(
+                                                                  details
+                                                                      .localPosition,
+                                                                );
+                                                              }
+                                                            }
+                                                          : null,
+                                                      onPanUpdate:
+                                                          markerEditingEnabled
+                                                          ? (
+                                                              DragUpdateDetails
+                                                              details,
+                                                            ) {
+                                                              if (_artifactDragActive) {
+                                                                _handleArtifactDragUpdate(
+                                                                  details
+                                                                      .localPosition,
+                                                                  details
+                                                                      .globalPosition,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragUpdate(
+                                                                  details
+                                                                      .localPosition,
+                                                                );
+                                                              }
+                                                            }
+                                                          : null,
+                                                      onPanEnd:
+                                                          markerEditingEnabled
+                                                          ? (
+                                                              DragEndDetails
+                                                              details,
+                                                            ) {
+                                                              final bool
+                                                              artifactDrag =
+                                                                  _artifactDragActive;
+                                                              _artifactDragActive =
+                                                                  false;
+                                                              if (artifactDrag) {
+                                                                _handleArtifactDragEnd(
+                                                                  pixelsPerSecond,
+                                                                );
+                                                              } else {
+                                                                _handleMarkerDragEnd(
                                                                   pixelsPerSecond,
                                                                 );
                                                               }
-                                                            : null,
-                                                        child: SizedBox(
-                                                          width: totalWidth,
-                                                          height: totalHeight,
-                                                          child: RepaintBoundary(
-                                                            child: AnimatedBuilder(
-                                                              animation: Listenable.merge(<
-                                                                Listenable
-                                                              >[
-                                                                _horizontalController,
-                                                                _verticalController,
-                                                              ]),
-                                                              builder:
-                                                                  (
-                                                                    BuildContext
-                                                                    context,
-                                                                    Widget?
-                                                                    child,
-                                                                  ) {
-                                                                    return CustomPaint(
-                                                                      painter: _RawSignalPainter(
-                                                                        channels:
-                                                                            channels,
-                                                                        channelLabels:
-                                                                            labels,
-                                                                        sampleCount:
-                                                                            timeSeries.sampleCount,
-                                                                        sampleRate:
-                                                                            timeSeries.sampleRate,
-                                                                        channelHeight: _channelHeight(
-                                                                          traceAreaHeight,
-                                                                          channelCount,
-                                                                        ),
-                                                                        pixelsPerSecond:
-                                                                            pixelsPerSecond,
-                                                                        yScaleUv:
-                                                                            _yScaleUv(),
-                                                                        showSignals:
-                                                                            showSignals,
-                                                                        removeDc:
-                                                                            removeDc,
-                                                                        colors:
-                                                                            channelColors,
-                                                                        removedRows:
-                                                                            removedRows,
-                                                                        markers:
-                                                                            markers,
-                                                                        selectionStartX:
-                                                                            _dragSelectionStart?.dx,
-                                                                        selectionEndX:
-                                                                            _dragSelectionCurrent?.dx,
-                                                                        hoveredMarkerReferenceId:
-                                                                            _hoveredMarkerReferenceId,
-                                                                        horizontalOffset:
-                                                                            _horizontalController.hasClients
-                                                                            ? _horizontalController.offset
-                                                                            : 0.0,
-                                                                        verticalOffset:
-                                                                            _verticalController.hasClients
-                                                                            ? _verticalController.offset
-                                                                            : 0.0,
-                                                                        viewportWidth:
-                                                                            effectiveViewportWidth,
-                                                                        viewportHeight:
-                                                                            traceAreaHeight,
+                                                            }
+                                                          : null,
+                                                      onTapUp:
+                                                          markerEditingEnabled
+                                                          ? (
+                                                              TapUpDetails
+                                                              details,
+                                                            ) {
+                                                              _handleMarkerTapOrRename(
+                                                                details
+                                                                    .localPosition,
+                                                                pixelsPerSecond,
+                                                              );
+                                                            }
+                                                          : null,
+                                                      child: SizedBox(
+                                                        width: totalWidth,
+                                                        height: totalHeight,
+                                                        child: RepaintBoundary(
+                                                          child: AnimatedBuilder(
+                                                            animation: Listenable.merge(<
+                                                              Listenable
+                                                            >[
+                                                              _horizontalController,
+                                                              _verticalController,
+                                                            ]),
+                                                            builder:
+                                                                (
+                                                                  BuildContext
+                                                                  context,
+                                                                  Widget? child,
+                                                                ) {
+                                                                  return CustomPaint(
+                                                                    painter: _RawSignalPainter(
+                                                                      channels:
+                                                                          channels,
+                                                                      channelLabels:
+                                                                          labels,
+                                                                      sampleCount:
+                                                                          timeSeries
+                                                                              .sampleCount,
+                                                                      sampleRate:
+                                                                          timeSeries
+                                                                              .sampleRate,
+                                                                      channelHeight: _channelHeight(
+                                                                        traceAreaHeight,
+                                                                        channelCount,
                                                                       ),
-                                                                    );
-                                                                  },
-                                                            ),
+                                                                      pixelsPerSecond:
+                                                                          pixelsPerSecond,
+                                                                      yScaleUv:
+                                                                          _yScaleUv(),
+                                                                      showSignals:
+                                                                          showSignals,
+                                                                      removeDc:
+                                                                          removeDc,
+                                                                      colors:
+                                                                          channelColors,
+                                                                      removedRows:
+                                                                          removedRows,
+                                                                      markers:
+                                                                          markers,
+                                                                      selectionStartX:
+                                                                          _dragSelectionStart
+                                                                              ?.dx,
+                                                                      selectionEndX:
+                                                                          _dragSelectionCurrent
+                                                                              ?.dx,
+                                                                      hoveredMarkerReferenceId:
+                                                                          _hoveredMarkerReferenceId,
+                                                                      horizontalOffset:
+                                                                          _horizontalController
+                                                                              .hasClients
+                                                                          ? _horizontalController.offset
+                                                                          : 0.0,
+                                                                      verticalOffset:
+                                                                          _verticalController
+                                                                              .hasClients
+                                                                          ? _verticalController.offset
+                                                                          : 0.0,
+                                                                      viewportWidth:
+                                                                          effectiveViewportWidth,
+                                                                      viewportHeight:
+                                                                          traceAreaHeight,
+                                                                    ),
+                                                                  );
+                                                                },
                                                           ),
                                                         ),
                                                       ),
@@ -615,8 +604,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                                   ),
                                                 ),
                                               ),
-                                            ],
-                                          ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -638,7 +627,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                   Expanded(
                                     child: SizedBox(
                                       width: effectiveViewportWidth,
-                                      child: _TimeAxisBar(
+                                      child: ViewerTimeAxisBar(
                                         controller: _horizontalController,
                                         pixelsPerSecond: pixelsPerSecond,
                                         viewportWidth: effectiveViewportWidth,
@@ -663,7 +652,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                                   Expanded(
                                     child: SizedBox(
                                       width: effectiveViewportWidth,
-                                      child: _TimelineBar(
+                                      child: ViewerTimelineBar(
                                         controller: _horizontalController,
                                         totalWidth: totalWidth,
                                         viewportWidth: effectiveViewportWidth,
@@ -770,7 +759,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 fontSize: 13,
               ),
             ),
-            const _ControlStripDivider(),
+            const ViewerControlStripDivider(),
             _InlineToggleGroup(
               label: 'View:',
               options: <_InlineToggleOption>[
@@ -787,22 +776,22 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                 ),
               ],
             ),
-            const _ControlStripDivider(),
+            const ViewerControlStripDivider(),
             _InlineToggleButton(
               label: 'Remove DC',
               selected: removeDc,
               onPressed: () => _updateParam('raw_remove_dc', !removeDc),
             ),
-            const _ControlStripDivider(),
-            _InlineChoiceGroup(
+            const ViewerControlStripDivider(),
+            ViewerChoiceGroup(
               label: 'Mode:',
-              options: <_InlineChoiceOption>[
-                _InlineChoiceOption(
+              options: <ViewerChoiceOption>[
+                ViewerChoiceOption(
                   label: 'view',
                   selected: _currentMode() == 'view',
                   onPressed: () => _setMode('view'),
                 ),
-                _InlineChoiceOption(
+                ViewerChoiceOption(
                   label: 'edit',
                   selected: _currentMode() == 'edit',
                   onPressed: () => _setMode('edit'),
@@ -816,14 +805,18 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                     : 'Shift+drag adds marker ranges',
                 style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
-            const _ControlStripDivider(),
-            _ScaleCluster(
+            const ViewerControlStripDivider(),
+            ViewerScaleCluster(
               timeSeconds: windowSeconds,
               timeOptionsSeconds: _timeSpanOptionsSec,
               onTimeSelected: (double value) =>
                   _updateParam('window_sec', value),
-              rangeUv: _yScaleUv(),
-              rangeOptionsUv: _yScaleOptionsUv,
+              rangeLabel: 'Range',
+              rangeValue: _yScaleUv(),
+              rangeOptions: _yScaleOptionsUv,
+              rangeValueText: (double value) =>
+                  '${value.toStringAsFixed(0)} μV',
+              rangeItemText: (double value) => '${value.toStringAsFixed(0)} μV',
               onRangeSelected: (double value) =>
                   _updateParam('y_scale_uv', value),
               spacingFactor: spacingFactor,
@@ -3456,22 +3449,6 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   }
 }
 
-class _ControlStripDivider extends StatelessWidget {
-  const _ControlStripDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 32,
-      child: VerticalDivider(
-        width: 16,
-        thickness: 2,
-        color: Colors.white.withValues(alpha: 0.22),
-      ),
-    );
-  }
-}
-
 class _HoverHighlightFrame extends StatefulWidget {
   const _HoverHighlightFrame({required this.child, required this.glowColor});
 
@@ -3590,169 +3567,8 @@ class _PanelResizeHandle extends StatelessWidget {
   }
 }
 
-class _ScaleCluster extends StatelessWidget {
-  const _ScaleCluster({
-    required this.timeSeconds,
-    required this.timeOptionsSeconds,
-    required this.onTimeSelected,
-    required this.rangeUv,
-    required this.rangeOptionsUv,
-    required this.onRangeSelected,
-    required this.spacingFactor,
-    required this.spacingOptions,
-    required this.onSpacingSelected,
-  });
-
-  final double timeSeconds;
-  final List<double> timeOptionsSeconds;
-  final ValueChanged<double> onTimeSelected;
-  final double rangeUv;
-  final List<double> rangeOptionsUv;
-  final ValueChanged<double> onRangeSelected;
-  final double spacingFactor;
-  final List<double> spacingOptions;
-  final ValueChanged<double> onSpacingSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: <Widget>[
-        const Text('Scale:', style: TextStyle(color: Colors.white70)),
-        _ScalePillMenu<double>(
-          label: 'Time',
-          currentValue: timeSeconds,
-          valueText: '${timeSeconds.toStringAsFixed(0)}s',
-          tooltip: 'Time span',
-          options: timeOptionsSeconds,
-          itemLabelBuilder: (double option) => '${option.toStringAsFixed(0)} s',
-          onSelected: onTimeSelected,
-        ),
-        _ScalePillMenu<double>(
-          label: 'Range',
-          currentValue: rangeUv,
-          valueText: '${rangeUv.toStringAsFixed(0)} μV',
-          tooltip: 'Signal range',
-          options: rangeOptionsUv,
-          itemLabelBuilder: (double option) =>
-              '${option.toStringAsFixed(0)} μV',
-          onSelected: onRangeSelected,
-        ),
-        _ScalePillMenu<double>(
-          label: 'Spacing',
-          currentValue: spacingFactor,
-          valueText:
-              '${spacingFactor.toStringAsFixed(spacingFactor == spacingFactor.roundToDouble() ? 0 : 2)}x',
-          tooltip: 'Channel spacing',
-          options: spacingOptions,
-          itemLabelBuilder: (double option) =>
-              '${option.toStringAsFixed(option == option.roundToDouble() ? 0 : 2)}x',
-          onSelected: onSpacingSelected,
-        ),
-      ],
-    );
-  }
-}
-
-class _ScalePillMenu<T> extends StatelessWidget {
-  const _ScalePillMenu({
-    required this.label,
-    required this.currentValue,
-    required this.valueText,
-    required this.tooltip,
-    required this.options,
-    required this.itemLabelBuilder,
-    required this.onSelected,
-  });
-
-  final String label;
-  final T currentValue;
-  final String valueText;
-  final String tooltip;
-  final List<T> options;
-  final String Function(T value) itemLabelBuilder;
-  final ValueChanged<T> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    void stepByWheel(PointerSignalEvent event) {
-      if (event is! PointerScrollEvent || options.isEmpty) {
-        return;
-      }
-      final int currentIndex = options.indexOf(currentValue);
-      if (currentIndex < 0) {
-        return;
-      }
-      final int nextIndex = event.scrollDelta.dy > 0
-          ? math.min(options.length - 1, currentIndex + 1)
-          : math.max(0, currentIndex - 1);
-      if (nextIndex != currentIndex) {
-        onSelected(options[nextIndex]);
-      }
-    }
-
-    return Tooltip(
-      message: tooltip,
-      child: Listener(
-        onPointerSignal: stepByWheel,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: PopupMenuButton<T>(
-            tooltip: '',
-            onSelected: onSelected,
-            itemBuilder: (BuildContext context) {
-              return options
-                  .map((T option) {
-                    return PopupMenuItem<T>(
-                      value: option,
-                      child: Text(itemLabelBuilder(option)),
-                    );
-                  })
-                  .toList(growable: false);
-            },
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                child: Text(
-                  '$label: $valueText',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _InlineToggleOption {
   const _InlineToggleOption({
-    required this.label,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onPressed;
-}
-
-class _InlineChoiceOption {
-  const _InlineChoiceOption({
     required this.label,
     required this.selected,
     required this.onPressed,
@@ -3843,78 +3659,6 @@ class _InlineToggleGroup extends StatelessWidget {
           );
         }),
       ],
-    );
-  }
-}
-
-class _InlineChoiceGroup extends StatelessWidget {
-  const _InlineChoiceGroup({required this.label, required this.options});
-
-  final String label;
-  final List<_InlineChoiceOption> options;
-
-  @override
-  Widget build(BuildContext context) {
-    final String selectedLabel = options
-        .firstWhere(
-          (_InlineChoiceOption option) => option.selected,
-          orElse: () => options.first,
-        )
-        .label;
-
-    return RadioGroup<String>(
-      groupValue: selectedLabel,
-      onChanged: (String? value) {
-        if (value == null) {
-          return;
-        }
-        for (final _InlineChoiceOption option in options) {
-          if (option.label == value) {
-            option.onPressed();
-            break;
-          }
-        }
-      },
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: <Widget>[
-          Text(label, style: const TextStyle(color: Colors.white70)),
-          ...options.map((_InlineChoiceOption option) {
-            return InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: option.onPressed,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Radio<String>(
-                      value: option.label,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                      fillColor: WidgetStateProperty.resolveWith<Color?>(
-                        (Set<WidgetState> states) =>
-                            option.selected ? Colors.white : Colors.white70,
-                      ),
-                    ),
-                    Text(
-                      option.label,
-                      style: TextStyle(
-                        color: option.selected ? Colors.white : Colors.white70,
-                        fontWeight: option.selected
-                            ? FontWeight.w600
-                            : FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        ],
-      ),
     );
   }
 }
@@ -5364,207 +5108,6 @@ class _BoundaryCombinationDraft {
   String? stopLabel;
   String blockLabel = 'Block';
   bool replaceBoundaries = true;
-}
-
-class _TimeAxisBar extends StatelessWidget {
-  const _TimeAxisBar({
-    required this.controller,
-    required this.pixelsPerSecond,
-    required this.viewportWidth,
-    required this.durationSeconds,
-  });
-
-  final ScrollController controller;
-  final double pixelsPerSecond;
-  final double viewportWidth;
-  final double durationSeconds;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 26,
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (BuildContext context, Widget? child) {
-          final double offset = controller.hasClients ? controller.offset : 0.0;
-          final double startSeconds = offset / pixelsPerSecond;
-          final double endSeconds = (offset + viewportWidth) / pixelsPerSecond;
-          final int firstTick = math.max(0, startSeconds.floor());
-          final int lastTick = math.min(
-            durationSeconds.ceil(),
-            endSeconds.ceil(),
-          );
-
-          return Container(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
-              ),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: <Widget>[
-                for (int second = firstTick; second <= lastTick; second++)
-                  ...() {
-                    final double tickX = (second * pixelsPerSecond) - offset;
-                    const double labelWidth = 44;
-                    final double labelLeft = tickX - (labelWidth / 2);
-                    return <Widget>[
-                      Positioned(
-                        left: tickX - 0.5,
-                        top: 0,
-                        child: Container(
-                          width: 1,
-                          height: 8,
-                          color: Colors.white.withValues(alpha: 0.28),
-                        ),
-                      ),
-                      Positioned(
-                        left: labelLeft,
-                        top: 10,
-                        child: SizedBox(
-                          width: labelWidth,
-                          child: Text(
-                            '${second}s',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ];
-                  }(),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _TimelineBar extends StatelessWidget {
-  const _TimelineBar({
-    required this.controller,
-    required this.totalWidth,
-    required this.viewportWidth,
-    required this.durationSeconds,
-  });
-
-  final ScrollController controller;
-  final double totalWidth;
-  final double viewportWidth;
-  final double durationSeconds;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 28,
-      child: AnimatedBuilder(
-        animation: controller,
-        builder: (BuildContext context, Widget? child) {
-          return LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final double barWidth = constraints.maxWidth;
-              final double windowFraction = totalWidth <= 0
-                  ? 1.0
-                  : (viewportWidth / totalWidth).clamp(0.02, 1.0);
-              final double thumbWidth = math.max(18, barWidth * windowFraction);
-              final double maxOffset = math.max(0, totalWidth - viewportWidth);
-              final double currentOffset = controller.hasClients
-                  ? controller.offset
-                  : 0.0;
-              final double normalizedOffset = maxOffset == 0
-                  ? 0.0
-                  : (currentOffset / maxOffset).clamp(0.0, 1.0);
-              final double travel = math.max(0, barWidth - thumbWidth);
-              final double thumbLeft = travel * normalizedOffset;
-              final double startSeconds = durationSeconds * normalizedOffset;
-              final double visibleSeconds = durationSeconds * windowFraction;
-
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragUpdate: (DragUpdateDetails details) {
-                  if (!controller.hasClients || maxOffset == 0) {
-                    return;
-                  }
-                  final double nextLeft = (thumbLeft + details.delta.dx).clamp(
-                    0.0,
-                    travel,
-                  );
-                  controller.jumpTo((nextLeft / travel) * maxOffset);
-                },
-                onTapDown: (TapDownDetails details) {
-                  if (!controller.hasClients || maxOffset == 0) {
-                    return;
-                  }
-                  final double centeredLeft =
-                      (details.localPosition.dx - (thumbWidth / 2)).clamp(
-                        0.0,
-                        travel,
-                      );
-                  controller.jumpTo((centeredLeft / travel) * maxOffset);
-                },
-                child: Stack(
-                  children: <Widget>[
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: thumbLeft,
-                      top: 0,
-                      bottom: 0,
-                      child: Container(
-                        width: thumbWidth,
-                        decoration: BoxDecoration(
-                          color: Colors.cyanAccent.withValues(alpha: 0.32),
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: Colors.cyanAccent.withValues(alpha: 0.72),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Row(
-                          children: <Widget>[
-                            Text(
-                              '${startSeconds.toStringAsFixed(1)} s',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '${visibleSeconds.toStringAsFixed(1)} s window / ${durationSeconds.toStringAsFixed(1)} s total',
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
 }
 
 class _BrowserMessage extends StatelessWidget {
