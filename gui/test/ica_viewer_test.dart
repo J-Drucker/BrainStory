@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
 import 'package:brainstory_gui/model/dataset_state.dart';
@@ -123,6 +125,38 @@ void main() {
       Color(0xFF929499),
       Color(0xFFC77E73),
     ]);
+    expect(
+      tester
+          .widget<Checkbox>(
+            find.byKey(const ValueKey<String>('ica-separate-topo-scales')),
+          )
+          .value,
+      isTrue,
+    );
+  });
+
+  test('ICA topomap display values are mean-centered log magnitudes', () {
+    final List<double> values = meanCenteredIcaTopographyLogValues(
+      const <double>[101, 102, 110],
+    );
+    final List<double> shifted = meanCenteredIcaTopographyLogValues(
+      const <double>[1101, 1102, 1110],
+    );
+
+    expect(values[0], isNegative);
+    expect(values[1], isNegative);
+    expect(values[2], 1.0);
+    expect(
+      values.map((double value) => value.abs()).reduce(math.max),
+      closeTo(1.0, 1.0e-12),
+    );
+    for (int index = 0; index < values.length; index++) {
+      expect(shifted[index], closeTo(values[index], 1.0e-12));
+    }
+    expect(
+      meanCenteredIcaTopographyLogValues(const <double>[5, 5, 5]),
+      const <double>[0, 0, 0],
+    );
   });
 
   testWidgets('ICA Control-scroll zooms component traces vertically', (

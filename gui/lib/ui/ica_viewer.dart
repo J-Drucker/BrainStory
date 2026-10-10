@@ -48,7 +48,7 @@ class _IcaViewerState extends State<IcaViewer> {
   final Set<int> _excluded = <int>{};
   bool _previewing = false;
   bool _saving = false;
-  bool _scaleToposSeparately = false;
+  bool _scaleToposSeparately = true;
   double _windowSeconds = 10;
   double _verticalScale = 1;
   double _spacing = 1;
@@ -270,7 +270,7 @@ class _IcaViewerState extends State<IcaViewer> {
         ),
         Tooltip(
           message:
-              'Off uses one shared color scale so component strengths remain comparable.',
+              'On gives each mean-centered log topography its own symmetric color range.',
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
@@ -769,7 +769,8 @@ List<TopomapPointValue> _componentTopomapPoints(
   MatrixTransformationData transform,
   int componentIndex,
 ) {
-  final List<TopomapPointValue> points = <TopomapPointValue>[];
+  final List<int> channelIndices = <int>[];
+  final List<double> rawValues = <double>[];
   for (
     int channel = 0;
     channel < transform.originalChannelLabels.length;
@@ -779,6 +780,17 @@ List<TopomapPointValue> _componentTopomapPoints(
         componentIndex >= transform.mixingMatrix[channel].length) {
       continue;
     }
+    final double value = transform.mixingMatrix[channel][componentIndex];
+    if (!value.isFinite) continue;
+    channelIndices.add(channel);
+    rawValues.add(value);
+  }
+  final List<double> displayValues = meanCenteredIcaTopographyLogValues(
+    rawValues,
+  );
+  final List<TopomapPointValue> points = <TopomapPointValue>[];
+  for (int valueIndex = 0; valueIndex < channelIndices.length; valueIndex++) {
+    final int channel = channelIndices[valueIndex];
     final String label = transform.originalChannelLabels[channel];
     final ChannelCoordinate? coordinate =
         ChannelCoordinatesNodeType.coordinateForChannelLabel(
@@ -790,11 +802,38 @@ List<TopomapPointValue> _componentTopomapPoints(
       TopomapPointValue(
         label: label,
         coordinate: coordinate,
-        value: transform.mixingMatrix[channel][componentIndex],
+        value: displayValues[valueIndex],
       ),
     );
   }
   return points;
+}
+
+/// Maps each loading x to sign(x) * ln(1 + 100|x|/max|x|) / ln(101)
+/// after subtracting the component's mean channel loading.
+List<double> meanCenteredIcaTopographyLogValues(List<double> values) {
+  if (values.isEmpty) return const <double>[];
+  final double mean =
+      values.reduce((double a, double b) => a + b) / values.length;
+  final List<double> centered = values
+      .map((double value) => value - mean)
+      .toList(growable: false);
+  final double maximum = centered.fold<double>(
+    0,
+    (double current, double value) => math.max(current, value.abs()),
+  );
+  if (maximum <= 1.0e-12) {
+    return List<double>.filled(values.length, 0.0, growable: false);
+  }
+  const double compression = 100;
+  final double denominator = math.log(1 + compression);
+  return centered
+      .map((double value) {
+        final double magnitude =
+            math.log(1 + (compression * (value.abs() / maximum))) / denominator;
+        return value.isNegative ? -magnitude : magnitude;
+      })
+      .toList(growable: false);
 }
 
 TopomapValueBounds _symmetricBounds(List<TopomapPointValue> points) {
