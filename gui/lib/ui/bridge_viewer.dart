@@ -576,7 +576,7 @@ _BridgeColorEncoding _continuousColorEncoding(
 }
 
 Color _darkRainbowColor(double position) {
-  final double hue = (240 + (position.clamp(0, 1) * 300)) % 360;
+  final double hue = position.clamp(0, 1) * 275;
   return HSVColor.fromAHSV(1, hue, 0.62, 0.72).toColor();
 }
 
