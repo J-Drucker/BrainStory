@@ -96,6 +96,15 @@ class _BridgeViewerState extends State<BridgeViewer> {
           dataRange,
       rangeOptions,
     );
+    final String viewMode =
+        widget.params['bridgeViewer.mode']?.toString() == 'scatter'
+        ? 'scatter'
+        : 'butterfly';
+    final List<double?> pairDistances = _pairDistances(
+      pairs,
+      bridge.channelCoordinates,
+      widget.dataset.timeSeries,
+    );
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         const double axisWidth = 76;
@@ -124,27 +133,49 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   style: const TextStyle(color: Colors.white70),
                 ),
                 const ViewerControlStripDivider(),
-                const Text('Scale:', style: TextStyle(color: Colors.white70)),
-                ViewerScalePillMenu<double>(
-                  label: 'Time',
-                  currentValue: secondsPerView,
-                  valueText: _secondsLabel(secondsPerView),
-                  tooltip: 'Time span',
-                  options: timeOptions,
-                  itemLabelBuilder: _secondsLabel,
-                  onSelected: (double value) =>
-                      _setParam('bridgeViewer.secondsPerView', value),
+                SegmentedButton<String>(
+                  segments: const <ButtonSegment<String>>[
+                    ButtonSegment<String>(
+                      value: 'butterfly',
+                      icon: Icon(Icons.show_chart),
+                      label: Text('Butterfly'),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'scatter',
+                      icon: Icon(Icons.scatter_plot),
+                      label: Text('Distance'),
+                    ),
+                  ],
+                  selected: <String>{viewMode},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (Set<String> selected) =>
+                      _setStringParam('bridgeViewer.mode', selected.single),
                 ),
-                ViewerScalePillMenu<double>(
-                  label: 'Score',
-                  currentValue: scoreRange,
-                  valueText: scoreRange.toStringAsFixed(1),
-                  tooltip: 'Score scale',
-                  options: rangeOptions,
-                  itemLabelBuilder: (double value) => value.toStringAsFixed(1),
-                  onSelected: (double value) =>
-                      _setParam('bridgeViewer.scoreRange', value),
-                ),
+                if (viewMode == 'butterfly')
+                  const Text('Scale:', style: TextStyle(color: Colors.white70)),
+                if (viewMode == 'butterfly')
+                  ViewerScalePillMenu<double>(
+                    label: 'Time',
+                    currentValue: secondsPerView,
+                    valueText: _secondsLabel(secondsPerView),
+                    tooltip: 'Time span',
+                    options: timeOptions,
+                    itemLabelBuilder: _secondsLabel,
+                    onSelected: (double value) =>
+                        _setParam('bridgeViewer.secondsPerView', value),
+                  ),
+                if (viewMode == 'butterfly')
+                  ViewerScalePillMenu<double>(
+                    label: 'Score',
+                    currentValue: scoreRange,
+                    valueText: scoreRange.toStringAsFixed(1),
+                    tooltip: 'Score scale',
+                    options: rangeOptions,
+                    itemLabelBuilder: (double value) =>
+                        value.toStringAsFixed(1),
+                    onSelected: (double value) =>
+                        _setParam('bridgeViewer.scoreRange', value),
+                  ),
                 Text(
                   bridge.distanceNormalizedPairs.any((bool value) => value)
                       ? 'Coordinate distance normalized'
@@ -154,110 +185,123 @@ class _BridgeViewerState extends State<BridgeViewer> {
               ],
             ),
             const SizedBox(height: 8),
-            Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  SizedBox(
-                    width: axisWidth,
-                    child: _BridgeScoreAxis(
-                      center: _cachedValueBounds.center,
-                      range: scoreRange,
+            if (viewMode == 'scatter')
+              Expanded(
+                child: _BridgeScatterChart(
+                  bridge: bridge,
+                  pairs: pairs,
+                  pairDistances: pairDistances,
+                  colors: colors,
+                  coordinateUnits: _cachedColorEncoding.units,
+                ),
+              )
+            else
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    SizedBox(
+                      width: axisWidth,
+                      child: _BridgeScoreAxis(
+                        center: _cachedValueBounds.center,
+                        range: scoreRange,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: plotGap),
-                  Expanded(
-                    child: ViewerTraceSurface(
-                      child: SingleChildScrollView(
-                        controller: _horizontalController,
-                        scrollDirection: Axis.horizontal,
-                        child: MouseRegion(
-                          key: const ValueKey<String>('bridge-trace-region'),
-                          onHover: (PointerHoverEvent event) {
-                            _updateHover(
-                              event.localPosition,
-                              bridge,
-                              traceHeight,
-                              pixelsPerSecond,
-                            );
-                          },
-                          onExit: (_) => setState(() {
-                            _hoverPosition = null;
-                            _hoveredPairIndex = null;
-                            _hoveredEpochIndex = null;
-                          }),
-                          child: SizedBox(
-                            width: totalWidth,
-                            height: traceHeight,
-                            child: Stack(
-                              clipBehavior: Clip.hardEdge,
-                              children: <Widget>[
-                                Positioned.fill(
-                                  child: CustomPaint(
-                                    key: const ValueKey<String>(
-                                      'bridge-butterfly-plot',
-                                    ),
-                                    painter: _BridgeTracePainter(
-                                      bridge: bridge,
-                                      colors: colors,
-                                      pixelsPerSecond: pixelsPerSecond,
-                                      scoreRange: scoreRange,
-                                      scoreCenter: _cachedValueBounds.center,
-                                      hoveredPairIndex: _hoveredPairIndex,
+                    const SizedBox(width: plotGap),
+                    Expanded(
+                      child: ViewerTraceSurface(
+                        child: SingleChildScrollView(
+                          controller: _horizontalController,
+                          scrollDirection: Axis.horizontal,
+                          child: MouseRegion(
+                            key: const ValueKey<String>('bridge-trace-region'),
+                            onHover: (PointerHoverEvent event) {
+                              _updateHover(
+                                event.localPosition,
+                                bridge,
+                                traceHeight,
+                                pixelsPerSecond,
+                              );
+                            },
+                            onExit: (_) => setState(() {
+                              _hoverPosition = null;
+                              _hoveredPairIndex = null;
+                              _hoveredEpochIndex = null;
+                            }),
+                            child: SizedBox(
+                              width: totalWidth,
+                              height: traceHeight,
+                              child: Stack(
+                                clipBehavior: Clip.hardEdge,
+                                children: <Widget>[
+                                  Positioned.fill(
+                                    child: CustomPaint(
+                                      key: const ValueKey<String>(
+                                        'bridge-butterfly-plot',
+                                      ),
+                                      painter: _BridgeTracePainter(
+                                        bridge: bridge,
+                                        colors: colors,
+                                        pixelsPerSecond: pixelsPerSecond,
+                                        scoreRange: scoreRange,
+                                        scoreCenter: _cachedValueBounds.center,
+                                        hoveredPairIndex: _hoveredPairIndex,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                if (_hoverPosition != null &&
-                                    _hoveredPairIndex != null &&
-                                    _hoveredEpochIndex != null)
-                                  _BridgeHoverCard(
-                                    position: _hoverPosition!,
-                                    pair: pairs[_hoveredPairIndex!],
-                                    frame: bridge.frames[_hoveredEpochIndex!],
-                                    score: bridge
-                                        .frames[_hoveredEpochIndex!]
-                                        .pairValues[_hoveredPairIndex!],
-                                    sampleRate: bridge.sampleRate,
-                                  ),
-                              ],
+                                  if (_hoverPosition != null &&
+                                      _hoveredPairIndex != null &&
+                                      _hoveredEpochIndex != null)
+                                    _BridgeHoverCard(
+                                      position: _hoverPosition!,
+                                      pair: pairs[_hoveredPairIndex!],
+                                      frame: bridge.frames[_hoveredEpochIndex!],
+                                      score: bridge
+                                          .frames[_hoveredEpochIndex!]
+                                          .pairValues[_hoveredPairIndex!],
+                                      sampleRate: bridge.sampleRate,
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
+                  ],
+                ),
+              ),
+            if (viewMode == 'butterfly') const SizedBox(height: 6),
+            if (viewMode == 'butterfly')
+              Row(
+                children: <Widget>[
+                  const SizedBox(width: axisWidth + plotGap),
+                  Expanded(
+                    child: ViewerTimeAxisBar(
+                      controller: _horizontalController,
+                      pixelsPerSecond: pixelsPerSecond,
+                      viewportWidth: viewportWidth,
+                      durationSeconds: durationSeconds,
+                    ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: <Widget>[
-                const SizedBox(width: axisWidth + plotGap),
-                Expanded(
-                  child: ViewerTimeAxisBar(
-                    controller: _horizontalController,
-                    pixelsPerSecond: pixelsPerSecond,
-                    viewportWidth: viewportWidth,
-                    durationSeconds: durationSeconds,
+            if (viewMode == 'butterfly') const SizedBox(height: 6),
+            if (viewMode == 'butterfly')
+              Row(
+                children: <Widget>[
+                  const SizedBox(width: axisWidth + plotGap),
+                  Expanded(
+                    child: ViewerTimelineBar(
+                      controller: _horizontalController,
+                      totalWidth: totalWidth,
+                      viewportWidth: viewportWidth,
+                      durationSeconds: durationSeconds,
+                      accentColor: const Color(0xFF8E7CFF),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: <Widget>[
-                const SizedBox(width: axisWidth + plotGap),
-                Expanded(
-                  child: ViewerTimelineBar(
-                    controller: _horizontalController,
-                    totalWidth: totalWidth,
-                    viewportWidth: viewportWidth,
-                    durationSeconds: durationSeconds,
-                    accentColor: const Color(0xFF8E7CFF),
-                  ),
-                ),
-              ],
-            ),
+                ],
+              ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.only(left: axisWidth + plotGap),
@@ -270,6 +314,11 @@ class _BridgeViewerState extends State<BridgeViewer> {
   }
 
   void _setParam(String key, double value) {
+    setState(() => widget.params[key] = value);
+    widget.onChanged();
+  }
+
+  void _setStringParam(String key, String value) {
     setState(() => widget.params[key] = value);
     widget.onChanged();
   }
@@ -531,6 +580,40 @@ Color _darkRainbowColor(double position) {
   return HSVColor.fromAHSV(1, hue, 0.62, 0.72).toColor();
 }
 
+List<double?> _pairDistances(
+  List<_BridgePair> pairs,
+  Map<String, ChannelCoordinate> bridgeCoordinates,
+  TimeSeriesData? timeSeries,
+) {
+  final Map<String, ChannelCoordinate> coordinates =
+      Map<String, ChannelCoordinate>.from(bridgeCoordinates);
+  if (timeSeries != null) {
+    for (final _BridgePair pair in pairs) {
+      for (final String label in <String>[pair.firstLabel, pair.secondLabel]) {
+        final ChannelCoordinate? coordinate =
+            ChannelCoordinatesNodeType.coordinateForChannelLabel(
+              timeSeries.channelCoordinates,
+              label,
+            );
+        if (coordinate != null) {
+          coordinates.putIfAbsent(label, () => coordinate);
+        }
+      }
+    }
+  }
+  return pairs
+      .map((_BridgePair pair) {
+        final ChannelCoordinate? first = coordinates[pair.firstLabel];
+        final ChannelCoordinate? second = coordinates[pair.secondLabel];
+        if (first == null || second == null) return null;
+        final double dx = first.x - second.x;
+        final double dy = first.y - second.y;
+        final double dz = first.z - second.z;
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
+      })
+      .toList(growable: false);
+}
+
 class _BridgeValueBounds {
   const _BridgeValueBounds({required this.center, required this.range});
 
@@ -579,6 +662,194 @@ List<double> _timeOptionsForDuration(double durationSeconds) {
 String _secondsLabel(double seconds) {
   final int decimals = seconds == seconds.roundToDouble() ? 0 : 1;
   return '${seconds.toStringAsFixed(decimals)} s';
+}
+
+class _BridgeScatterChart extends StatelessWidget {
+  const _BridgeScatterChart({
+    required this.bridge,
+    required this.pairs,
+    required this.pairDistances,
+    required this.colors,
+    required this.coordinateUnits,
+  });
+
+  final BridgeDetectionData bridge;
+  final List<_BridgePair> pairs;
+  final List<double?> pairDistances;
+  final List<Color> colors;
+  final String coordinateUnits;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<_BridgeScatterPoint> points = <_BridgeScatterPoint>[];
+    for (int pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
+      final double? distance = pairIndex < pairDistances.length
+          ? pairDistances[pairIndex]
+          : null;
+      if (distance == null || !distance.isFinite || distance <= 0) continue;
+      for (final BridgeEpochFrameData frame in bridge.frames) {
+        if (pairIndex >= frame.pairValues.length) continue;
+        double score = frame.pairValues[pairIndex];
+        if (pairIndex < bridge.distanceNormalizedPairs.length &&
+            bridge.distanceNormalizedPairs[pairIndex]) {
+          score -= math.log(distance);
+        }
+        if (!score.isFinite) continue;
+        points.add(
+          _BridgeScatterPoint(
+            distance: distance,
+            score: score,
+            color: colors[pairIndex],
+          ),
+        );
+      }
+    }
+    if (points.isEmpty) {
+      return const ViewerTraceSurface(
+        child: Center(
+          child: Text(
+            'Scatter view requires coordinates for at least two channels.',
+            style: TextStyle(color: Colors.white70),
+          ),
+        ),
+      );
+    }
+    return ViewerTraceSurface(
+      child: CustomPaint(
+        key: const ValueKey<String>('bridge-distance-scatter'),
+        painter: _BridgeScatterPainter(
+          points: points,
+          coordinateUnits: coordinateUnits,
+        ),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+class _BridgeScatterPoint {
+  const _BridgeScatterPoint({
+    required this.distance,
+    required this.score,
+    required this.color,
+  });
+
+  final double distance;
+  final double score;
+  final Color color;
+}
+
+class _BridgeScatterPainter extends CustomPainter {
+  const _BridgeScatterPainter({
+    required this.points,
+    required this.coordinateUnits,
+  });
+
+  final List<_BridgeScatterPoint> points;
+  final String coordinateUnits;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double left = 76;
+    const double top = 18;
+    const double right = 18;
+    const double bottom = 48;
+    final Rect plot = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
+    if (plot.width <= 0 || plot.height <= 0) return;
+    final double minX = points.map((point) => point.distance).reduce(math.min);
+    final double maxX = points.map((point) => point.distance).reduce(math.max);
+    final double minY = points.map((point) => point.score).reduce(math.min);
+    final double maxY = points.map((point) => point.score).reduce(math.max);
+    final double xSpan = math.max(1.0e-12, maxX - minX);
+    final double ySpan = math.max(0.1, maxY - minY);
+    final Paint grid = Paint()
+      ..color = Colors.white.withValues(alpha: 0.09)
+      ..strokeWidth = 1;
+    for (int tick = 0; tick <= 4; tick++) {
+      final double fraction = tick / 4;
+      final double x = plot.left + (plot.width * fraction);
+      final double y = plot.bottom - (plot.height * fraction);
+      canvas.drawLine(Offset(x, plot.top), Offset(x, plot.bottom), grid);
+      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
+      _paintText(
+        canvas,
+        _legendLabel(minX + (xSpan * fraction)),
+        Offset(x, plot.bottom + 7),
+        centered: true,
+      );
+      _paintText(
+        canvas,
+        _scoreLabel(minY + (ySpan * fraction)),
+        Offset(plot.left - 8, y - 6),
+        rightAligned: true,
+      );
+    }
+    for (final _BridgeScatterPoint point in points) {
+      final double x =
+          plot.left + (((point.distance - minX) / xSpan) * plot.width);
+      final double y =
+          plot.bottom - (((point.score - minY) / ySpan) * plot.height);
+      canvas.drawCircle(
+        Offset(x, y),
+        2.5,
+        Paint()..color = point.color.withValues(alpha: 0.58),
+      );
+    }
+    _paintText(
+      canvas,
+      coordinateUnits.isEmpty
+          ? 'Euclidean distance'
+          : 'Euclidean distance ($coordinateUnits)',
+      Offset(plot.center.dx, size.height - 17),
+      centered: true,
+      color: Colors.white70,
+    );
+    canvas.save();
+    canvas.translate(17, plot.center.dy);
+    canvas.rotate(-math.pi / 2);
+    _paintText(
+      canvas,
+      '-ln(MSE)',
+      Offset.zero,
+      centered: true,
+      color: Colors.white70,
+    );
+    canvas.restore();
+  }
+
+  void _paintText(
+    Canvas canvas,
+    String text,
+    Offset anchor, {
+    bool centered = false,
+    bool rightAligned = false,
+    Color color = Colors.white54,
+  }) {
+    final TextPainter painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: color, fontSize: 10),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final double dx = centered
+        ? anchor.dx - (painter.width / 2)
+        : rightAligned
+        ? anchor.dx - painter.width
+        : anchor.dx;
+    painter.paint(canvas, Offset(dx, anchor.dy));
+  }
+
+  @override
+  bool shouldRepaint(covariant _BridgeScatterPainter oldDelegate) {
+    return oldDelegate.points != points ||
+        oldDelegate.coordinateUnits != coordinateUnits;
+  }
 }
 
 class _BridgeScoreAxis extends StatelessWidget {

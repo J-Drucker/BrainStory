@@ -20,6 +20,7 @@ class BridgeDetectorNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'epochSeconds': 2.0,
     'intervalSeconds': 10.0,
+    'normalizeByDistance': false,
   };
 
   @override
@@ -40,11 +41,12 @@ class BridgeDetectorNodeType extends NodeType {
   }) {
     params.putIfAbsent('epochSeconds', () => 2.0);
     params.putIfAbsent('intervalSeconds', () => 10.0);
+    params.putIfAbsent('normalizeByDistance', () => false);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Text(
-          'Compare every unique electrode pair within regularly spaced epochs. Larger scores indicate more nearly identical signals. Electrode distance is included when coordinates are available.',
+          'Compare every unique electrode pair within regularly spaced epochs. Larger scores indicate more nearly identical signals.',
         ),
         const SizedBox(height: 12),
         NodeParamTextField(
@@ -53,6 +55,18 @@ class BridgeDetectorNodeType extends NodeType {
           labelText: 'Epoch length (seconds)',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           parser: _positiveDouble,
+        ),
+        const SizedBox(height: 8),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          title: const Text('Normalize MSE by electrode distance'),
+          subtitle: const Text('Experimental; disabled by default.'),
+          value: params['normalizeByDistance'] == true,
+          onChanged: (bool? value) {
+            setState(() => params['normalizeByDistance'] = value == true);
+          },
         ),
         const SizedBox(height: 10),
         NodeParamTextField(
@@ -77,6 +91,7 @@ class BridgeDetectorNodeType extends NodeType {
         (params['epochSeconds'] as num?)?.toDouble() ?? 2.0;
     final double intervalSeconds =
         (params['intervalSeconds'] as num?)?.toDouble() ?? 10.0;
+    final bool normalizeByDistance = params['normalizeByDistance'] == true;
     if (epochSeconds <= 0 || intervalSeconds <= 0) {
       throw ArgumentError('Bridge epoch length and interval must be positive.');
     }
@@ -108,7 +123,9 @@ class BridgeDetectorNodeType extends NodeType {
           sampleRate: timeSeries.sampleRate,
           epochSeconds: epochSeconds,
           intervalSeconds: intervalSeconds,
-          coordinates: coordinates,
+          coordinates: normalizeByDistance
+              ? coordinates
+              : List<List<double>?>.filled(labels.length, null),
         );
     if (native == null) {
       throw StateError('The Rust bridge-detection engine is unavailable.');
@@ -143,6 +160,7 @@ class BridgeDetectorNodeType extends NodeType {
     dataset.ram['bridgeDetector.params'] = <String, dynamic>{
       'epochSeconds': epochSeconds,
       'intervalSeconds': intervalSeconds,
+      'normalizeByDistance': normalizeByDistance,
     };
   }
 }

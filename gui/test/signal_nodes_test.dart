@@ -7303,6 +7303,7 @@ Mk2=Artifact,Bad Segment,11,5,0
 
     expect(node.defaultParams['epochSeconds'], 2.0);
     expect(node.defaultParams['intervalSeconds'], 10.0);
+    expect(node.defaultParams['normalizeByDistance'], isFalse);
   });
 
   test('bridge detection artifact preserves upper-triangle epoch values', () {

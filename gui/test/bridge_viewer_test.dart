@@ -159,6 +159,38 @@ void main() {
     expect(find.text('Electrode distance'), findsOneWidget);
     expect(find.text('2 pair(s) use channel number'), findsOneWidget);
   });
+
+  testWidgets('distance mode shows MSE by Euclidean distance scatter', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(),
+              params: <String, dynamic>{'bridgeViewer.mode': 'scatter'},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('bridge-distance-scatter')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('bridge-score-axis')),
+      findsNothing,
+    );
+    expect(find.byType(ViewerTimeAxisBar), findsNothing);
+    expect(find.byType(ViewerTimelineBar), findsNothing);
+  });
 }
 
 Dataset _bridgeDataset({

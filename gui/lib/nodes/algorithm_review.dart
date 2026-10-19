@@ -223,17 +223,18 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
     procedure: <String>[
       'Start a complete epoch at zero and then at each configured interval; ignore a trailing incomplete epoch.',
       'For each unique channel pair, square the sample-by-sample difference, sum it, and divide by the epoch sample count.',
-      'When both electrodes have valid coordinates, divide that mean squared difference by their Euclidean distance.',
+      'Optionally divide mean squared difference by Euclidean electrode distance when experimental distance normalization is enabled.',
       'Take the natural logarithm and multiply by negative one, so more nearly identical signals receive larger scores.',
       'Store one canonical upper-triangle vector per epoch.',
     ],
     parameters: <String>[
       'Epoch length: seconds, default 2.',
       'Epoch interval: seconds, default 10.',
+      'Normalize by electrode distance: experimental and disabled by default.',
     ],
     assumptions: <String>[
       'A floor of 1e-300 keeps identical-channel scores finite before the logarithm.',
-      'Distance normalization is pair-specific and requires valid, noncoincident coordinates for both electrodes.',
+      'Optional distance normalization is pair-specific and requires valid, noncoincident coordinates for both electrodes.',
       'This node reports bridge scores; it does not itself classify or remove bridged channels.',
     ],
     sourceFiles: <String>[
