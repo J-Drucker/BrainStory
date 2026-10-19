@@ -1,0 +1,111 @@
+import 'package:brainstory_gui/model/data_artifacts.dart';
+import 'package:brainstory_gui/model/dataset.dart';
+import 'package:brainstory_gui/ui/bridge_viewer.dart';
+import 'package:brainstory_gui/ui/viewer_chrome.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  testWidgets('bridge viewer uses shared signal-viewer chrome', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = _bridgeDataset();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: dataset,
+              params: <String, dynamic>{},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(ViewerTraceSurface), findsOneWidget);
+    expect(find.byType(ViewerScaleCluster), findsOneWidget);
+    expect(find.byType(ViewerTimeAxisBar), findsOneWidget);
+    expect(find.byType(ViewerTimelineBar), findsOneWidget);
+    expect(find.text('Fz – Cz'), findsOneWidget);
+  });
+
+  testWidgets('hovering a bridge trace reveals both channel names', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = _bridgeDataset();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: dataset,
+              params: <String, dynamic>{},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final Finder region = find.byKey(
+      const ValueKey<String>('bridge-trace-region'),
+    );
+    final TestGesture mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+    );
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getTopLeft(region) + const Offset(20, 12));
+    await tester.pump();
+
+    expect(find.textContaining('Fz / Cz'), findsOneWidget);
+  });
+}
+
+Dataset _bridgeDataset() {
+  final Dataset dataset = Dataset('bridge', label: 'Bridge example');
+  dataset.timeSeries = TimeSeriesData(
+    channelSamples: <List<double>>[
+      <double>[0, 1, 2, 3],
+      <double>[0, 1, 2, 3],
+      <double>[1, 2, 3, 4],
+    ],
+    sampleRate: 2,
+    channelLabels: <String>['Fz', 'Cz', 'Pz'],
+    channelCoordinates: <String, ChannelCoordinate>{
+      'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
+      'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+      'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+    },
+  );
+  dataset.bridgeDetection = const BridgeDetectionData(
+    channelLabels: <String>['Fz', 'Cz', 'Pz'],
+    epochSampleCount: 2,
+    intervalSampleCount: 2,
+    sampleRate: 2,
+    frames: <BridgeEpochFrameData>[
+      BridgeEpochFrameData(
+        epochIndex: 0,
+        startSample: 0,
+        endSampleExclusive: 2,
+        pairValues: <double>[10, 3, 5],
+      ),
+      BridgeEpochFrameData(
+        epochIndex: 1,
+        startSample: 2,
+        endSampleExclusive: 4,
+        pairValues: <double>[11, 4, 6],
+      ),
+    ],
+    distanceNormalizedPairs: <bool>[true, true, true],
+  );
+  return dataset;
+}

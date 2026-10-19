@@ -1,3 +1,5 @@
+#[path = "../../src/bridge_detection.rs"]
+mod bridge_detection;
 #[path = "../../src/filtering.rs"]
 mod filtering;
 #[path = "../../src/gaussian_mixture.rs"]
@@ -60,6 +62,15 @@ enum Request {
         matrix: Vec<Vec<f64>>,
         means: Vec<f64>,
     },
+    BridgeDetection {
+        channels: Vec<Vec<f64>>,
+        rate: f64,
+        #[serde(rename = "epochSeconds")]
+        epoch_seconds: f64,
+        #[serde(rename = "intervalSeconds")]
+        interval_seconds: f64,
+        coordinates: Vec<Option<[f64; 3]>>,
+    },
 }
 
 fn execute(request: Request) -> Result<Value, String> {
@@ -90,17 +101,9 @@ fn execute(request: Request) -> Result<Value, String> {
             frequencies,
             times,
             cycles,
-        } => wavelet::morlet_power(
-            &samples,
-            rate,
-            low,
-            high,
-            frequencies,
-            times,
-            cycles,
-        )
-        .and_then(|value| serde_json::to_value(value).ok())
-        .ok_or("Invalid Morlet wavelet input".into()),
+        } => wavelet::morlet_power(&samples, rate, low, high, frequencies, times, cycles)
+            .and_then(|value| serde_json::to_value(value).ok())
+            .ok_or("Invalid Morlet wavelet input".into()),
         Request::GaussianMixture {
             rows,
             components,
@@ -145,6 +148,20 @@ fn execute(request: Request) -> Result<Value, String> {
             let samples: Vec<f64> = channels.into_iter().flatten().collect();
             ica::apply_unmixing(&samples, count, length, &matrix, &means).map(|v| json!(v))
         }
+        Request::BridgeDetection {
+            channels,
+            rate,
+            epoch_seconds,
+            interval_seconds,
+            coordinates,
+        } => bridge_detection::detect_bridges(
+            &channels,
+            rate,
+            epoch_seconds,
+            interval_seconds,
+            &coordinates,
+        )
+        .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string())),
     }
 }
 

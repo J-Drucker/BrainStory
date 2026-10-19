@@ -177,14 +177,16 @@ class Dataset {
   set bridgeDetection(BridgeDetectionData? value) {
     if (value == null) {
       ram.remove('artifact.bridgeDetection');
-      ram.remove('bridgeDetection.windowSampleCount');
+      ram.remove('bridgeDetection.epochSampleCount');
+      ram.remove('bridgeDetection.intervalSampleCount');
       ram.remove('bridgeDetection.frameCount');
       ram.remove('bridgeDetection.valueCount');
       clearArtifactIdentity(BrainStoryArtifactKind.bridgeDetection);
       return;
     }
     ram['artifact.bridgeDetection'] = value;
-    ram['bridgeDetection.windowSampleCount'] = value.windowSampleCount;
+    ram['bridgeDetection.epochSampleCount'] = value.epochSampleCount;
+    ram['bridgeDetection.intervalSampleCount'] = value.intervalSampleCount;
     ram['bridgeDetection.frameCount'] = value.frameCount;
     ram['bridgeDetection.valueCount'] = value.valueCount;
   }

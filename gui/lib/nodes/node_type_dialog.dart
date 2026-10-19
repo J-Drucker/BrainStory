@@ -1469,7 +1469,7 @@ class _MetadataDialogBody extends StatelessWidget {
       rows.add(
         _metadataRow(
           'Bridge detector',
-          '${bridgeDetection.frameCount} minute frame(s), ${bridgeDetection.channelCount} channel(s), ${bridgeDetection.valueCount} correlation value(s)',
+          '${bridgeDetection.frameCount} epoch(s), ${bridgeDetection.channelCount} channel(s), ${bridgeDetection.pairCount} pair trace(s)',
         ),
       );
     }

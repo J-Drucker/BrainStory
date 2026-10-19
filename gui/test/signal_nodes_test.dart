@@ -2354,13 +2354,12 @@ void main() {
 
   test('legacy artifact identities receive a migration timestamp', () {
     final int before = DateTime.now().toUtc().microsecondsSinceEpoch;
-    final ArtifactIdentity identity = ArtifactIdentity.fromJson(
-      <String, dynamic>{
-        'artifactId': 'legacy-artifact',
-        'datasetId': 'dataset-1',
-        'kind': 'timeSeries',
-      },
-    );
+    final ArtifactIdentity identity =
+        ArtifactIdentity.fromJson(<String, dynamic>{
+          'artifactId': 'legacy-artifact',
+          'datasetId': 'dataset-1',
+          'kind': 'timeSeries',
+        });
     final int after = DateTime.now().toUtc().microsecondsSinceEpoch;
 
     expect(identity.createdAtUtcMicros, inInclusiveRange(before, after));
@@ -7240,43 +7239,40 @@ Mk2=Artifact,Bad Segment,11,5,0
     },
   );
 
-  test(
-    'bridge detector computes one correlation matrix per full minute using the last 1000 samples',
-    () async {
-      final List<double> channelA = List<double>.generate(
-        60000,
-        (int index) => (index % 1000).toDouble(),
-        growable: false,
-      );
-      final List<double> channelB = List<double>.generate(
-        60000,
-        (int index) => (index % 1000).toDouble(),
-        growable: false,
-      );
+  test('bridge detector defaults to two-second epochs every ten seconds', () {
+    final BridgeDetectorNodeType node = BridgeDetectorNodeType();
 
-      final TimeSeriesData timeSeries = TimeSeriesData(
-        channelSamples: <List<double>>[channelA, channelB],
-        sampleRate: 500.0,
-        channelLabels: const <String>['Fz', 'Cz'],
-        source: 'synthetic_bridge',
-      );
-      final BridgeDetectionData result = computeBridgeDetection(
-        timeSeries,
-        windowSamples: 1000,
-      );
+    expect(node.defaultParams['epochSeconds'], 2.0);
+    expect(node.defaultParams['intervalSeconds'], 10.0);
+  });
 
-      expect(result.frameCount, 2);
-      expect(result.channelCount, 2);
-      expect(result.valueCount, 8);
-      expect(result.frames.first.minuteIndex, 1);
-      expect(result.frames.first.startSample, 29000);
-      expect(result.frames.first.endSampleExclusive, 30000);
-      expect(result.frames.last.minuteIndex, 2);
-      expect(result.frames.last.startSample, 59000);
-      expect(result.frames.last.endSampleExclusive, 60000);
-      expect(result.frames.first.correlationMatrix[0][1], closeTo(1.0, 0.0001));
-    },
-  );
+  test('bridge detection artifact preserves upper-triangle epoch values', () {
+    const BridgeDetectionData result = BridgeDetectionData(
+      channelLabels: <String>['Fz', 'Cz', 'Pz'],
+      epochSampleCount: 1000,
+      intervalSampleCount: 5000,
+      sampleRate: 500,
+      frames: <BridgeEpochFrameData>[
+        BridgeEpochFrameData(
+          epochIndex: 0,
+          startSample: 0,
+          endSampleExclusive: 1000,
+          pairValues: <double>[1.0, 2.0, 3.0],
+        ),
+      ],
+      distanceNormalizedPairs: <bool>[true, true, false],
+    );
+
+    final BridgeDetectionData restored = BridgeDetectionData.fromJson(
+      result.toJson(),
+    );
+    expect(restored.pairCount, 3);
+    expect(restored.valueCount, 3);
+    expect(restored.epochSeconds, 2);
+    expect(restored.intervalSeconds, 10);
+    expect(restored.frames.single.pairValues, <double>[1.0, 2.0, 3.0]);
+    expect(restored.distanceNormalizedPairs, <bool>[true, true, false]);
+  });
 
   test(
     'time marker defaults to all channels when no explicit mask is stored',

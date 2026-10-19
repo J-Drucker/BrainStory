@@ -107,7 +107,7 @@ Supported keys use BrainStory's existing JSON representations:
 | `featureTable` | `columns`, `rows` (objects keyed by column name), `source` |
 | `fooofResult` | `intercept`, `exponent`, `peaks`, optional fit arrays |
 | `gaussianMixture` | `featureColumns`, `assignments`, `probabilities`, `weights`, `means`, `variances`, fit metadata |
-| `bridgeDetection` | `channelLabels`, `windowSampleCount`, `sampleRate`, `frames` |
+| `bridgeDetection` | `channelLabels`, `epochSampleCount`, `intervalSampleCount`, `sampleRate`, upper-triangle `frames`, `distanceNormalizedPairs` |
 | `timeFrequency` | `times`, `frequencies`, `powerMatrix`, optional channel power matrices |
 | `matrixTransformation` | `matrix`, transformation matrices, source/component labels and fit metadata |
 

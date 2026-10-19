@@ -1389,41 +1389,36 @@ class GaussianMixtureData {
   }
 }
 
-class BridgeCorrelationFrameData {
-  const BridgeCorrelationFrameData({
-    required this.minuteIndex,
+class BridgeEpochFrameData {
+  const BridgeEpochFrameData({
+    required this.epochIndex,
     required this.startSample,
     required this.endSampleExclusive,
-    required this.correlationMatrix,
+    required this.pairValues,
   });
 
-  final int minuteIndex;
+  final int epochIndex;
   final int startSample;
   final int endSampleExclusive;
-  final List<List<double>> correlationMatrix;
+  final List<double> pairValues;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'minuteIndex': minuteIndex,
+      'epochIndex': epochIndex,
       'startSample': startSample,
       'endSampleExclusive': endSampleExclusive,
-      'correlationMatrix': correlationMatrix,
+      'pairValues': pairValues,
     };
   }
 
-  static BridgeCorrelationFrameData fromJson(Map<String, dynamic> json) {
-    return BridgeCorrelationFrameData(
-      minuteIndex: (json['minuteIndex'] as num?)?.toInt() ?? 0,
+  static BridgeEpochFrameData fromJson(Map<String, dynamic> json) {
+    return BridgeEpochFrameData(
+      epochIndex: (json['epochIndex'] as num?)?.toInt() ?? 0,
       startSample: (json['startSample'] as num?)?.toInt() ?? 0,
       endSampleExclusive: (json['endSampleExclusive'] as num?)?.toInt() ?? 0,
-      correlationMatrix:
-          (json['correlationMatrix'] as List<dynamic>? ?? const <dynamic>[])
-              .map(
-                (dynamic row) => (row as List<dynamic>)
-                    .map((dynamic value) => (value as num).toDouble())
-                    .toList(growable: false),
-              )
-              .toList(growable: false),
+      pairValues: (json['pairValues'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => (value as num).toDouble())
+          .toList(growable: false),
     );
   }
 }
@@ -1431,38 +1426,46 @@ class BridgeCorrelationFrameData {
 class BridgeDetectionData {
   const BridgeDetectionData({
     required this.channelLabels,
-    required this.windowSampleCount,
+    required this.epochSampleCount,
+    required this.intervalSampleCount,
     required this.sampleRate,
     required this.frames,
+    required this.distanceNormalizedPairs,
     this.source = '',
   });
 
   final List<String> channelLabels;
-  final int windowSampleCount;
+  final int epochSampleCount;
+  final int intervalSampleCount;
   final double sampleRate;
-  final List<BridgeCorrelationFrameData> frames;
+  final List<BridgeEpochFrameData> frames;
+  final List<bool> distanceNormalizedPairs;
   final String source;
 
   int get frameCount => frames.length;
   int get channelCount => channelLabels.length;
+  int get pairCount =>
+      channelCount < 2 ? 0 : (channelCount * (channelCount - 1)) ~/ 2;
   int get valueCount => frames.fold<int>(
     0,
-    (int total, BridgeCorrelationFrameData frame) =>
-        total +
-        frame.correlationMatrix.fold<int>(
-          0,
-          (int sum, List<double> row) => sum + row.length,
-        ),
+    (int total, BridgeEpochFrameData frame) => total + frame.pairValues.length,
   );
+
+  double get epochSeconds =>
+      sampleRate <= 0 ? 0 : epochSampleCount / sampleRate;
+  double get intervalSeconds =>
+      sampleRate <= 0 ? 0 : intervalSampleCount / sampleRate;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'channelLabels': channelLabels,
-      'windowSampleCount': windowSampleCount,
+      'epochSampleCount': epochSampleCount,
+      'intervalSampleCount': intervalSampleCount,
       'sampleRate': sampleRate,
       'frames': frames
-          .map((BridgeCorrelationFrameData frame) => frame.toJson())
+          .map((BridgeEpochFrameData frame) => frame.toJson())
           .toList(growable: false),
+      'distanceNormalizedPairs': distanceNormalizedPairs,
       'source': source,
     };
   }
@@ -1473,12 +1476,18 @@ class BridgeDetectionData {
           (json['channelLabels'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
               .toList(growable: false),
-      windowSampleCount: (json['windowSampleCount'] as num?)?.toInt() ?? 0,
+      epochSampleCount: (json['epochSampleCount'] as num?)?.toInt() ?? 0,
+      intervalSampleCount: (json['intervalSampleCount'] as num?)?.toInt() ?? 0,
       sampleRate: (json['sampleRate'] as num?)?.toDouble() ?? 0.0,
       frames: (json['frames'] as List<dynamic>? ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
-          .map(BridgeCorrelationFrameData.fromJson)
+          .map(BridgeEpochFrameData.fromJson)
           .toList(growable: false),
+      distanceNormalizedPairs:
+          (json['distanceNormalizedPairs'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => value == true)
+              .toList(growable: false),
       source: json['source']?.toString() ?? '',
     );
   }

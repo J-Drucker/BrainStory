@@ -1,9 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../platform/brainstory_engine.dart';
+import 'channel_coordinates_node.dart';
 import 'node_type.dart';
 
 class BridgeDetectorNodeType extends NodeType {
@@ -18,18 +18,19 @@ class BridgeDetectorNodeType extends NodeType {
 
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
-        'windowSamples': 1000,
-      };
+    'epochSeconds': 2.0,
+    'intervalSeconds': 10.0,
+  };
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-        PortSpec(name: 'signal', type: PortType.signal),
-      ];
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
 
   @override
   List<PortSpec> get outputs => const <PortSpec>[
-        PortSpec(name: 'metadata', type: PortType.metadata),
-      ];
+    PortSpec(name: 'metadata', type: PortType.metadata),
+  ];
 
   @override
   Widget buildBody(
@@ -37,37 +38,29 @@ class BridgeDetectorNodeType extends NodeType {
     required Map<String, Dataset> datasets,
     required void Function(void Function()) setState,
   }) {
-    params.putIfAbsent('windowSamples', () => 1000);
-
-    final List<dynamic> selectedIds =
-        params['selectedDatasetIds'] as List<dynamic>? ?? const <dynamic>[];
-    final TimeSeriesData? visibleTimeSeries = datasets.values
-        .where((Dataset dataset) => selectedIds.isEmpty || selectedIds.contains(dataset.id))
-        .map((Dataset dataset) => dataset.timeSeries)
-        .whereType<TimeSeriesData>()
-        .cast<TimeSeriesData?>()
-        .firstWhere((TimeSeriesData? value) => value != null, orElse: () => null);
-
-    final double? sampleRate = visibleTimeSeries?.sampleRate;
-    final int windowSamples = (params['windowSamples'] as num?)?.toInt() ?? 1000;
-    final String exampleRange = sampleRate == null || sampleRate <= 0
-        ? 'for example, the final $windowSamples samples of each minute'
-        : _exampleWindowRange(sampleRate: sampleRate, windowSamples: windowSamples);
-
+    params.putIfAbsent('epochSeconds', () => 2.0);
+    params.putIfAbsent('intervalSeconds', () => 10.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          'For each full minute of data, BrainStory grabs the last $windowSamples samples ($exampleRange) from every channel and computes a channel-by-channel correlation matrix.',
+        const Text(
+          'Compare every unique electrode pair within regularly spaced epochs. Larger scores indicate more nearly identical signals. Electrode distance is included when coordinates are available.',
         ),
         const SizedBox(height: 12),
         NodeParamTextField(
           params: params,
-          paramKey: 'windowSamples',
-          labelText: 'Window size (samples)',
-          keyboardType: TextInputType.number,
-          parser: (String value, dynamic previous) =>
-              int.tryParse(value) ?? previous,
+          paramKey: 'epochSeconds',
+          labelText: 'Epoch length (seconds)',
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          parser: _positiveDouble,
+        ),
+        const SizedBox(height: 10),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'intervalSeconds',
+          labelText: 'Epoch interval (seconds)',
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          parser: _positiveDouble,
         ),
       ],
     );
@@ -76,147 +69,76 @@ class BridgeDetectorNodeType extends NodeType {
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
     final TimeSeriesData? timeSeries = dataset.timeSeries;
-    if (timeSeries == null || timeSeries.channels.isEmpty) {
+    if (timeSeries == null || timeSeries.channels.length < 2) {
       dataset.bridgeDetection = null;
       return;
     }
+    final double epochSeconds =
+        (params['epochSeconds'] as num?)?.toDouble() ?? 2.0;
+    final double intervalSeconds =
+        (params['intervalSeconds'] as num?)?.toDouble() ?? 10.0;
+    if (epochSeconds <= 0 || intervalSeconds <= 0) {
+      throw ArgumentError('Bridge epoch length and interval must be positive.');
+    }
 
-    final int windowSamples =
-        math.max(1, (params['windowSamples'] as num?)?.toInt() ?? 1000);
-    final BridgeDetectionData result = computeBridgeDetection(
-      timeSeries,
-      windowSamples: windowSamples,
+    final List<String> labels =
+        timeSeries.channelLabels.length == timeSeries.channelCount
+        ? timeSeries.channelLabels
+        : List<String>.generate(
+            timeSeries.channelCount,
+            (int index) => 'Ch ${index + 1}',
+            growable: false,
+          );
+    final List<List<double>?> coordinates = labels
+        .map((String label) {
+          final ChannelCoordinate? coordinate =
+              ChannelCoordinatesNodeType.coordinateForChannelLabel(
+                timeSeries.channelCoordinates,
+                label,
+              );
+          return coordinate == null
+              ? null
+              : <double>[coordinate.x, coordinate.y, coordinate.z];
+        })
+        .toList(growable: false);
+
+    final NativeBridgeDetectionResult? native =
+        await computeBridgeDetectionBackground(
+          timeSeries.channels,
+          sampleRate: timeSeries.sampleRate,
+          epochSeconds: epochSeconds,
+          intervalSeconds: intervalSeconds,
+          coordinates: coordinates,
+        );
+    if (native == null) {
+      throw StateError('The Rust bridge-detection engine is unavailable.');
+    }
+    dataset.bridgeDetection = BridgeDetectionData(
+      channelLabels: labels,
+      epochSampleCount: native.epochSampleCount,
+      intervalSampleCount: native.intervalSampleCount,
+      sampleRate: timeSeries.sampleRate,
+      frames: List<BridgeEpochFrameData>.generate(
+        native.values.length,
+        (int index) => BridgeEpochFrameData(
+          epochIndex: index,
+          startSample: native.epochStarts[index],
+          endSampleExclusive: native.epochEnds[index],
+          pairValues: native.values[index],
+        ),
+        growable: false,
+      ),
+      distanceNormalizedPairs: native.distanceNormalizedPairs,
+      source: timeSeries.source,
     );
-    dataset.bridgeDetection = result;
     dataset.ram['bridgeDetector.params'] = <String, dynamic>{
-      'windowSamples': windowSamples,
+      'epochSeconds': epochSeconds,
+      'intervalSeconds': intervalSeconds,
     };
   }
 }
 
-BridgeDetectionData computeBridgeDetection(
-  TimeSeriesData timeSeries, {
-  required int windowSamples,
-}) {
-  final List<List<double>> channels = timeSeries.channels;
-  if (channels.isEmpty || timeSeries.sampleRate <= 0 || windowSamples <= 0) {
-    return BridgeDetectionData(
-      channelLabels: timeSeries.channelLabels,
-      windowSampleCount: windowSamples,
-      sampleRate: timeSeries.sampleRate,
-      frames: const <BridgeCorrelationFrameData>[],
-      source: timeSeries.source,
-    );
-  }
-
-  final int samplesPerMinute = (timeSeries.sampleRate * 60.0).round();
-  if (samplesPerMinute <= 0) {
-    return BridgeDetectionData(
-      channelLabels: timeSeries.channelLabels,
-      windowSampleCount: windowSamples,
-      sampleRate: timeSeries.sampleRate,
-      frames: const <BridgeCorrelationFrameData>[],
-      source: timeSeries.source,
-    );
-  }
-
-  final int fullMinutes = channels.first.length ~/ samplesPerMinute;
-  final int usableWindowSamples = math.min(windowSamples, samplesPerMinute);
-  final List<BridgeCorrelationFrameData> frames = <BridgeCorrelationFrameData>[];
-
-  for (int minuteIndex = 0; minuteIndex < fullMinutes; minuteIndex++) {
-    final int minuteEnd = (minuteIndex + 1) * samplesPerMinute;
-    final int startSample = minuteEnd - usableWindowSamples;
-    final List<List<double>> windowedChannels = channels
-        .map(
-          (List<double> channel) => channel.sublist(startSample, minuteEnd),
-        )
-        .toList(growable: false);
-    frames.add(
-      BridgeCorrelationFrameData(
-        minuteIndex: minuteIndex + 1,
-        startSample: startSample,
-        endSampleExclusive: minuteEnd,
-        correlationMatrix: _correlationMatrix(windowedChannels),
-      ),
-    );
-  }
-
-  final List<String> channelLabels = timeSeries.channelLabels.isEmpty
-      ? List<String>.generate(
-          channels.length,
-          (int index) => 'Ch ${index + 1}',
-          growable: false,
-        )
-      : timeSeries.channelLabels;
-
-  return BridgeDetectionData(
-    channelLabels: channelLabels,
-    windowSampleCount: usableWindowSamples,
-    sampleRate: timeSeries.sampleRate,
-    frames: frames,
-    source: timeSeries.source,
-  );
-}
-
-List<List<double>> _correlationMatrix(List<List<double>> channels) {
-  final int channelCount = channels.length;
-  final List<List<double>> matrix = List<List<double>>.generate(
-    channelCount,
-    (_) => List<double>.filled(channelCount, 0.0),
-    growable: false,
-  );
-
-  for (int i = 0; i < channelCount; i++) {
-    for (int j = i; j < channelCount; j++) {
-      final double correlation = _pearsonCorrelation(channels[i], channels[j]);
-      matrix[i][j] = correlation;
-      matrix[j][i] = correlation;
-    }
-  }
-
-  return matrix;
-}
-
-double _pearsonCorrelation(List<double> a, List<double> b) {
-  final int count = math.min(a.length, b.length);
-  if (count == 0) {
-    return 0.0;
-  }
-  double sumA = 0.0;
-  double sumB = 0.0;
-  for (int index = 0; index < count; index++) {
-    sumA += a[index];
-    sumB += b[index];
-  }
-  final double meanA = sumA / count;
-  final double meanB = sumB / count;
-
-  double numerator = 0.0;
-  double denominatorA = 0.0;
-  double denominatorB = 0.0;
-  for (int index = 0; index < count; index++) {
-    final double deltaA = a[index] - meanA;
-    final double deltaB = b[index] - meanB;
-    numerator += deltaA * deltaB;
-    denominatorA += deltaA * deltaA;
-    denominatorB += deltaB * deltaB;
-  }
-
-  if (denominatorA == 0.0 || denominatorB == 0.0) {
-    return 0.0;
-  }
-  return numerator / math.sqrt(denominatorA * denominatorB);
-}
-
-String _exampleWindowRange({
-  required double sampleRate,
-  required int windowSamples,
-}) {
-  final double seconds = windowSamples / sampleRate;
-  final double startSeconds = math.max(0.0, 60.0 - seconds);
-  final int startMinute = (startSeconds ~/ 60).toInt();
-  final int startSecondWhole = (startSeconds % 60).floor();
-  final int endMinute = 1;
-  return '${startMinute.toString().padLeft(2, '0')}:${startSecondWhole.toString().padLeft(2, '0')} - ${endMinute.toString().padLeft(2, '0')}:00 of each minute';
+dynamic _positiveDouble(String value, dynamic previous) {
+  final double? parsed = double.tryParse(value);
+  return parsed != null && parsed > 0 ? parsed : previous;
 }

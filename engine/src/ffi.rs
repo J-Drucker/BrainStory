@@ -2,6 +2,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use crate::bridge_detection::detect_bridges;
 use crate::filtering::bandpass_filter;
 use crate::gaussian_mixture::fit_gaussian_mixture;
 use crate::ica::{apply_unmixing_flat_into, fast_ica, fit_fast_ica};
@@ -11,6 +12,59 @@ use serde_json::json;
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_ARGUMENT: i32 = 1;
+
+#[no_mangle]
+pub extern "C" fn brainstory_bridge_detection(
+    samples_ptr: *const f64,
+    channel_count: usize,
+    sample_count: usize,
+    sample_rate: f64,
+    epoch_seconds: f64,
+    interval_seconds: f64,
+    coordinates_ptr: *const f64,
+) -> *mut c_char {
+    let result = if samples_ptr.is_null() {
+        Err("Bridge detection did not receive a sample buffer.".to_string())
+    } else if let Some(value_count) = channel_count.checked_mul(sample_count) {
+        let samples = unsafe { slice::from_raw_parts(samples_ptr, value_count) };
+        let channels = samples
+            .chunks_exact(sample_count)
+            .map(|channel| channel.to_vec())
+            .collect::<Vec<Vec<f64>>>();
+        let coordinates = if coordinates_ptr.is_null() {
+            vec![None; channel_count]
+        } else {
+            let coordinate_values =
+                unsafe { slice::from_raw_parts(coordinates_ptr, channel_count.saturating_mul(3)) };
+            coordinate_values
+                .chunks_exact(3)
+                .map(|coordinate| {
+                    coordinate.iter().all(|value| value.is_finite()).then_some([
+                        coordinate[0],
+                        coordinate[1],
+                        coordinate[2],
+                    ])
+                })
+                .collect()
+        };
+        detect_bridges(
+            &channels,
+            sample_rate,
+            epoch_seconds,
+            interval_seconds,
+            &coordinates,
+        )
+    } else {
+        Err("Bridge detection input dimensions overflowed the native address space.".into())
+    };
+    let payload = match result {
+        Ok(result) => json!({"ok": true, "result": result}),
+        Err(error) => json!({"ok": false, "error": error}),
+    };
+    CString::new(payload.to_string())
+        .expect("JSON cannot contain NUL bytes")
+        .into_raw()
+}
 
 #[no_mangle]
 pub extern "C" fn brainstory_gaussian_mixture(
@@ -326,9 +380,10 @@ pub extern "C" fn brainstory_segment_mean_sd(
 #[cfg(test)]
 mod tests {
     use super::{
-        brainstory_apply_ica, brainstory_bandpass_filter, brainstory_fast_ica,
-        brainstory_fast_ica_fit, brainstory_gaussian_mixture, brainstory_morlet_wavelet,
-        brainstory_segment_mean_sd, brainstory_single_sided_spectrum, STATUS_OK,
+        brainstory_apply_ica, brainstory_bandpass_filter, brainstory_bridge_detection,
+        brainstory_fast_ica, brainstory_fast_ica_fit, brainstory_gaussian_mixture,
+        brainstory_morlet_wavelet, brainstory_segment_mean_sd, brainstory_single_sided_spectrum,
+        STATUS_OK,
     };
     use crate::ant_cnt::brainstory_engine_free_string;
     use std::ffi::CStr;
@@ -348,6 +403,29 @@ mod tests {
         assert_eq!(status, STATUS_OK);
         assert_eq!(mean, vec![2.0, 4.0, 6.0]);
         assert_eq!(sd, vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn computes_bridge_scores_through_the_c_api() {
+        let samples = vec![0.0_f64, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0];
+        let coordinates = vec![0.0_f64, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let pointer = brainstory_bridge_detection(
+            samples.as_ptr(),
+            2,
+            4,
+            2.0,
+            2.0,
+            10.0,
+            coordinates.as_ptr(),
+        );
+        assert!(!pointer.is_null());
+        let payload = unsafe { CStr::from_ptr(pointer) }
+            .to_string_lossy()
+            .into_owned();
+        crate::ant_cnt::brainstory_engine_free_string(pointer);
+        let parsed: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(parsed["ok"], true);
+        assert!(parsed["result"]["values"][0][0].as_f64().unwrap() > 600.0);
     }
 
     #[test]

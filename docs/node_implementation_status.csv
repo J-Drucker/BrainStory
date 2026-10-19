@@ -1,7 +1,7 @@
 category,subcategory,node name,current implementation,visible
 Data Wrangling,Subcategory 1,Import,dart,yes
 Data Wrangling,Quality Control,Edit Channels,dart,yes
-Data Wrangling,Quality Control,Bridge Detector,dart,yes
+Data Wrangling,Quality Control,Bridge Detector,rust,yes
 Data Wrangling,Subcategory 1,Resample,dart,yes
 Data Wrangling,Metadata,Channel Coordinates,dart,no
 Signal Processing,Frequency Domain,Bandpass Filter,rust,yes

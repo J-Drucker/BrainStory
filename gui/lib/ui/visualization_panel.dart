@@ -14,6 +14,7 @@ import '../nodes/sleep_staging_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/segmentation_node.dart';
 import 'canvas_logic.dart';
+import 'bridge_viewer.dart';
 import 'channel_positions_dialog.dart';
 import 'ica_viewer.dart';
 import 'impedance_layout.dart';
@@ -546,7 +547,7 @@ class _VisualizationChart extends StatelessWidget {
         (Dataset dataset) => dataset.id == activeDatasetId,
         orElse: () => datasets.first,
       );
-      return _BridgeHeatmapChart(
+      return BridgeViewer(
         dataset: activeDataset,
         params: params,
         onChanged: onChanged,
@@ -3614,6 +3615,8 @@ class _PsdChart extends StatelessWidget {
   }
 }
 
+/* Archived v1 correlation-heatmap viewer. Retained with the archived
+bridge-detector design for historical reference; BridgeViewer is active.
 class _BridgeHeatmapChart extends StatefulWidget {
   const _BridgeHeatmapChart({
     required this.dataset,
@@ -4016,6 +4019,7 @@ class _BridgeScaleLegend extends StatelessWidget {
   }
 }
 
+*/
 class _SegmentLabelGroup {
   const _SegmentLabelGroup({
     required this.label,
@@ -6551,6 +6555,7 @@ _AggregatePlotData? _buildAggregatePlotData(
   );
 }
 
+/* Archived v1 correlation-heatmap ordering helpers.
 Color _bridgeCorrelationColor(double value) {
   final double clamped = value.clamp(-1.0, 1.0);
   if (clamped < 0) {
@@ -6654,6 +6659,7 @@ List<int> _computeCovarianceOrdering(BridgeDetectionData bridge) {
 
   return ordered;
 }
+*/
 
 class _ChartCard extends StatelessWidget {
   const _ChartCard({

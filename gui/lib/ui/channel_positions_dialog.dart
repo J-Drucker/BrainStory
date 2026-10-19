@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import 'topomap_view.dart';
+import 'coordinate_palette.dart';
 
 Future<void> showChannelPositionsDialog(
   BuildContext context, {
@@ -648,40 +649,22 @@ TopomapValueBounds _boundsForAxis(
 _AxisVisualSpec _axisSpec(_TopomapValueAxis axis) {
   switch (axis) {
     case _TopomapValueAxis.x:
-      const Color negativeColor = Color(0xFF3C7EBE);
-      const Color neutralColor = Color(0xFF7A7A7A);
-      const Color positiveColor = Color(0xFFA76C12);
       return _AxisVisualSpec(
         label: 'X',
         description: 'Transverse / left-right',
-        scale: TopomapColorScale(
-          colors: <Color>[negativeColor, neutralColor, positiveColor],
-          legendLabel: 'Left to right',
-        ),
+        scale: coordinateColorScale(CoordinateColorAxis.x),
       );
     case _TopomapValueAxis.y:
-      const Color negativeColor = Color(0xFF628835);
-      const Color neutralColor = Color(0xFF7A7A7A);
-      const Color positiveColor = Color(0xFF9064AF);
       return _AxisVisualSpec(
         label: 'Y',
         description: 'Posterior-anterior',
-        scale: TopomapColorScale(
-          colors: <Color>[negativeColor, neutralColor, positiveColor],
-          legendLabel: 'Posterior to anterior',
-        ),
+        scale: coordinateColorScale(CoordinateColorAxis.y),
       );
     case _TopomapValueAxis.z:
-      const Color negativeColor = Color(0xFF00908A);
-      const Color neutralColor = Color(0xFF7A7A7A);
-      const Color positiveColor = Color(0xFFB5596A);
       return _AxisVisualSpec(
         label: 'Z',
         description: 'Craniocaudal / inferior-superior',
-        scale: TopomapColorScale(
-          colors: <Color>[negativeColor, neutralColor, positiveColor],
-          legendLabel: 'Inferior to superior',
-        ),
+        scale: coordinateColorScale(CoordinateColorAxis.z),
       );
   }
 }

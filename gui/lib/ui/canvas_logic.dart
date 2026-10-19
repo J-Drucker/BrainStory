@@ -1572,9 +1572,11 @@ class CanvasLogic {
       case 'Import':
         return 'Data were imported into the workflow.';
       case 'Bridge Detector':
-        final int windowSamples =
-            (params['windowSamples'] as num?)?.toInt() ?? 1000;
-        return 'Bridge detection was performed by computing channel-wise correlation matrices over the last $windowSamples samples of each full minute of recording.';
+        final double epochSeconds =
+            (params['epochSeconds'] as num?)?.toDouble() ?? 2.0;
+        final double intervalSeconds =
+            (params['intervalSeconds'] as num?)?.toDouble() ?? 10.0;
+        return 'Bridge detection was performed in ${epochSeconds.toStringAsFixed(2)}-second epochs every ${intervalSeconds.toStringAsFixed(2)} seconds by taking the negated natural logarithm of each channel pair\'s mean squared difference, normalized by Euclidean electrode distance when coordinates were available.';
       case 'Resample':
         final double sampleRate =
             (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;
@@ -2159,7 +2161,7 @@ class CanvasLogic {
     if (nodes.any(canVisualizeNode)) {
       buffer.writeln();
       buffer.writeln(
-        'Outputs were reviewed visually within BrainStory using node-linked inspection views appropriate to each data type, including raw time-domain traces, power spectra, hypnograms, and bridge-detection heatmaps when available.',
+        'Outputs were reviewed visually within BrainStory using node-linked inspection views appropriate to each data type, including raw time-domain traces, power spectra, hypnograms, and bridge-score traces when available.',
       );
     }
 

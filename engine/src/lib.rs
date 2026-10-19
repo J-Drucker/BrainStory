@@ -1,4 +1,5 @@
 pub mod ant_cnt;
+pub mod bridge_detection;
 pub mod ffi;
 pub mod filtering;
 pub mod gaussian_mixture;

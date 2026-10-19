@@ -5,6 +5,27 @@ import 'dart:typed_data';
 
 import 'brainstory_engine_model.dart';
 
+typedef _BridgeDetectionNative =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      ffi.IntPtr channelCount,
+      ffi.IntPtr sampleCount,
+      ffi.Double sampleRate,
+      ffi.Double epochSeconds,
+      ffi.Double intervalSeconds,
+      ffi.Pointer<ffi.Double> coordinates,
+    );
+typedef _BridgeDetectionDart =
+    ffi.Pointer<ffi.Uint8> Function(
+      ffi.Pointer<ffi.Double> samples,
+      int channelCount,
+      int sampleCount,
+      double sampleRate,
+      double epochSeconds,
+      double intervalSeconds,
+      ffi.Pointer<ffi.Double> coordinates,
+    );
+
 typedef _SegmentMeanSdNative =
     ffi.Int32 Function(
       ffi.Pointer<ffi.Double> traces,
@@ -178,6 +199,65 @@ typedef _ApplyIcaDart =
 
 final _BrainstoryEngineLibrary _engineLibrary = _BrainstoryEngineLibrary();
 final _NativeMemory _nativeMemory = _NativeMemory();
+
+NativeBridgeDetectionResult? computeBridgeDetectionNativeFlat(
+  Float64List flatSamples, {
+  required int channelCount,
+  required int sampleCount,
+  required double sampleRate,
+  required double epochSeconds,
+  required double intervalSeconds,
+  required Float64List flatCoordinates,
+}) {
+  if (channelCount < 2 ||
+      sampleCount == 0 ||
+      flatSamples.length != channelCount * sampleCount ||
+      flatCoordinates.length != channelCount * 3) {
+    throw ArgumentError('Bridge detection input dimensions do not match.');
+  }
+  final _BridgeDetectionDart? detect = _engineLibrary.bridgeDetection;
+  if (detect == null || _nativeMemory.unavailable) return null;
+  final ffi.Pointer<ffi.Double> samplesPtr = _nativeMemory.callocDouble(
+    flatSamples.length,
+  );
+  final ffi.Pointer<ffi.Double> coordinatesPtr = _nativeMemory.callocDouble(
+    flatCoordinates.length,
+  );
+  try {
+    samplesPtr.asTypedList(flatSamples.length).setAll(0, flatSamples);
+    coordinatesPtr
+        .asTypedList(flatCoordinates.length)
+        .setAll(0, flatCoordinates);
+    final ffi.Pointer<ffi.Uint8> resultPointer = detect(
+      samplesPtr,
+      channelCount,
+      sampleCount,
+      sampleRate,
+      epochSeconds,
+      intervalSeconds,
+      coordinatesPtr,
+    );
+    if (resultPointer == ffi.nullptr) return null;
+    try {
+      final Map<String, dynamic> response = Map<String, dynamic>.from(
+        jsonDecode(_decodeNativeString(resultPointer)) as Map,
+      );
+      if (response['ok'] != true) {
+        throw StateError(
+          response['error']?.toString() ?? 'Native bridge detection failed.',
+        );
+      }
+      return NativeBridgeDetectionResult.fromJson(
+        Map<String, dynamic>.from(response['result'] as Map),
+      );
+    } finally {
+      _engineLibrary.freeString(resultPointer);
+    }
+  } finally {
+    _nativeMemory.free(samplesPtr.cast<ffi.Void>());
+    _nativeMemory.free(coordinatesPtr.cast<ffi.Void>());
+  }
+}
 
 NativeGaussianMixtureResult? computeGaussianMixtureNative(
   List<List<double>> rows, {
@@ -702,6 +782,19 @@ class _BrainstoryEngineLibrary {
   _BrainstoryEngineLibrary() : _library = _tryLoadLibrary();
 
   final ffi.DynamicLibrary? _library;
+
+  _BridgeDetectionDart? get bridgeDetection {
+    final ffi.DynamicLibrary? library = _library;
+    if (library == null) return null;
+    try {
+      return library
+          .lookupFunction<_BridgeDetectionNative, _BridgeDetectionDart>(
+            'brainstory_bridge_detection',
+          );
+    } catch (_) {
+      return null;
+    }
+  }
 
   _GaussianMixtureDart? get gaussianMixture {
     final ffi.DynamicLibrary? library = _library;

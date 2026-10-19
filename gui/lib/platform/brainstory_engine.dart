@@ -9,6 +9,28 @@ import 'brainstory_engine_stub.dart'
 
 export 'brainstory_engine_model.dart';
 
+Future<NativeBridgeDetectionResult?> computeBridgeDetectionBackground(
+  List<List<double>> channels, {
+  required double sampleRate,
+  required double epochSeconds,
+  required double intervalSeconds,
+  required List<List<double>?> coordinates,
+}) async {
+  final dynamic result = await executeBrowserEngine(<String, dynamic>{
+    'operation': 'bridgeDetection',
+    'channels': channels,
+    'rate': sampleRate,
+    'epochSeconds': epochSeconds,
+    'intervalSeconds': intervalSeconds,
+    'coordinates': coordinates,
+  });
+  if (result is NativeBridgeDetectionResult) return result;
+  if (result == null) return null;
+  return NativeBridgeDetectionResult.fromJson(
+    Map<String, dynamic>.from(result as Map),
+  );
+}
+
 Future<List<double>?> filterBackground(
   List<double> samples, {
   required double sampleRate,

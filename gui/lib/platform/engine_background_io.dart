@@ -13,9 +13,49 @@ Future<dynamic> executeBrowserEngine(Map<String, dynamic> request) async {
       return _fitIca(request);
     case 'applyIca':
       return _applyIca(request);
+    case 'bridgeDetection':
+      return _bridgeDetection(request);
     default:
       return null;
   }
+}
+
+Future<dynamic> _bridgeDetection(Map<String, dynamic> request) async {
+  final List<List<double>> channels = _matrix(request['channels']);
+  if (channels.length < 2 || channels.first.isEmpty) return null;
+  final int sampleCount = channels.first.length;
+  final int channelCount = channels.length;
+  final TransferableTypedData samples = _transferMatrix(channels, sampleCount);
+  final List<dynamic> rawCoordinates =
+      request['coordinates'] as List<dynamic>? ?? const <dynamic>[];
+  final Float64List coordinates = Float64List(channelCount * 3);
+  coordinates.fillRange(0, coordinates.length, double.nan);
+  for (int channel = 0; channel < channelCount; channel++) {
+    if (channel >= rawCoordinates.length || rawCoordinates[channel] is! List) {
+      continue;
+    }
+    final List<dynamic> coordinate = rawCoordinates[channel] as List<dynamic>;
+    if (coordinate.length < 3) continue;
+    for (int axis = 0; axis < 3; axis++) {
+      coordinates[(channel * 3) + axis] = (coordinate[axis] as num).toDouble();
+    }
+  }
+  final TransferableTypedData transferredCoordinates =
+      TransferableTypedData.fromList(<TypedData>[coordinates]);
+  final double sampleRate = (request['rate'] as num).toDouble();
+  final double epochSeconds = (request['epochSeconds'] as num).toDouble();
+  final double intervalSeconds = (request['intervalSeconds'] as num).toDouble();
+  return Isolate.run(() {
+    return native.computeBridgeDetectionNativeFlat(
+      _materializeDoubles(samples),
+      channelCount: channelCount,
+      sampleCount: sampleCount,
+      sampleRate: sampleRate,
+      epochSeconds: epochSeconds,
+      intervalSeconds: intervalSeconds,
+      flatCoordinates: _materializeDoubles(transferredCoordinates),
+    );
+  });
 }
 
 Future<dynamic> _gaussianMixture(Map<String, dynamic> request) async {

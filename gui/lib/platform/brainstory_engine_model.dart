@@ -8,6 +8,49 @@ class AggregateSeriesStats {
   final List<double> standardDeviation;
 }
 
+class NativeBridgeDetectionResult {
+  const NativeBridgeDetectionResult({
+    required this.epochSampleCount,
+    required this.intervalSampleCount,
+    required this.epochStarts,
+    required this.epochEnds,
+    required this.values,
+    required this.distanceNormalizedPairs,
+  });
+
+  final int epochSampleCount;
+  final int intervalSampleCount;
+  final List<int> epochStarts;
+  final List<int> epochEnds;
+  final List<List<double>> values;
+  final List<bool> distanceNormalizedPairs;
+
+  factory NativeBridgeDetectionResult.fromJson(Map<String, dynamic> json) {
+    return NativeBridgeDetectionResult(
+      epochSampleCount: (json['epochSampleCount'] as num?)?.toInt() ?? 0,
+      intervalSampleCount: (json['intervalSampleCount'] as num?)?.toInt() ?? 0,
+      epochStarts: (json['epochStarts'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => (value as num).toInt())
+          .toList(growable: false),
+      epochEnds: (json['epochEnds'] as List<dynamic>? ?? const <dynamic>[])
+          .map((dynamic value) => (value as num).toInt())
+          .toList(growable: false),
+      values: (json['values'] as List<dynamic>? ?? const <dynamic>[])
+          .map(
+            (dynamic row) => (row as List<dynamic>)
+                .map((dynamic value) => (value as num).toDouble())
+                .toList(growable: false),
+          )
+          .toList(growable: false),
+      distanceNormalizedPairs:
+          (json['distanceNormalizedPairs'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => value == true)
+              .toList(growable: false),
+    );
+  }
+}
+
 class NativeSpectrumResult {
   const NativeSpectrumResult({required this.frequencies, required this.power});
 

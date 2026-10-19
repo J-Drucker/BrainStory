@@ -217,22 +217,34 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
     testFiles: <String>['gui/test/signal_nodes_test.dart'],
   ),
   'Bridge Detector': AlgorithmReview(
-    implementation: AlgorithmImplementation.dart,
+    implementation: AlgorithmImplementation.rust,
     summary:
-        'Computes a Pearson channel-correlation matrix from the final requested samples of each complete recording minute.',
+        'Computes a negated log mean-squared-difference score for every unique electrode pair in regularly spaced epochs.',
     procedure: <String>[
-      'Divide the recording into complete 60-second intervals; ignore a trailing partial minute.',
-      'Take the last min(window size, samples per minute) samples from every channel in each minute.',
-      'Compute the ordinary Pearson correlation for every channel pair.',
-      'Store one symmetric correlation matrix per complete minute.',
+      'Start a complete epoch at zero and then at each configured interval; ignore a trailing incomplete epoch.',
+      'For each unique channel pair, square the sample-by-sample difference, sum it, and divide by the epoch sample count.',
+      'When both electrodes have valid coordinates, divide that mean squared difference by their Euclidean distance.',
+      'Take the natural logarithm and multiply by negative one, so more nearly identical signals receive larger scores.',
+      'Store one canonical upper-triangle vector per epoch.',
     ],
-    parameters: <String>['Window size: samples, default 1000.'],
+    parameters: <String>[
+      'Epoch length: seconds, default 2.',
+      'Epoch interval: seconds, default 10.',
+    ],
     assumptions: <String>[
-      'Constant-valued channels receive correlation zero rather than undefined.',
-      'This node reports correlations; it does not itself classify or remove bridged channels.',
+      'A floor of 1e-300 keeps identical-channel scores finite before the logarithm.',
+      'Distance normalization is pair-specific and requires valid, noncoincident coordinates for both electrodes.',
+      'This node reports bridge scores; it does not itself classify or remove bridged channels.',
     ],
-    sourceFiles: <String>['gui/lib/nodes/bridge_detector_node.dart'],
-    testFiles: <String>['gui/test/signal_nodes_test.dart'],
+    sourceFiles: <String>[
+      'engine/src/bridge_detection.rs',
+      'gui/lib/nodes/bridge_detector_node.dart',
+    ],
+    testFiles: <String>[
+      'engine/src/bridge_detection.rs',
+      'gui/test/signal_nodes_test.dart',
+      'gui/test/bridge_viewer_test.dart',
+    ],
   ),
   'Gaussian Mixture': AlgorithmReview(
     implementation: AlgorithmImplementation.rust,
