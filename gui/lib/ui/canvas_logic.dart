@@ -7409,6 +7409,19 @@ class CanvasLogic {
           break;
       }
     }
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    final ArtifactChangeSet? changeSet =
+        dataset.ram['artifact.lastChangeSet'] as ArtifactChangeSet?;
+    if (timeSeries != null &&
+        timeSeries.channelCoordinates.isNotEmpty &&
+        (node.type is ImportNodeType ||
+            changeSet?.touchesChannelCoordinates == true ||
+            dataset.artifactIdentityFor(
+                  BrainStoryArtifactKind.channelCoordinates,
+                ) ==
+                null)) {
+      kinds.add(BrainStoryArtifactKind.channelCoordinates);
+    }
     return kinds;
   }
 

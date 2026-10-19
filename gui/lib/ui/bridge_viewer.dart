@@ -109,7 +109,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
           viewportWidth,
           durationSeconds * pixelsPerSecond,
         );
-        final double traceHeight = math.max(150, constraints.maxHeight - 154);
+        final double traceHeight = math.max(150, constraints.maxHeight - 166);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -392,6 +392,7 @@ class _BridgeColorEncoding {
     required this.minimum,
     required this.maximum,
     this.units = '',
+    this.channelNumberFallbackCount = 0,
   });
 
   const _BridgeColorEncoding.channelNumber()
@@ -399,13 +400,15 @@ class _BridgeColorEncoding {
       label = 'Mean channel number',
       minimum = 1,
       maximum = 1,
-      units = '';
+      units = '',
+      channelNumberFallbackCount = 0;
 
   final List<Color> colors;
   final String label;
   final double minimum;
   final double maximum;
   final String units;
+  final int channelNumberFallbackCount;
 }
 
 _BridgeColorEncoding _pairColorEncoding(
@@ -429,29 +432,53 @@ _BridgeColorEncoding _pairColorEncoding(
       }
     }
   }
-  final Set<String> requiredLabels = pairs
-      .expand((_BridgePair pair) => <String>[pair.firstLabel, pair.secondLabel])
-      .toSet();
-  if (requiredLabels.isNotEmpty &&
-      requiredLabels.every(coordinates.containsKey)) {
-    final List<double> distances = pairs
-        .map((_BridgePair pair) {
-          final ChannelCoordinate first = coordinates[pair.firstLabel]!;
-          final ChannelCoordinate second = coordinates[pair.secondLabel]!;
-          final double dx = first.x - second.x;
-          final double dy = first.y - second.y;
-          final double dz = first.z - second.z;
-          return math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
-        })
-        .toList(growable: false);
+  final List<double?> distances = pairs
+      .map((_BridgePair pair) {
+        final ChannelCoordinate? first = coordinates[pair.firstLabel];
+        final ChannelCoordinate? second = coordinates[pair.secondLabel];
+        if (first == null || second == null) return null;
+        final double dx = first.x - second.x;
+        final double dy = first.y - second.y;
+        final double dz = first.z - second.z;
+        return math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
+      })
+      .toList(growable: false);
+  final List<double> availableDistances = distances.whereType<double>().toList(
+    growable: false,
+  );
+  if (availableDistances.isNotEmpty) {
     final Set<String> units = coordinates.values
         .map((ChannelCoordinate coordinate) => coordinate.units)
         .where((String units) => units.isNotEmpty)
         .toSet();
-    return _continuousColorEncoding(
-      distances,
+    final double minimum = availableDistances.reduce(math.min);
+    final double maximum = availableDistances.reduce(math.max);
+    final double span = maximum - minimum;
+    final List<double> channelNumbers = pairs
+        .map(
+          (_BridgePair pair) =>
+              ((pair.firstIndex + 1) + (pair.secondIndex + 1)) / 2,
+        )
+        .toList(growable: false);
+    final double minimumChannel = channelNumbers.reduce(math.min);
+    final double channelSpan = channelNumbers.reduce(math.max) - minimumChannel;
+    return _BridgeColorEncoding(
+      colors: List<Color>.generate(pairs.length, (int index) {
+        final double? distance = distances[index];
+        final double position = distance == null
+            ? (channelSpan == 0
+                  ? 0.5
+                  : (channelNumbers[index] - minimumChannel) / channelSpan)
+            : (span == 0 ? 0.5 : (distance - minimum) / span);
+        return _darkRainbowColor(position);
+      }, growable: false),
       label: 'Electrode distance',
+      minimum: minimum,
+      maximum: maximum,
       units: units.length == 1 ? units.single : '',
+      channelNumberFallbackCount: distances
+          .where((value) => value == null)
+          .length,
     );
   }
 
@@ -478,6 +505,7 @@ _BridgeColorEncoding _continuousColorEncoding(
       minimum: 0,
       maximum: 0,
       units: units,
+      channelNumberFallbackCount: 0,
     );
   }
   final double minimum = values.reduce(math.min);
@@ -494,6 +522,7 @@ _BridgeColorEncoding _continuousColorEncoding(
     minimum: minimum,
     maximum: maximum,
     units: units,
+    channelNumberFallbackCount: 0,
   );
 }
 
@@ -613,8 +642,10 @@ class _BridgeColorLegend extends StatelessWidget {
     final String suffix = encoding.units.isEmpty ? '' : ' ${encoding.units}';
     return SizedBox(
       key: const ValueKey<String>('bridge-color-legend'),
-      height: 30,
-      child: Row(
+      height: 42,
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4,
         children: <Widget>[
           Text(
             encoding.label,
@@ -644,6 +675,13 @@ class _BridgeColorLegend extends StatelessWidget {
             '${_legendLabel(encoding.maximum)}$suffix',
             style: const TextStyle(color: Colors.white54, fontSize: 10),
           ),
+          if (encoding.channelNumberFallbackCount > 0) ...<Widget>[
+            const SizedBox(width: 10),
+            Text(
+              '${encoding.channelNumberFallbackCount} pair(s) use channel number',
+              style: const TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+          ],
         ],
       ),
     );

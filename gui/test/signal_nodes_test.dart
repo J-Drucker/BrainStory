@@ -4108,6 +4108,65 @@ Cz,0.32,3.4,147.92
     },
   );
 
+  test('coordinate provenance is created and passed through filters', () async {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('coords-lineage', label: 'Coords lineage')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[0, 1, 0, -1, 0, 1, 0, -1],
+          <double>[1, 0, -1, 0, 1, 0, -1, 0],
+        ],
+        sampleRate: 100,
+        channelLabels: const <String>['Fp1', 'Fp2'],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(ChannelCoordinatesNodeType());
+    logic.addNode(BandpassNodeType());
+    final NodeModel importNode = logic.nodes[0];
+    final NodeModel coordinatesNode = logic.nodes[1];
+    final NodeModel filterNode = logic.nodes[2];
+    logic.connections.addAll(<Map<String, dynamic>>[
+      <String, dynamic>{
+        'fromNode': importNode.id,
+        'fromPort': 0,
+        'toNode': coordinatesNode.id,
+        'toPort': 0,
+      },
+      <String, dynamic>{
+        'fromNode': coordinatesNode.id,
+        'fromPort': 0,
+        'toNode': filterNode.id,
+        'toPort': 0,
+      },
+    ]);
+    importNode.datasetStates[dataset.id] = DatasetState.done;
+    coordinatesNode.datasetStates[dataset.id] = DatasetState.ready;
+    filterNode.datasetStates[dataset.id] = DatasetState.ready;
+
+    await logic.runThisStep(
+      coordinatesNode.id,
+      datasetIds: <String>{dataset.id},
+    );
+    final ArtifactIdentity coordinateIdentity = dataset.artifactIdentityFor(
+      BrainStoryArtifactKind.channelCoordinates,
+    )!;
+    expect(coordinateIdentity.producerNodeId, coordinatesNode.id);
+
+    await logic.runThisStep(filterNode.id, datasetIds: <String>{dataset.id});
+    final Dataset downstream = await logic.materializedDatasetViewForNode(
+      filterNode.id,
+      dataset,
+    );
+    expect(
+      downstream
+          .artifactIdentityFor(BrainStoryArtifactKind.channelCoordinates)
+          ?.producerNodeId,
+      coordinatesNode.id,
+    );
+    expect(downstream.timeSeries!.channelCoordinates, contains('Fp1'));
+  });
+
   test('parseSignalText infers sample rate from a time column', () {
     const String contents = '''
 time,value

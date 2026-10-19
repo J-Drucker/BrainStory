@@ -135,11 +135,36 @@ void main() {
 
     expect(find.text('Electrode distance'), findsOneWidget);
   });
+
+  testWidgets('partial coordinates retain distance coloring where possible', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(omitPzCoordinate: true),
+              params: <String, dynamic>{},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Electrode distance'), findsOneWidget);
+    expect(find.text('2 pair(s) use channel number'), findsOneWidget);
+  });
 }
 
 Dataset _bridgeDataset({
   bool includeCoordinates = true,
   bool coordinatesOnTimeSeries = true,
+  bool omitPzCoordinate = false,
 }) {
   final Dataset dataset = Dataset('bridge', label: 'Bridge example');
   dataset.timeSeries = TimeSeriesData(
@@ -154,7 +179,8 @@ Dataset _bridgeDataset({
         ? <String, ChannelCoordinate>{
             'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
             'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
-            'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+            if (!omitPzCoordinate)
+              'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
           }
         : const <String, ChannelCoordinate>{},
   );
@@ -182,7 +208,8 @@ Dataset _bridgeDataset({
         ? <String, ChannelCoordinate>{
             'Fz': const ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
             'Cz': const ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
-            'Pz': const ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+            if (!omitPzCoordinate)
+              'Pz': const ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
           }
         : const <String, ChannelCoordinate>{},
   );

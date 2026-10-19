@@ -135,6 +135,14 @@ class ChannelCoordinatesNodeType extends NodeType {
           ? 'Channel coordinates'
           : '${timeSeries.source} -> Channel coordinates',
     );
+    dataset.ram['artifact.lastChangeSet'] = ArtifactChangeSet(
+      datasetId: dataset.id,
+      changeTypes: const <ArtifactChangeType>{
+        ArtifactChangeType.channelCoordinates,
+      },
+      affectedChannelLabels: attached.keys.toList(growable: false),
+      description: 'Assigned ${attached.length} channel coordinates.',
+    );
     dataset.ram['channelCoordinates.params'] = <String, dynamic>{
       'mode': mode,
       'asset': standardCoordinatesAsset,
