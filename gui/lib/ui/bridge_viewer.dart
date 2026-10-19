@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
 import '../nodes/channel_coordinates_node.dart';
-import 'coordinate_palette.dart';
 import 'viewer_chrome.dart';
 
 class BridgeViewer extends StatefulWidget {
@@ -34,7 +33,8 @@ class _BridgeViewerState extends State<BridgeViewer> {
   BridgeDetectionData? _cachedBridge;
   TimeSeriesData? _cachedTimeSeries;
   List<_BridgePair> _cachedPairs = const <_BridgePair>[];
-  List<Color> _cachedColors = const <Color>[];
+  _BridgeColorEncoding _cachedColorEncoding =
+      const _BridgeColorEncoding.channelNumber();
   _BridgeValueBounds _cachedValueBounds = const _BridgeValueBounds(
     center: 0,
     range: 1,
@@ -65,7 +65,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
     }
     _ensureDisplayCache(bridge, widget.dataset.timeSeries);
     final List<_BridgePair> pairs = _cachedPairs;
-    final List<Color> colors = _cachedColors;
+    final List<Color> colors = _cachedColorEncoding.colors;
     final double signalDurationSeconds = widget.dataset.timeSeries == null
         ? 0
         : widget.dataset.timeSeries!.sampleCount /
@@ -98,13 +98,18 @@ class _BridgeViewerState extends State<BridgeViewer> {
     );
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double viewportWidth = math.max(160, constraints.maxWidth - 20);
+        const double axisWidth = 76;
+        const double plotGap = 8;
+        final double viewportWidth = math.max(
+          160,
+          constraints.maxWidth - axisWidth - plotGap - 20,
+        );
         final double pixelsPerSecond = viewportWidth / secondsPerView;
         final double totalWidth = math.max(
           viewportWidth,
           durationSeconds * pixelsPerSecond,
         );
-        final double traceHeight = math.max(150, constraints.maxHeight - 116);
+        final double traceHeight = math.max(150, constraints.maxHeight - 154);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -150,68 +155,84 @@ class _BridgeViewerState extends State<BridgeViewer> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: ViewerTraceSurface(
-                child: SingleChildScrollView(
-                  controller: _horizontalController,
-                  scrollDirection: Axis.horizontal,
-                  child: MouseRegion(
-                    key: const ValueKey<String>('bridge-trace-region'),
-                    onHover: (PointerHoverEvent event) {
-                      _updateHover(
-                        event.localPosition,
-                        bridge,
-                        traceHeight,
-                        pixelsPerSecond,
-                      );
-                    },
-                    onExit: (_) => setState(() {
-                      _hoverPosition = null;
-                      _hoveredPairIndex = null;
-                      _hoveredEpochIndex = null;
-                    }),
-                    child: SizedBox(
-                      width: totalWidth,
-                      height: traceHeight,
-                      child: Stack(
-                        clipBehavior: Clip.hardEdge,
-                        children: <Widget>[
-                          Positioned.fill(
-                            child: CustomPaint(
-                              key: const ValueKey<String>(
-                                'bridge-butterfly-plot',
-                              ),
-                              painter: _BridgeTracePainter(
-                                bridge: bridge,
-                                colors: colors,
-                                pixelsPerSecond: pixelsPerSecond,
-                                scoreRange: scoreRange,
-                                scoreCenter: _cachedValueBounds.center,
-                                hoveredPairIndex: _hoveredPairIndex,
-                              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(
+                    width: axisWidth,
+                    child: _BridgeScoreAxis(
+                      center: _cachedValueBounds.center,
+                      range: scoreRange,
+                    ),
+                  ),
+                  const SizedBox(width: plotGap),
+                  Expanded(
+                    child: ViewerTraceSurface(
+                      child: SingleChildScrollView(
+                        controller: _horizontalController,
+                        scrollDirection: Axis.horizontal,
+                        child: MouseRegion(
+                          key: const ValueKey<String>('bridge-trace-region'),
+                          onHover: (PointerHoverEvent event) {
+                            _updateHover(
+                              event.localPosition,
+                              bridge,
+                              traceHeight,
+                              pixelsPerSecond,
+                            );
+                          },
+                          onExit: (_) => setState(() {
+                            _hoverPosition = null;
+                            _hoveredPairIndex = null;
+                            _hoveredEpochIndex = null;
+                          }),
+                          child: SizedBox(
+                            width: totalWidth,
+                            height: traceHeight,
+                            child: Stack(
+                              clipBehavior: Clip.hardEdge,
+                              children: <Widget>[
+                                Positioned.fill(
+                                  child: CustomPaint(
+                                    key: const ValueKey<String>(
+                                      'bridge-butterfly-plot',
+                                    ),
+                                    painter: _BridgeTracePainter(
+                                      bridge: bridge,
+                                      colors: colors,
+                                      pixelsPerSecond: pixelsPerSecond,
+                                      scoreRange: scoreRange,
+                                      scoreCenter: _cachedValueBounds.center,
+                                      hoveredPairIndex: _hoveredPairIndex,
+                                    ),
+                                  ),
+                                ),
+                                if (_hoverPosition != null &&
+                                    _hoveredPairIndex != null &&
+                                    _hoveredEpochIndex != null)
+                                  _BridgeHoverCard(
+                                    position: _hoverPosition!,
+                                    pair: pairs[_hoveredPairIndex!],
+                                    frame: bridge.frames[_hoveredEpochIndex!],
+                                    score: bridge
+                                        .frames[_hoveredEpochIndex!]
+                                        .pairValues[_hoveredPairIndex!],
+                                    sampleRate: bridge.sampleRate,
+                                  ),
+                              ],
                             ),
                           ),
-                          if (_hoverPosition != null &&
-                              _hoveredPairIndex != null &&
-                              _hoveredEpochIndex != null)
-                            _BridgeHoverCard(
-                              position: _hoverPosition!,
-                              pair: pairs[_hoveredPairIndex!],
-                              frame: bridge.frames[_hoveredEpochIndex!],
-                              score: bridge
-                                  .frames[_hoveredEpochIndex!]
-                                  .pairValues[_hoveredPairIndex!],
-                              sampleRate: bridge.sampleRate,
-                            ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
             const SizedBox(height: 6),
             Row(
               children: <Widget>[
+                const SizedBox(width: axisWidth + plotGap),
                 Expanded(
                   child: ViewerTimeAxisBar(
                     controller: _horizontalController,
@@ -225,6 +246,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
             const SizedBox(height: 6),
             Row(
               children: <Widget>[
+                const SizedBox(width: axisWidth + plotGap),
                 Expanded(
                   child: ViewerTimelineBar(
                     controller: _horizontalController,
@@ -235,6 +257,11 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: axisWidth + plotGap),
+              child: _BridgeColorLegend(encoding: _cachedColorEncoding),
             ),
           ],
         );
@@ -258,7 +285,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
     _cachedBridge = bridge;
     _cachedTimeSeries = timeSeries;
     _cachedPairs = _pairs(bridge);
-    _cachedColors = _pairColors(_cachedPairs, timeSeries);
+    _cachedColorEncoding = _pairColorEncoding(_cachedPairs, timeSeries);
     _cachedValueBounds = _valueBounds(bridge);
   }
 
@@ -354,49 +381,118 @@ List<_BridgePair> _pairs(BridgeDetectionData bridge) {
   return result;
 }
 
-List<Color> _pairColors(List<_BridgePair> pairs, TimeSeriesData? timeSeries) {
-  if (timeSeries == null || timeSeries.channelCoordinates.isEmpty) {
-    return _darkRainbow(pairs.length);
-  }
-  final Map<int, ChannelCoordinate> coordinates = <int, ChannelCoordinate>{};
-  for (int index = 0; index < timeSeries.channelLabels.length; index++) {
-    final ChannelCoordinate? coordinate =
-        ChannelCoordinatesNodeType.coordinateForChannelLabel(
-          timeSeries.channelCoordinates,
-          timeSeries.channelLabels[index],
-        );
-    if (coordinate != null) coordinates[index] = coordinate;
-  }
-  if (coordinates.isEmpty) return _darkRainbow(pairs.length);
-  double maxAbsX = 0;
-  double maxAbsY = 0;
-  double maxAbsZ = 0;
-  for (final ChannelCoordinate coordinate in coordinates.values) {
-    maxAbsX = math.max(maxAbsX, coordinate.x.abs());
-    maxAbsY = math.max(maxAbsY, coordinate.y.abs());
-    maxAbsZ = math.max(maxAbsZ, coordinate.z.abs());
-  }
-  final List<Color> fallback = _darkRainbow(pairs.length);
-  return List<Color>.generate(pairs.length, (int index) {
-    final _BridgePair pair = pairs[index];
-    final ChannelCoordinate? first = coordinates[pair.firstIndex];
-    final ChannelCoordinate? second = coordinates[pair.secondIndex];
-    if (first == null || second == null) return fallback[index];
-    return coordinatePairColor(
-      first,
-      second,
-      maxAbsX: maxAbsX,
-      maxAbsY: maxAbsY,
-      maxAbsZ: maxAbsZ,
-    );
-  }, growable: false);
+class _BridgeColorEncoding {
+  const _BridgeColorEncoding({
+    required this.colors,
+    required this.label,
+    required this.minimum,
+    required this.maximum,
+    this.units = '',
+  });
+
+  const _BridgeColorEncoding.channelNumber()
+    : colors = const <Color>[],
+      label = 'Mean channel number',
+      minimum = 1,
+      maximum = 1,
+      units = '';
+
+  final List<Color> colors;
+  final String label;
+  final double minimum;
+  final double maximum;
+  final String units;
 }
 
-List<Color> _darkRainbow(int count) {
-  return List<Color>.generate(count, (int index) {
-    final double hue = count <= 1 ? 200 : (index * 300 / (count - 1)) + 20;
-    return HSVColor.fromAHSV(1, hue % 360, 0.62, 0.72).toColor();
-  }, growable: false);
+_BridgeColorEncoding _pairColorEncoding(
+  List<_BridgePair> pairs,
+  TimeSeriesData? timeSeries,
+) {
+  final Map<String, ChannelCoordinate> coordinates =
+      <String, ChannelCoordinate>{};
+  if (timeSeries != null) {
+    for (final _BridgePair pair in pairs) {
+      for (final String label in <String>[pair.firstLabel, pair.secondLabel]) {
+        final ChannelCoordinate? coordinate =
+            ChannelCoordinatesNodeType.coordinateForChannelLabel(
+              timeSeries.channelCoordinates,
+              label,
+            );
+        if (coordinate != null) coordinates[label] = coordinate;
+      }
+    }
+  }
+  final Set<String> requiredLabels = pairs
+      .expand((_BridgePair pair) => <String>[pair.firstLabel, pair.secondLabel])
+      .toSet();
+  if (requiredLabels.isNotEmpty &&
+      requiredLabels.every(coordinates.containsKey)) {
+    final List<double> distances = pairs
+        .map((_BridgePair pair) {
+          final ChannelCoordinate first = coordinates[pair.firstLabel]!;
+          final ChannelCoordinate second = coordinates[pair.secondLabel]!;
+          final double dx = first.x - second.x;
+          final double dy = first.y - second.y;
+          final double dz = first.z - second.z;
+          return math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
+        })
+        .toList(growable: false);
+    final Set<String> units = coordinates.values
+        .map((ChannelCoordinate coordinate) => coordinate.units)
+        .where((String units) => units.isNotEmpty)
+        .toSet();
+    return _continuousColorEncoding(
+      distances,
+      label: 'Electrode distance',
+      units: units.length == 1 ? units.single : '',
+    );
+  }
+
+  return _continuousColorEncoding(
+    pairs
+        .map(
+          (_BridgePair pair) =>
+              ((pair.firstIndex + 1) + (pair.secondIndex + 1)) / 2,
+        )
+        .toList(growable: false),
+    label: 'Mean channel number',
+  );
+}
+
+_BridgeColorEncoding _continuousColorEncoding(
+  List<double> values, {
+  required String label,
+  String units = '',
+}) {
+  if (values.isEmpty) {
+    return _BridgeColorEncoding(
+      colors: const <Color>[],
+      label: label,
+      minimum: 0,
+      maximum: 0,
+      units: units,
+    );
+  }
+  final double minimum = values.reduce(math.min);
+  final double maximum = values.reduce(math.max);
+  final double span = maximum - minimum;
+  return _BridgeColorEncoding(
+    colors: values
+        .map(
+          (double value) =>
+              _darkRainbowColor(span == 0 ? 0.5 : (value - minimum) / span),
+        )
+        .toList(growable: false),
+    label: label,
+    minimum: minimum,
+    maximum: maximum,
+    units: units,
+  );
+}
+
+Color _darkRainbowColor(double position) {
+  final double hue = (240 + (position.clamp(0, 1) * 300)) % 360;
+  return HSVColor.fromAHSV(1, hue, 0.62, 0.72).toColor();
 }
 
 class _BridgeValueBounds {
@@ -447,6 +543,112 @@ List<double> _timeOptionsForDuration(double durationSeconds) {
 String _secondsLabel(double seconds) {
   final int decimals = seconds == seconds.roundToDouble() ? 0 : 1;
   return '${seconds.toStringAsFixed(decimals)} s';
+}
+
+class _BridgeScoreAxis extends StatelessWidget {
+  const _BridgeScoreAxis({required this.center, required this.range});
+
+  final double center;
+  final double range;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextStyle valueStyle = Theme.of(
+      context,
+    ).textTheme.labelSmall!.copyWith(color: Colors.white60, fontSize: 10);
+    return Semantics(
+      label: 'Bridge score. Higher means more similar and more suspicious.',
+      child: Container(
+        key: const ValueKey<String>('bridge-score-axis'),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: <Widget>[
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: <Widget>[
+                      Icon(Icons.arrow_upward, size: 11, color: Colors.white70),
+                      Text(
+                        'More\nsimilar',
+                        textAlign: TextAlign.right,
+                        style: TextStyle(color: Colors.white70, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(_scoreLabel(center + (range / 2)), style: valueStyle),
+                  const Spacer(),
+                  Text(_scoreLabel(center), style: valueStyle),
+                  const Spacer(),
+                  Text(_scoreLabel(center - (range / 2)), style: valueStyle),
+                ],
+              ),
+            ),
+            const SizedBox(width: 5),
+            Container(width: 1, color: Colors.white24),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BridgeColorLegend extends StatelessWidget {
+  const _BridgeColorLegend({required this.encoding});
+
+  final _BridgeColorEncoding encoding;
+
+  @override
+  Widget build(BuildContext context) {
+    final String suffix = encoding.units.isEmpty ? '' : ' ${encoding.units}';
+    return SizedBox(
+      key: const ValueKey<String>('bridge-color-legend'),
+      height: 30,
+      child: Row(
+        children: <Widget>[
+          Text(
+            encoding.label,
+            style: const TextStyle(color: Colors.white60, fontSize: 11),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${_legendLabel(encoding.minimum)}$suffix',
+            style: const TextStyle(color: Colors.white54, fontSize: 10),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            width: 180,
+            height: 8,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(2),
+              gradient: LinearGradient(
+                colors: List<Color>.generate(
+                  13,
+                  (int index) => _darkRainbowColor(index / 12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '${_legendLabel(encoding.maximum)}$suffix',
+            style: const TextStyle(color: Colors.white54, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _scoreLabel(double value) => value.toStringAsFixed(2);
+
+String _legendLabel(double value) {
+  if (value.abs() >= 100) return value.toStringAsFixed(0);
+  if (value.abs() >= 10) return value.toStringAsFixed(1);
+  return value.toStringAsFixed(2);
 }
 
 class _BridgeTracePainter extends CustomPainter {

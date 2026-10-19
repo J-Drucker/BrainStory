@@ -37,6 +37,16 @@ void main() {
       find.byKey(const ValueKey<String>('bridge-butterfly-plot')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey<String>('bridge-score-axis')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('bridge-color-legend')),
+      findsOneWidget,
+    );
+    expect(find.text('Electrode distance'), findsOneWidget);
+    expect(find.text('More\nsimilar'), findsOneWidget);
     final ViewerScalePillMenu<double> timeControl = tester.widget(
       find.byWidgetPredicate(
         (Widget widget) =>
@@ -79,9 +89,32 @@ void main() {
 
     expect(find.textContaining('Fz / Cz'), findsOneWidget);
   });
+
+  testWidgets('bridge colors fall back to imported channel number', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(includeCoordinates: false),
+              params: <String, dynamic>{},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Mean channel number'), findsOneWidget);
+  });
 }
 
-Dataset _bridgeDataset() {
+Dataset _bridgeDataset({bool includeCoordinates = true}) {
   final Dataset dataset = Dataset('bridge', label: 'Bridge example');
   dataset.timeSeries = TimeSeriesData(
     channelSamples: <List<double>>[
@@ -91,11 +124,13 @@ Dataset _bridgeDataset() {
     ],
     sampleRate: 2,
     channelLabels: <String>['Fz', 'Cz', 'Pz'],
-    channelCoordinates: <String, ChannelCoordinate>{
-      'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
-      'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
-      'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
-    },
+    channelCoordinates: includeCoordinates
+        ? <String, ChannelCoordinate>{
+            'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
+            'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+            'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+          }
+        : const <String, ChannelCoordinate>{},
   );
   dataset.bridgeDetection = const BridgeDetectionData(
     channelLabels: <String>['Fz', 'Cz', 'Pz'],
