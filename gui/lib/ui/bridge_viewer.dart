@@ -27,16 +27,7 @@ class BridgeViewer extends StatefulWidget {
 
 class _BridgeViewerState extends State<BridgeViewer> {
   static const List<double> _timeOptions = <double>[30, 60, 120, 300, 600];
-  static const List<double> _spacingOptions = <double>[
-    0.5,
-    0.75,
-    1,
-    1.25,
-    1.5,
-    2,
-  ];
   late final ScrollController _horizontalController;
-  late final ScrollController _verticalController;
   Offset? _hoverPosition;
   int? _hoveredPairIndex;
   int? _hoveredEpochIndex;
@@ -53,13 +44,11 @@ class _BridgeViewerState extends State<BridgeViewer> {
   void initState() {
     super.initState();
     _horizontalController = ScrollController(keepScrollOffset: false);
-    _verticalController = ScrollController(keepScrollOffset: false);
   }
 
   @override
   void dispose() {
     _horizontalController.dispose();
-    _verticalController.dispose();
     super.dispose();
   }
 
@@ -77,9 +66,16 @@ class _BridgeViewerState extends State<BridgeViewer> {
     _ensureDisplayCache(bridge, widget.dataset.timeSeries);
     final List<_BridgePair> pairs = _cachedPairs;
     final List<Color> colors = _cachedColors;
+    final double signalDurationSeconds = widget.dataset.timeSeries == null
+        ? 0
+        : widget.dataset.timeSeries!.sampleCount /
+              widget.dataset.timeSeries!.sampleRate;
     final double durationSeconds = math.max(
-      bridge.epochSeconds,
-      bridge.frames.last.endSampleExclusive / bridge.sampleRate,
+      signalDurationSeconds,
+      math.max(
+        bridge.epochSeconds,
+        bridge.frames.last.endSampleExclusive / bridge.sampleRate,
+      ),
     );
     final double dataRange = _cachedValueBounds.range;
     final List<double> rangeOptions = <double>[
@@ -89,41 +85,26 @@ class _BridgeViewerState extends State<BridgeViewer> {
       dataRange * 2,
       dataRange * 4,
     ];
+    final List<double> timeOptions = _timeOptionsForDuration(durationSeconds);
     final double secondsPerView = _nearestOption(
-      (widget.params['bridgeViewer.secondsPerView'] as num?)?.toDouble() ?? 60,
-      _timeOptions,
+      (widget.params['bridgeViewer.secondsPerView'] as num?)?.toDouble() ??
+          durationSeconds,
+      timeOptions,
     );
     final double scoreRange = _nearestOption(
       (widget.params['bridgeViewer.scoreRange'] as num?)?.toDouble() ??
           dataRange,
       rangeOptions,
     );
-    final double spacing = _nearestOption(
-      (widget.params['bridgeViewer.spacing'] as num?)?.toDouble() ?? 1,
-      _spacingOptions,
-    );
-
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        const double labelWidth = 132;
-        final double viewportWidth = math.max(
-          160,
-          constraints.maxWidth - labelWidth - 28,
-        );
+        final double viewportWidth = math.max(160, constraints.maxWidth - 20);
         final double pixelsPerSecond = viewportWidth / secondsPerView;
         final double totalWidth = math.max(
           viewportWidth,
           durationSeconds * pixelsPerSecond,
         );
-        final double traceViewportHeight = math.max(
-          150,
-          constraints.maxHeight - 116,
-        );
-        final double rowHeight = 34 * spacing;
-        final double totalHeight = math.max(
-          traceViewportHeight,
-          rowHeight * pairs.length,
-        );
+        final double traceHeight = math.max(150, constraints.maxHeight - 116);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -138,22 +119,26 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   style: const TextStyle(color: Colors.white70),
                 ),
                 const ViewerControlStripDivider(),
-                ViewerScaleCluster(
-                  timeSeconds: secondsPerView,
-                  timeOptionsSeconds: _timeOptions,
-                  onTimeSelected: (double value) =>
+                const Text('Scale:', style: TextStyle(color: Colors.white70)),
+                ViewerScalePillMenu<double>(
+                  label: 'Time',
+                  currentValue: secondsPerView,
+                  valueText: _secondsLabel(secondsPerView),
+                  tooltip: 'Time span',
+                  options: timeOptions,
+                  itemLabelBuilder: _secondsLabel,
+                  onSelected: (double value) =>
                       _setParam('bridgeViewer.secondsPerView', value),
-                  rangeLabel: 'Score',
-                  rangeValue: scoreRange,
-                  rangeOptions: rangeOptions,
-                  rangeValueText: (double value) => value.toStringAsFixed(1),
-                  rangeItemText: (double value) => value.toStringAsFixed(1),
-                  onRangeSelected: (double value) =>
+                ),
+                ViewerScalePillMenu<double>(
+                  label: 'Score',
+                  currentValue: scoreRange,
+                  valueText: scoreRange.toStringAsFixed(1),
+                  tooltip: 'Score scale',
+                  options: rangeOptions,
+                  itemLabelBuilder: (double value) => value.toStringAsFixed(1),
+                  onSelected: (double value) =>
                       _setParam('bridgeViewer.scoreRange', value),
-                  spacingFactor: spacing,
-                  spacingOptions: _spacingOptions,
-                  onSpacingSelected: (double value) =>
-                      _setParam('bridgeViewer.spacing', value),
                 ),
                 Text(
                   bridge.distanceNormalizedPairs.any((bool value) => value)
@@ -166,87 +151,57 @@ class _BridgeViewerState extends State<BridgeViewer> {
             const SizedBox(height: 8),
             Expanded(
               child: ViewerTraceSurface(
-                child: Scrollbar(
-                  controller: _verticalController,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
-                    controller: _verticalController,
+                child: SingleChildScrollView(
+                  controller: _horizontalController,
+                  scrollDirection: Axis.horizontal,
+                  child: MouseRegion(
+                    key: const ValueKey<String>('bridge-trace-region'),
+                    onHover: (PointerHoverEvent event) {
+                      _updateHover(
+                        event.localPosition,
+                        bridge,
+                        traceHeight,
+                        pixelsPerSecond,
+                      );
+                    },
+                    onExit: (_) => setState(() {
+                      _hoverPosition = null;
+                      _hoveredPairIndex = null;
+                      _hoveredEpochIndex = null;
+                    }),
                     child: SizedBox(
-                      height: totalHeight,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      width: totalWidth,
+                      height: traceHeight,
+                      child: Stack(
+                        clipBehavior: Clip.hardEdge,
                         children: <Widget>[
-                          SizedBox(
-                            width: labelWidth,
-                            child: _BridgePairLabels(
-                              pairs: pairs,
-                              colors: colors,
-                              rowHeight: rowHeight,
-                              hoveredPairIndex: _hoveredPairIndex,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: SingleChildScrollView(
-                              controller: _horizontalController,
-                              scrollDirection: Axis.horizontal,
-                              child: MouseRegion(
-                                key: const ValueKey<String>(
-                                  'bridge-trace-region',
-                                ),
-                                onHover: (PointerHoverEvent event) {
-                                  _updateHover(
-                                    event.localPosition,
-                                    bridge,
-                                    pairs.length,
-                                    rowHeight,
-                                    pixelsPerSecond,
-                                  );
-                                },
-                                onExit: (_) => setState(() {
-                                  _hoverPosition = null;
-                                  _hoveredPairIndex = null;
-                                  _hoveredEpochIndex = null;
-                                }),
-                                child: SizedBox(
-                                  width: totalWidth,
-                                  height: totalHeight,
-                                  child: Stack(
-                                    clipBehavior: Clip.hardEdge,
-                                    children: <Widget>[
-                                      Positioned.fill(
-                                        child: CustomPaint(
-                                          painter: _BridgeTracePainter(
-                                            bridge: bridge,
-                                            colors: colors,
-                                            rowHeight: rowHeight,
-                                            pixelsPerSecond: pixelsPerSecond,
-                                            scoreRange: scoreRange,
-                                            scoreCenter:
-                                                _cachedValueBounds.center,
-                                            hoveredPairIndex: _hoveredPairIndex,
-                                          ),
-                                        ),
-                                      ),
-                                      if (_hoverPosition != null &&
-                                          _hoveredPairIndex != null &&
-                                          _hoveredEpochIndex != null)
-                                        _BridgeHoverCard(
-                                          position: _hoverPosition!,
-                                          pair: pairs[_hoveredPairIndex!],
-                                          frame: bridge
-                                              .frames[_hoveredEpochIndex!],
-                                          score: bridge
-                                              .frames[_hoveredEpochIndex!]
-                                              .pairValues[_hoveredPairIndex!],
-                                          sampleRate: bridge.sampleRate,
-                                        ),
-                                    ],
-                                  ),
-                                ),
+                          Positioned.fill(
+                            child: CustomPaint(
+                              key: const ValueKey<String>(
+                                'bridge-butterfly-plot',
+                              ),
+                              painter: _BridgeTracePainter(
+                                bridge: bridge,
+                                colors: colors,
+                                pixelsPerSecond: pixelsPerSecond,
+                                scoreRange: scoreRange,
+                                scoreCenter: _cachedValueBounds.center,
+                                hoveredPairIndex: _hoveredPairIndex,
                               ),
                             ),
                           ),
+                          if (_hoverPosition != null &&
+                              _hoveredPairIndex != null &&
+                              _hoveredEpochIndex != null)
+                            _BridgeHoverCard(
+                              position: _hoverPosition!,
+                              pair: pairs[_hoveredPairIndex!],
+                              frame: bridge.frames[_hoveredEpochIndex!],
+                              score: bridge
+                                  .frames[_hoveredEpochIndex!]
+                                  .pairValues[_hoveredPairIndex!],
+                              sampleRate: bridge.sampleRate,
+                            ),
                         ],
                       ),
                     ),
@@ -257,7 +212,6 @@ class _BridgeViewerState extends State<BridgeViewer> {
             const SizedBox(height: 6),
             Row(
               children: <Widget>[
-                const SizedBox(width: labelWidth + 18),
                 Expanded(
                   child: ViewerTimeAxisBar(
                     controller: _horizontalController,
@@ -271,7 +225,6 @@ class _BridgeViewerState extends State<BridgeViewer> {
             const SizedBox(height: 6),
             Row(
               children: <Widget>[
-                const SizedBox(width: labelWidth + 18),
                 Expanded(
                   child: ViewerTimelineBar(
                     controller: _horizontalController,
@@ -312,12 +265,9 @@ class _BridgeViewerState extends State<BridgeViewer> {
   void _updateHover(
     Offset position,
     BridgeDetectionData bridge,
-    int pairCount,
-    double rowHeight,
+    double traceHeight,
     double pixelsPerSecond,
   ) {
-    final int pairIndex = (position.dy / rowHeight).floor();
-    if (pairIndex < 0 || pairIndex >= pairCount) return;
     final double sample = (position.dx / pixelsPerSecond) * bridge.sampleRate;
     int epochIndex = 0;
     double bestDistance = double.infinity;
@@ -332,11 +282,44 @@ class _BridgeViewerState extends State<BridgeViewer> {
         epochIndex = index;
       }
     }
+    final BridgeEpochFrameData frame = bridge.frames[epochIndex];
+    int pairIndex = 0;
+    double nearestTraceDistance = double.infinity;
+    for (int pair = 0; pair < frame.pairValues.length; pair++) {
+      final double value = frame.pairValues[pair];
+      if (!value.isFinite) continue;
+      final double normalized =
+          ((value - _cachedValueBounds.center) /
+                  _resolvedScoreRange(_cachedValueBounds.range))
+              .clamp(-0.5, 0.5);
+      final double traceY =
+          (traceHeight / 2) - (normalized * traceHeight * 0.82);
+      final double distance = (traceY - position.dy).abs();
+      if (distance < nearestTraceDistance) {
+        nearestTraceDistance = distance;
+        pairIndex = pair;
+      }
+    }
     setState(() {
       _hoverPosition = position;
       _hoveredPairIndex = pairIndex;
       _hoveredEpochIndex = epochIndex;
     });
+  }
+
+  double _resolvedScoreRange(double dataRange) {
+    final List<double> options = <double>[
+      dataRange * 0.25,
+      dataRange * 0.5,
+      dataRange,
+      dataRange * 2,
+      dataRange * 4,
+    ];
+    return _nearestOption(
+      (widget.params['bridgeViewer.scoreRange'] as num?)?.toDouble() ??
+          dataRange,
+      options,
+    );
   }
 }
 
@@ -352,7 +335,6 @@ class _BridgePair {
   final int secondIndex;
   final String firstLabel;
   final String secondLabel;
-  String get label => '$firstLabel – $secondLabel';
 }
 
 List<_BridgePair> _pairs(BridgeDetectionData bridge) {
@@ -451,53 +433,26 @@ double _nearestOption(double value, List<double> options) {
   );
 }
 
-class _BridgePairLabels extends StatelessWidget {
-  const _BridgePairLabels({
-    required this.pairs,
-    required this.colors,
-    required this.rowHeight,
-    required this.hoveredPairIndex,
-  });
+List<double> _timeOptionsForDuration(double durationSeconds) {
+  final Set<double> values = <double>{durationSeconds};
+  values.addAll(
+    _BridgeViewerState._timeOptions.where(
+      (double option) => option < durationSeconds,
+    ),
+  );
+  final List<double> sorted = values.toList(growable: false)..sort();
+  return sorted;
+}
 
-  final List<_BridgePair> pairs;
-  final List<Color> colors;
-  final double rowHeight;
-  final int? hoveredPairIndex;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: List<Widget>.generate(pairs.length, (int index) {
-        return Container(
-          height: rowHeight,
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.only(left: 6, right: 8),
-          color: hoveredPairIndex == index
-              ? colors[index].withValues(alpha: 0.12)
-              : Colors.transparent,
-          child: Text(
-            pairs[index].label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colors[index],
-              fontSize: 11,
-              fontWeight: hoveredPairIndex == index
-                  ? FontWeight.w700
-                  : FontWeight.w500,
-            ),
-          ),
-        );
-      }, growable: false),
-    );
-  }
+String _secondsLabel(double seconds) {
+  final int decimals = seconds == seconds.roundToDouble() ? 0 : 1;
+  return '${seconds.toStringAsFixed(decimals)} s';
 }
 
 class _BridgeTracePainter extends CustomPainter {
   const _BridgeTracePainter({
     required this.bridge,
     required this.colors,
-    required this.rowHeight,
     required this.pixelsPerSecond,
     required this.scoreRange,
     required this.scoreCenter,
@@ -506,7 +461,6 @@ class _BridgeTracePainter extends CustomPainter {
 
   final BridgeDetectionData bridge;
   final List<Color> colors;
-  final double rowHeight;
   final double pixelsPerSecond;
   final double scoreRange;
   final double scoreCenter;
@@ -519,23 +473,18 @@ class _BridgeTracePainter extends CustomPainter {
       ..color = Colors.white.withValues(alpha: 0.06)
       ..strokeWidth = 1;
     final int pairCount = colors.length;
-    final int firstPair = math.max(0, (visible.top / rowHeight).floor());
-    final int lastPair = math.min(
-      pairCount - 1,
-      (visible.bottom / rowHeight).ceil(),
+    final double plotCenter = size.height / 2;
+    canvas.drawLine(
+      Offset(visible.left, plotCenter),
+      Offset(visible.right, plotCenter),
+      grid,
     );
     final double firstVisibleSecond = math.max(
       0,
       visible.left / pixelsPerSecond,
     );
     final double lastVisibleSecond = visible.right / pixelsPerSecond;
-    for (int pair = firstPair; pair <= lastPair; pair++) {
-      final double rowCenter = (pair + 0.5) * rowHeight;
-      canvas.drawLine(
-        Offset(0, rowCenter),
-        Offset(size.width, rowCenter),
-        grid,
-      );
+    for (int pair = 0; pair < pairCount; pair++) {
       final Path path = Path();
       bool started = false;
       for (final BridgeEpochFrameData frame in bridge.frames) {
@@ -554,7 +503,7 @@ class _BridgeTracePainter extends CustomPainter {
           -0.5,
           0.5,
         );
-        final double y = rowCenter - (normalized * rowHeight * 0.82);
+        final double y = plotCenter - (normalized * size.height * 0.82);
         if (started) {
           path.lineTo(x, y);
         } else {
@@ -590,7 +539,7 @@ class _BridgeTracePainter extends CustomPainter {
         canvas.drawCircle(
           Offset(
             seconds * pixelsPerSecond,
-            rowCenter - (normalized * rowHeight * 0.82),
+            plotCenter - (normalized * size.height * 0.82),
           ),
           hoveredPairIndex == pair ? 2.6 : 1.8,
           Paint()..color = trace.color,
@@ -603,7 +552,6 @@ class _BridgeTracePainter extends CustomPainter {
   bool shouldRepaint(covariant _BridgeTracePainter oldDelegate) {
     return oldDelegate.bridge != bridge ||
         oldDelegate.colors != colors ||
-        oldDelegate.rowHeight != rowHeight ||
         oldDelegate.pixelsPerSecond != pixelsPerSecond ||
         oldDelegate.scoreRange != scoreRange ||
         oldDelegate.scoreCenter != scoreCenter ||

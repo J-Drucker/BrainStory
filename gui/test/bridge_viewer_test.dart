@@ -29,10 +29,21 @@ void main() {
     );
 
     expect(find.byType(ViewerTraceSurface), findsOneWidget);
-    expect(find.byType(ViewerScaleCluster), findsOneWidget);
+    expect(find.byType(ViewerScaleCluster), findsNothing);
+    expect(find.textContaining('Spacing'), findsNothing);
     expect(find.byType(ViewerTimeAxisBar), findsOneWidget);
     expect(find.byType(ViewerTimelineBar), findsOneWidget);
-    expect(find.text('Fz – Cz'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('bridge-butterfly-plot')),
+      findsOneWidget,
+    );
+    final ViewerScalePillMenu<double> timeControl = tester.widget(
+      find.byWidgetPredicate(
+        (Widget widget) =>
+            widget is ViewerScalePillMenu<double> && widget.label == 'Time',
+      ),
+    );
+    expect(timeControl.currentValue, 4.0);
   });
 
   testWidgets('hovering a bridge trace reveals both channel names', (
@@ -74,9 +85,9 @@ Dataset _bridgeDataset() {
   final Dataset dataset = Dataset('bridge', label: 'Bridge example');
   dataset.timeSeries = TimeSeriesData(
     channelSamples: <List<double>>[
-      <double>[0, 1, 2, 3],
-      <double>[0, 1, 2, 3],
-      <double>[1, 2, 3, 4],
+      <double>[0, 1, 2, 3, 4, 5, 6, 7],
+      <double>[0, 1, 2, 3, 4, 5, 6, 7],
+      <double>[1, 2, 3, 4, 5, 6, 7, 8],
     ],
     sampleRate: 2,
     channelLabels: <String>['Fz', 'Cz', 'Pz'],
