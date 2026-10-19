@@ -185,6 +185,11 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.byKey(const ValueKey<String>('bridge-regression-label')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('r = '), findsOneWidget);
+    expect(
       find.byKey(const ValueKey<String>('bridge-score-axis')),
       findsNothing,
     );

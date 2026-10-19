@@ -720,14 +720,46 @@ class _BridgeScatterChart extends StatelessWidget {
         ),
       );
     }
+    final _BridgeRegression? regression = _bridgeRegression(points);
     return ViewerTraceSurface(
-      child: CustomPaint(
-        key: const ValueKey<String>('bridge-distance-scatter'),
-        painter: _BridgeScatterPainter(
-          points: points,
-          coordinateUnits: coordinateUnits,
-        ),
-        child: const SizedBox.expand(),
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: CustomPaint(
+              key: const ValueKey<String>('bridge-distance-scatter'),
+              painter: _BridgeScatterPainter(
+                points: points,
+                coordinateUnits: coordinateUnits,
+                regression: regression,
+              ),
+            ),
+          ),
+          Positioned(
+            top: 14,
+            right: 18,
+            child: DecoratedBox(
+              key: const ValueKey<String>('bridge-regression-label'),
+              decoration: BoxDecoration(
+                color: const Color(0xD91B1B20),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                child: Text(
+                  regression == null
+                      ? 'r = n/a'
+                      : 'r = ${regression.pearsonR.toStringAsFixed(3)}',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -745,14 +777,54 @@ class _BridgeScatterPoint {
   final Color color;
 }
 
+class _BridgeRegression {
+  const _BridgeRegression({
+    required this.slope,
+    required this.intercept,
+    required this.pearsonR,
+  });
+
+  final double slope;
+  final double intercept;
+  final double pearsonR;
+}
+
+_BridgeRegression? _bridgeRegression(List<_BridgeScatterPoint> points) {
+  if (points.length < 2) return null;
+  final double meanX =
+      points.fold<double>(0, (double sum, point) => sum + point.distance) /
+      points.length;
+  final double meanY =
+      points.fold<double>(0, (double sum, point) => sum + point.score) /
+      points.length;
+  double covariance = 0;
+  double xVariance = 0;
+  double yVariance = 0;
+  for (final _BridgeScatterPoint point in points) {
+    final double centeredX = point.distance - meanX;
+    final double centeredY = point.score - meanY;
+    covariance += centeredX * centeredY;
+    xVariance += centeredX * centeredX;
+    yVariance += centeredY * centeredY;
+  }
+  if (xVariance <= 0 || yVariance <= 0) return null;
+  return _BridgeRegression(
+    slope: covariance / xVariance,
+    intercept: meanY - ((covariance / xVariance) * meanX),
+    pearsonR: covariance / math.sqrt(xVariance * yVariance),
+  );
+}
+
 class _BridgeScatterPainter extends CustomPainter {
   const _BridgeScatterPainter({
     required this.points,
     required this.coordinateUnits,
+    required this.regression,
   });
 
   final List<_BridgeScatterPoint> points;
   final String coordinateUnits;
+  final _BridgeRegression? regression;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -806,6 +878,27 @@ class _BridgeScatterPainter extends CustomPainter {
         Paint()..color = point.color.withValues(alpha: 0.58),
       );
     }
+    if (regression != null) {
+      double mapY(double score) =>
+          plot.bottom - (((score - minY) / ySpan) * plot.height);
+      final Paint line = Paint()
+        ..color = Colors.white.withValues(alpha: 0.78)
+        ..strokeWidth = 1.6;
+      canvas.save();
+      canvas.clipRect(plot);
+      canvas.drawLine(
+        Offset(
+          plot.left,
+          mapY((regression!.slope * minX) + regression!.intercept),
+        ),
+        Offset(
+          plot.right,
+          mapY((regression!.slope * maxX) + regression!.intercept),
+        ),
+        line,
+      );
+      canvas.restore();
+    }
     _paintText(
       canvas,
       coordinateUnits.isEmpty
@@ -854,7 +947,8 @@ class _BridgeScatterPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BridgeScatterPainter oldDelegate) {
     return oldDelegate.points != points ||
-        oldDelegate.coordinateUnits != coordinateUnits;
+        oldDelegate.coordinateUnits != coordinateUnits ||
+        oldDelegate.regression != regression;
   }
 }
 
