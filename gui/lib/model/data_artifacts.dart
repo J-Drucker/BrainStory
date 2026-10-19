@@ -1431,6 +1431,7 @@ class BridgeDetectionData {
     required this.sampleRate,
     required this.frames,
     required this.distanceNormalizedPairs,
+    this.channelCoordinates = const <String, ChannelCoordinate>{},
     this.source = '',
   });
 
@@ -1440,6 +1441,7 @@ class BridgeDetectionData {
   final double sampleRate;
   final List<BridgeEpochFrameData> frames;
   final List<bool> distanceNormalizedPairs;
+  final Map<String, ChannelCoordinate> channelCoordinates;
   final String source;
 
   int get frameCount => frames.length;
@@ -1466,6 +1468,10 @@ class BridgeDetectionData {
           .map((BridgeEpochFrameData frame) => frame.toJson())
           .toList(growable: false),
       'distanceNormalizedPairs': distanceNormalizedPairs,
+      'channelCoordinates': channelCoordinates.map(
+        (String label, ChannelCoordinate coordinate) =>
+            MapEntry<String, dynamic>(label, coordinate.toJson()),
+      ),
       'source': source,
     };
   }
@@ -1488,6 +1494,18 @@ class BridgeDetectionData {
                   const <dynamic>[])
               .map((dynamic value) => value == true)
               .toList(growable: false),
+      channelCoordinates:
+          (json['channelCoordinates'] as Map? ?? const <String, dynamic>{})
+              .map<String, ChannelCoordinate>((dynamic key, dynamic value) {
+                return MapEntry<String, ChannelCoordinate>(
+                  key.toString(),
+                  ChannelCoordinate.fromJson(
+                    Map<String, dynamic>.from(
+                      value as Map? ?? const <String, dynamic>{},
+                    ),
+                  ),
+                );
+              }),
       source: json['source']?.toString() ?? '',
     );
   }

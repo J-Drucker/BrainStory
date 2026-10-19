@@ -112,9 +112,35 @@ void main() {
 
     expect(find.text('Mean channel number'), findsOneWidget);
   });
+
+  testWidgets('bridge result retains coordinates without local signal', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(coordinatesOnTimeSeries: false),
+              params: <String, dynamic>{},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Electrode distance'), findsOneWidget);
+  });
 }
 
-Dataset _bridgeDataset({bool includeCoordinates = true}) {
+Dataset _bridgeDataset({
+  bool includeCoordinates = true,
+  bool coordinatesOnTimeSeries = true,
+}) {
   final Dataset dataset = Dataset('bridge', label: 'Bridge example');
   dataset.timeSeries = TimeSeriesData(
     channelSamples: <List<double>>[
@@ -124,7 +150,7 @@ Dataset _bridgeDataset({bool includeCoordinates = true}) {
     ],
     sampleRate: 2,
     channelLabels: <String>['Fz', 'Cz', 'Pz'],
-    channelCoordinates: includeCoordinates
+    channelCoordinates: includeCoordinates && coordinatesOnTimeSeries
         ? <String, ChannelCoordinate>{
             'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
             'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
@@ -132,7 +158,7 @@ Dataset _bridgeDataset({bool includeCoordinates = true}) {
           }
         : const <String, ChannelCoordinate>{},
   );
-  dataset.bridgeDetection = const BridgeDetectionData(
+  dataset.bridgeDetection = BridgeDetectionData(
     channelLabels: <String>['Fz', 'Cz', 'Pz'],
     epochSampleCount: 2,
     intervalSampleCount: 2,
@@ -152,6 +178,13 @@ Dataset _bridgeDataset({bool includeCoordinates = true}) {
       ),
     ],
     distanceNormalizedPairs: <bool>[true, true, true],
+    channelCoordinates: includeCoordinates
+        ? <String, ChannelCoordinate>{
+            'Fz': const ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
+            'Cz': const ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+            'Pz': const ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+          }
+        : const <String, ChannelCoordinate>{},
   );
   return dataset;
 }

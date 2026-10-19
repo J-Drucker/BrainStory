@@ -285,7 +285,11 @@ class _BridgeViewerState extends State<BridgeViewer> {
     _cachedBridge = bridge;
     _cachedTimeSeries = timeSeries;
     _cachedPairs = _pairs(bridge);
-    _cachedColorEncoding = _pairColorEncoding(_cachedPairs, timeSeries);
+    _cachedColorEncoding = _pairColorEncoding(
+      _cachedPairs,
+      bridge.channelCoordinates,
+      timeSeries,
+    );
     _cachedValueBounds = _valueBounds(bridge);
   }
 
@@ -406,10 +410,11 @@ class _BridgeColorEncoding {
 
 _BridgeColorEncoding _pairColorEncoding(
   List<_BridgePair> pairs,
+  Map<String, ChannelCoordinate> bridgeCoordinates,
   TimeSeriesData? timeSeries,
 ) {
   final Map<String, ChannelCoordinate> coordinates =
-      <String, ChannelCoordinate>{};
+      Map<String, ChannelCoordinate>.from(bridgeCoordinates);
   if (timeSeries != null) {
     for (final _BridgePair pair in pairs) {
       for (final String label in <String>[pair.firstLabel, pair.secondLabel]) {
@@ -418,7 +423,9 @@ _BridgeColorEncoding _pairColorEncoding(
               timeSeries.channelCoordinates,
               label,
             );
-        if (coordinate != null) coordinates[label] = coordinate;
+        if (coordinate != null) {
+          coordinates.putIfAbsent(label, () => coordinate);
+        }
       }
     }
   }

@@ -7261,6 +7261,10 @@ Mk2=Artifact,Bad Segment,11,5,0
         ),
       ],
       distanceNormalizedPairs: <bool>[true, true, false],
+      channelCoordinates: <String, ChannelCoordinate>{
+        'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
+        'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+      },
     );
 
     final BridgeDetectionData restored = BridgeDetectionData.fromJson(
@@ -7272,6 +7276,8 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(restored.intervalSeconds, 10);
     expect(restored.frames.single.pairValues, <double>[1.0, 2.0, 3.0]);
     expect(restored.distanceNormalizedPairs, <bool>[true, true, false]);
+    expect(restored.channelCoordinates.keys, containsAll(<String>['Fz', 'Cz']));
+    expect(restored.channelCoordinates['Fz']?.y, 0.5);
   });
 
   test(

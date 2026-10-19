@@ -129,6 +129,15 @@ class BridgeDetectorNodeType extends NodeType {
         growable: false,
       ),
       distanceNormalizedPairs: native.distanceNormalizedPairs,
+      channelCoordinates: <String, ChannelCoordinate>{
+        for (final String label in labels)
+          if (ChannelCoordinatesNodeType.coordinateForChannelLabel(
+                timeSeries.channelCoordinates,
+                label,
+              )
+              case final ChannelCoordinate coordinate)
+            label: coordinate,
+      },
       source: timeSeries.source,
     );
     dataset.ram['bridgeDetector.params'] = <String, dynamic>{
