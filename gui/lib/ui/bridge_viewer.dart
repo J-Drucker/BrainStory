@@ -687,6 +687,8 @@ class _BridgeScatterChart extends StatelessWidget {
           ? pairDistances[pairIndex]
           : null;
       if (distance == null || !distance.isFinite || distance <= 0) continue;
+      double scoreSum = 0;
+      int scoreCount = 0;
       for (final BridgeEpochFrameData frame in bridge.frames) {
         if (pairIndex >= frame.pairValues.length) continue;
         double score = frame.pairValues[pairIndex];
@@ -695,10 +697,14 @@ class _BridgeScatterChart extends StatelessWidget {
           score -= math.log(distance);
         }
         if (!score.isFinite) continue;
+        scoreSum += score;
+        scoreCount++;
+      }
+      if (scoreCount > 0) {
         points.add(
           _BridgeScatterPoint(
             distance: distance,
-            score: score,
+            score: scoreSum / scoreCount,
             color: colors[pairIndex],
           ),
         );
