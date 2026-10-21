@@ -294,15 +294,6 @@ class _CanvasViewState extends State<CanvasView> {
                                                         null;
                                                   }
                                                 });
-                                                unawaited(
-                                                  logic.showCanvasContextMenu(
-                                                    context: context,
-                                                    globalPosition:
-                                                        details.globalPosition,
-                                                    update: () =>
-                                                        setState(() {}),
-                                                  ),
-                                                );
                                               },
                                           child: SizedBox(
                                             key: _canvasKey,

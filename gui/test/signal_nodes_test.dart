@@ -861,7 +861,7 @@ void main() {
     expect(find.text('Project'), findsOneWidget);
   });
 
-  testWidgets('canvas right-click menu offers run all', (
+  testWidgets('canvas right-click does not open a run all popup', (
     WidgetTester tester,
   ) async {
     final CanvasLogic logic = CanvasLogic();
@@ -885,7 +885,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Run All'), findsNWidgets(2));
+    expect(find.text('Run All'), findsOneWidget);
+    expect(find.byType(PopupMenuItem<String>), findsNothing);
   });
 
   testWidgets('selected node menu does not duplicate run all', (

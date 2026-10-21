@@ -5227,31 +5227,6 @@ class CanvasLogic {
     }
   }
 
-  Future<void> showCanvasContextMenu({
-    required BuildContext context,
-    required Offset globalPosition,
-    required VoidCallback update,
-  }) async {
-    final String? choice = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        globalPosition.dx,
-        globalPosition.dy,
-        globalPosition.dx + 1,
-        globalPosition.dy + 1,
-      ),
-      items: <PopupMenuEntry<String>>[
-        PopupMenuItem<String>(
-          value: 'run_all',
-          child: Text(hasActiveRun ? 'Queue Run All' : 'Run All'),
-        ),
-      ],
-    );
-    if (choice == 'run_all' && context.mounted) {
-      await runAllFromUi(context: context, update: update);
-    }
-  }
-
   Future<void> _runNodeSet(
     Set<String> nodeIds, {
     Set<String>? datasetIds,
