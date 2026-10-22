@@ -227,6 +227,9 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
       'Optionally divide electrical distance by Euclidean electrode distance when experimental distance normalization is enabled.',
       'Take the natural logarithm and multiply by negative one, so more nearly identical signals receive larger scores.',
       'Store raw electrical distance and the transformed score as canonical upper-triangle vectors for every epoch.',
+      'Scale all raw electrical distances by 100 divided by the session median, summarize them in 0.25-unit bins, and interpolate the distribution to 0.05-unit resolution with a cubic spline.',
+      'If a local peak at or below scaled ED 5 is followed by a local minimum at or below scaled ED 10, use that minimum as the session cutoff.',
+      'Flag a pair when at least 50% of its valid epochs are at or below the cutoff, and report the channels belonging to flagged pairs without modifying them.',
     ],
     parameters: <String>[
       'Epoch length: seconds, default 2.',
@@ -236,7 +239,7 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
     assumptions: <String>[
       'A floor of 1e-300 keeps identical-channel scores finite before the logarithm.',
       'Optional distance normalization is pair-specific and requires valid, noncoincident coordinates for both electrodes.',
-      'This node reports bridge scores; it does not itself classify or remove bridged channels.',
+      'Classification follows Alschuler et al. (2014); flagged channels are reported but never automatically removed or interpolated.',
     ],
     sourceFiles: <String>[
       'engine/src/bridge_detection.rs',

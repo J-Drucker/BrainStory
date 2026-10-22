@@ -196,6 +196,39 @@ void main() {
     expect(find.byType(ViewerTimeAxisBar), findsNothing);
     expect(find.byType(ViewerTimelineBar), findsNothing);
   });
+
+  testWidgets('classification mode shows distribution and flagged pairs', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(),
+              params: <String, dynamic>{'bridgeViewer.mode': 'classification'},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('bridge-classification-distribution')),
+      findsOneWidget,
+    );
+    expect(find.text('1 flagged pair'), findsOneWidget);
+    expect(find.text('Fz / Cz'), findsOneWidget);
+    expect(find.text('50%'), findsOneWidget);
+    expect(
+      find.text('Screening result only. No channels are modified.'),
+      findsOneWidget,
+    );
+  });
 }
 
 Dataset _bridgeDataset({
@@ -243,6 +276,13 @@ Dataset _bridgeDataset({
       ),
     ],
     distanceNormalizedPairs: <bool>[true, true, true],
+    electricalDistanceScale: 100,
+    distributionElectricalDistances: <double>[0, 1, 2, 3, 4, 5],
+    distributionCounts: <double>[0, 4, 2, 1, 2, 3],
+    distributionPeak: 1,
+    electricalDistanceCutoff: 3,
+    pairBelowCutoffFractions: <double>[0.5, 0, 0],
+    bridgedPairs: <bool>[true, false, false],
     channelCoordinates: includeCoordinates
         ? <String, ChannelCoordinate>{
             'Fz': const ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),

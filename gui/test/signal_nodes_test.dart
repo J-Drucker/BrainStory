@@ -7323,6 +7323,13 @@ Mk2=Artifact,Bad Segment,11,5,0
         ),
       ],
       distanceNormalizedPairs: <bool>[true, true, false],
+      electricalDistanceScale: 20,
+      distributionElectricalDistances: <double>[0.1, 0.15, 0.2],
+      distributionCounts: <double>[1, 3, 1],
+      distributionPeak: 0.15,
+      electricalDistanceCutoff: 0.2,
+      pairBelowCutoffFractions: <double>[0.75, 0.25, 0],
+      bridgedPairs: <bool>[true, false, false],
       channelCoordinates: <String, ChannelCoordinate>{
         'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
         'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
@@ -7343,6 +7350,13 @@ Mk2=Artifact,Bad Segment,11,5,0
       0.125,
     ]);
     expect(restored.distanceNormalizedPairs, <bool>[true, true, false]);
+    expect(restored.electricalDistanceScale, 20);
+    expect(restored.distributionElectricalDistances, <double>[0.1, 0.15, 0.2]);
+    expect(restored.distributionCounts, <double>[1, 3, 1]);
+    expect(restored.distributionPeak, 0.15);
+    expect(restored.electricalDistanceCutoff, 0.2);
+    expect(restored.pairBelowCutoffFractions, <double>[0.75, 0.25, 0]);
+    expect(restored.bridgedPairs, <bool>[true, false, false]);
     expect(restored.channelCoordinates.keys, containsAll(<String>['Fz', 'Cz']));
     expect(restored.channelCoordinates['Fz']?.y, 0.5);
   });

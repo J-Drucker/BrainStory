@@ -1577,7 +1577,7 @@ class CanvasLogic {
         final double intervalSeconds =
             (params['intervalSeconds'] as num?)?.toDouble() ?? 10.0;
         final bool normalizeByDistance = params['normalizeByDistance'] == true;
-        return 'Bridge detection was performed in ${epochSeconds.toStringAsFixed(2)}-second epochs every ${intervalSeconds.toStringAsFixed(2)} seconds. Electrical distance was calculated independently in each epoch as the temporal variance of the mean-centered pairwise difference waveform, and similarity was represented as its negated natural logarithm${normalizeByDistance ? ', with experimental normalization by Euclidean electrode distance' : ''}.';
+        return 'Bridge detection was performed in ${epochSeconds.toStringAsFixed(2)}-second epochs every ${intervalSeconds.toStringAsFixed(2)} seconds. Electrical distance was calculated independently in each epoch as the temporal variance of the mean-centered pairwise difference waveform, and similarity was represented as its negated natural logarithm${normalizeByDistance ? ', with experimental normalization by Euclidean electrode distance' : ''}. For classification, raw electrical distances were scaled by 100 divided by their session median, summarized in 0.25-unit bins, cubic-spline interpolated to 0.05-unit resolution, and pairs were flagged when at least 50% of epochs fell at or below the session cutoff following the near-zero distribution peak.';
       case 'Resample':
         final double sampleRate =
             (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;

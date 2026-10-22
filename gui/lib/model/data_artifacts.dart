@@ -1439,6 +1439,13 @@ class BridgeDetectionData {
     required this.sampleRate,
     required this.frames,
     required this.distanceNormalizedPairs,
+    this.electricalDistanceScale = 0,
+    this.distributionElectricalDistances = const <double>[],
+    this.distributionCounts = const <double>[],
+    this.distributionPeak,
+    this.electricalDistanceCutoff,
+    this.pairBelowCutoffFractions = const <double>[],
+    this.bridgedPairs = const <bool>[],
     this.channelCoordinates = const <String, ChannelCoordinate>{},
     this.source = '',
   });
@@ -1449,6 +1456,13 @@ class BridgeDetectionData {
   final double sampleRate;
   final List<BridgeEpochFrameData> frames;
   final List<bool> distanceNormalizedPairs;
+  final double electricalDistanceScale;
+  final List<double> distributionElectricalDistances;
+  final List<double> distributionCounts;
+  final double? distributionPeak;
+  final double? electricalDistanceCutoff;
+  final List<double> pairBelowCutoffFractions;
+  final List<bool> bridgedPairs;
   final Map<String, ChannelCoordinate> channelCoordinates;
   final String source;
 
@@ -1476,6 +1490,13 @@ class BridgeDetectionData {
           .map((BridgeEpochFrameData frame) => frame.toJson())
           .toList(growable: false),
       'distanceNormalizedPairs': distanceNormalizedPairs,
+      'electricalDistanceScale': electricalDistanceScale,
+      'distributionElectricalDistances': distributionElectricalDistances,
+      'distributionCounts': distributionCounts,
+      'distributionPeak': distributionPeak,
+      'electricalDistanceCutoff': electricalDistanceCutoff,
+      'pairBelowCutoffFractions': pairBelowCutoffFractions,
+      'bridgedPairs': bridgedPairs,
       'channelCoordinates': channelCoordinates.map(
         (String label, ChannelCoordinate coordinate) =>
             MapEntry<String, dynamic>(label, coordinate.toJson()),
@@ -1500,6 +1521,29 @@ class BridgeDetectionData {
       distanceNormalizedPairs:
           (json['distanceNormalizedPairs'] as List<dynamic>? ??
                   const <dynamic>[])
+              .map((dynamic value) => value == true)
+              .toList(growable: false),
+      electricalDistanceScale:
+          (json['electricalDistanceScale'] as num?)?.toDouble() ?? 0.0,
+      distributionElectricalDistances:
+          (json['distributionElectricalDistances'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      distributionCounts:
+          (json['distributionCounts'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      distributionPeak: (json['distributionPeak'] as num?)?.toDouble(),
+      electricalDistanceCutoff: (json['electricalDistanceCutoff'] as num?)
+          ?.toDouble(),
+      pairBelowCutoffFractions:
+          (json['pairBelowCutoffFractions'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      bridgedPairs:
+          (json['bridgedPairs'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value == true)
               .toList(growable: false),
       channelCoordinates:

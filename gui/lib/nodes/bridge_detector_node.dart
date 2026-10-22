@@ -149,6 +149,13 @@ class BridgeDetectorNodeType extends NodeType {
         growable: false,
       ),
       distanceNormalizedPairs: native.distanceNormalizedPairs,
+      electricalDistanceScale: native.electricalDistanceScale,
+      distributionElectricalDistances: native.distributionElectricalDistances,
+      distributionCounts: native.distributionCounts,
+      distributionPeak: native.distributionPeak,
+      electricalDistanceCutoff: native.electricalDistanceCutoff,
+      pairBelowCutoffFractions: native.pairBelowCutoffFractions,
+      bridgedPairs: native.bridgedPairs,
       channelCoordinates: <String, ChannelCoordinate>{
         for (final String label in labels)
           if (ChannelCoordinatesNodeType.coordinateForChannelLabel(

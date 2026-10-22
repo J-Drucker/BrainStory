@@ -96,9 +96,15 @@ class _BridgeViewerState extends State<BridgeViewer> {
           dataRange,
       rangeOptions,
     );
+    final String requestedViewMode =
+        widget.params['bridgeViewer.mode']?.toString() ?? 'butterfly';
     final String viewMode =
-        widget.params['bridgeViewer.mode']?.toString() == 'scatter'
-        ? 'scatter'
+        <String>{
+          'butterfly',
+          'scatter',
+          'classification',
+        }.contains(requestedViewMode)
+        ? requestedViewMode
         : 'butterfly';
     final List<double?> pairDistances = _pairDistances(
       pairs,
@@ -144,6 +150,11 @@ class _BridgeViewerState extends State<BridgeViewer> {
                       value: 'scatter',
                       icon: Icon(Icons.scatter_plot),
                       label: Text('Distance'),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'classification',
+                      icon: Icon(Icons.rule),
+                      label: Text('Classification'),
                     ),
                   ],
                   selected: <String>{viewMode},
@@ -194,6 +205,10 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   colors: colors,
                   coordinateUnits: _cachedColorEncoding.units,
                 ),
+              )
+            else if (viewMode == 'classification')
+              Expanded(
+                child: _BridgeClassificationView(bridge: bridge, pairs: pairs),
               )
             else
               Expanded(
@@ -672,6 +687,385 @@ List<double> _timeOptionsForDuration(double durationSeconds) {
 String _secondsLabel(double seconds) {
   final int decimals = seconds == seconds.roundToDouble() ? 0 : 1;
   return '${seconds.toStringAsFixed(decimals)} s';
+}
+
+class _BridgeClassificationView extends StatelessWidget {
+  const _BridgeClassificationView({required this.bridge, required this.pairs});
+
+  final BridgeDetectionData bridge;
+  final List<_BridgePair> pairs;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<int> flaggedPairIndices =
+        <int>[
+          for (int index = 0; index < bridge.bridgedPairs.length; index++)
+            if (bridge.bridgedPairs[index] && index < pairs.length) index,
+        ]..sort((int left, int right) {
+          final double leftFraction =
+              left < bridge.pairBelowCutoffFractions.length
+              ? bridge.pairBelowCutoffFractions[left]
+              : 0;
+          final double rightFraction =
+              right < bridge.pairBelowCutoffFractions.length
+              ? bridge.pairBelowCutoffFractions[right]
+              : 0;
+          return rightFraction.compareTo(leftFraction);
+        });
+    final Set<String> flaggedChannels = <String>{
+      for (final int index in flaggedPairIndices) pairs[index].firstLabel,
+      for (final int index in flaggedPairIndices) pairs[index].secondLabel,
+    };
+    final bool hasDistribution =
+        bridge.distributionElectricalDistances.length > 1 &&
+        bridge.distributionElectricalDistances.length ==
+            bridge.distributionCounts.length;
+
+    final Widget distribution = ViewerTraceSurface(
+      child: hasDistribution
+          ? Stack(
+              children: <Widget>[
+                Positioned.fill(
+                  child: CustomPaint(
+                    key: const ValueKey<String>(
+                      'bridge-classification-distribution',
+                    ),
+                    painter: _BridgeDistributionPainter(
+                      electricalDistances:
+                          bridge.distributionElectricalDistances,
+                      counts: bridge.distributionCounts,
+                      peak: bridge.distributionPeak,
+                      cutoff: bridge.electricalDistanceCutoff,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 14,
+                  child: _BridgeClassificationStatus(
+                    cutoff: bridge.electricalDistanceCutoff,
+                  ),
+                ),
+              ],
+            )
+          : const Center(
+              child: Text(
+                'Rerun Bridge Detector to calculate classification.',
+                style: TextStyle(color: Colors.white70),
+              ),
+            ),
+    );
+    final Widget findings = Container(
+      key: const ValueKey<String>('bridge-classification-findings'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111114),
+        border: Border.all(color: Colors.white12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            '${flaggedPairIndices.length} flagged pair${flaggedPairIndices.length == 1 ? '' : 's'}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${flaggedChannels.length} implicated channel${flaggedChannels.length == 1 ? '' : 's'}',
+            style: const TextStyle(color: Colors.white60, fontSize: 12),
+          ),
+          if (flaggedChannels.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 5,
+              runSpacing: 5,
+              children: flaggedChannels
+                  .map(
+                    (String label) => Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF322A16),
+                        border: Border.all(color: const Color(0xFFCE9D36)),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          color: Color(0xFFFFD77D),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+          const SizedBox(height: 12),
+          const Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Pair',
+                  style: TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              ),
+              Text(
+                'Epochs below cutoff',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+          const Divider(color: Colors.white12, height: 12),
+          Expanded(
+            child: flaggedPairIndices.isEmpty
+                ? Center(
+                    child: Text(
+                      bridge.electricalDistanceCutoff == null
+                          ? 'No near-zero peak and cutoff were found.'
+                          : 'No pair met the 50% criterion.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: flaggedPairIndices.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(color: Colors.white10, height: 1),
+                    itemBuilder: (BuildContext context, int row) {
+                      final int index = flaggedPairIndices[row];
+                      final double fraction =
+                          index < bridge.pairBelowCutoffFractions.length
+                          ? bridge.pairBelowCutoffFractions[index]
+                          : 0;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: <Widget>[
+                            Expanded(
+                              child: Text(
+                                '${pairs[index].firstLabel} / ${pairs[index].secondLabel}',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ),
+                            Text(
+                              '${(fraction * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(
+                                color: Color(0xFFFFD77D),
+                                fontFeatures: <FontFeature>[
+                                  FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Screening result only. No channels are modified.',
+            style: TextStyle(color: Colors.white38, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.maxWidth >= 760) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Expanded(child: distribution),
+              const SizedBox(width: 10),
+              SizedBox(width: 320, child: findings),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Expanded(child: distribution),
+            const SizedBox(height: 10),
+            SizedBox(height: 230, child: findings),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _BridgeClassificationStatus extends StatelessWidget {
+  const _BridgeClassificationStatus({required this.cutoff});
+
+  final double? cutoff;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xE6222228),
+        border: Border.all(color: Colors.white24),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        cutoff == null
+            ? 'No cutoff found'
+            : 'Cutoff ${cutoff!.toStringAsFixed(2)}',
+        style: const TextStyle(color: Colors.white70, fontSize: 11),
+      ),
+    );
+  }
+}
+
+class _BridgeDistributionPainter extends CustomPainter {
+  const _BridgeDistributionPainter({
+    required this.electricalDistances,
+    required this.counts,
+    required this.peak,
+    required this.cutoff,
+  });
+
+  final List<double> electricalDistances;
+  final List<double> counts;
+  final double? peak;
+  final double? cutoff;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double left = 62;
+    const double top = 24;
+    const double right = 18;
+    const double bottom = 48;
+    final Rect plot = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
+    if (plot.width <= 0 || plot.height <= 0) return;
+    final double maxX = math.max(10, electricalDistances.last);
+    final double maxY = math.max(1, counts.reduce(math.max));
+    final Paint grid = Paint()
+      ..color = Colors.white.withValues(alpha: 0.08)
+      ..strokeWidth = 1;
+    for (int tick = 0; tick <= 5; tick++) {
+      final double fraction = tick / 5;
+      final double x = plot.left + plot.width * fraction;
+      final double y = plot.bottom - plot.height * fraction;
+      canvas.drawLine(Offset(x, plot.top), Offset(x, plot.bottom), grid);
+      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
+      _paintBridgeChartText(
+        canvas,
+        (maxX * fraction).toStringAsFixed(0),
+        Offset(x, plot.bottom + 7),
+        centered: true,
+      );
+      _paintBridgeChartText(
+        canvas,
+        (maxY * fraction).toStringAsFixed(0),
+        Offset(plot.left - 8, y - 6),
+        rightAligned: true,
+      );
+    }
+    final Path curve = Path();
+    for (int index = 0; index < electricalDistances.length; index++) {
+      final double x =
+          plot.left + electricalDistances[index] / maxX * plot.width;
+      final double y = plot.bottom - counts[index] / maxY * plot.height;
+      if (index == 0) {
+        curve.moveTo(x, y);
+      } else {
+        curve.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(
+      curve,
+      Paint()
+        ..color = const Color(0xFF64C7C1)
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round,
+    );
+    void marker(double value, Color color, String label) {
+      final double x = plot.left + value / maxX * plot.width;
+      canvas.drawLine(
+        Offset(x, plot.top),
+        Offset(x, plot.bottom),
+        Paint()
+          ..color = color
+          ..strokeWidth = 1.5,
+      );
+      _paintBridgeChartText(
+        canvas,
+        '$label ${value.toStringAsFixed(2)}',
+        Offset(x + 5, plot.top + (label == 'Peak' ? 6 : 22)),
+        color: color,
+      );
+    }
+
+    if (peak != null) marker(peak!, const Color(0xFF9CCBFF), 'Peak');
+    if (cutoff != null) marker(cutoff!, const Color(0xFFFFD166), 'Cutoff');
+    _paintBridgeChartText(
+      canvas,
+      'Scaled electrical distance',
+      Offset(plot.center.dx, size.height - 17),
+      centered: true,
+      color: Colors.white70,
+    );
+    canvas.save();
+    canvas.translate(16, plot.center.dy);
+    canvas.rotate(-math.pi / 2);
+    _paintBridgeChartText(
+      canvas,
+      'Epoch-pair count',
+      Offset.zero,
+      centered: true,
+      color: Colors.white70,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _BridgeDistributionPainter oldDelegate) {
+    return oldDelegate.electricalDistances != electricalDistances ||
+        oldDelegate.counts != counts ||
+        oldDelegate.peak != peak ||
+        oldDelegate.cutoff != cutoff;
+  }
+}
+
+void _paintBridgeChartText(
+  Canvas canvas,
+  String text,
+  Offset anchor, {
+  bool centered = false,
+  bool rightAligned = false,
+  Color color = Colors.white54,
+}) {
+  final TextPainter painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(color: color, fontSize: 10),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  final double dx = centered
+      ? anchor.dx - painter.width / 2
+      : rightAligned
+      ? anchor.dx - painter.width
+      : anchor.dx;
+  painter.paint(canvas, Offset(dx, anchor.dy));
 }
 
 class _BridgeScatterChart extends StatelessWidget {

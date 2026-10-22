@@ -17,6 +17,13 @@ class NativeBridgeDetectionResult {
     required this.values,
     required this.electricalDistances,
     required this.distanceNormalizedPairs,
+    required this.electricalDistanceScale,
+    required this.distributionElectricalDistances,
+    required this.distributionCounts,
+    required this.distributionPeak,
+    required this.electricalDistanceCutoff,
+    required this.pairBelowCutoffFractions,
+    required this.bridgedPairs,
   });
 
   final int epochSampleCount;
@@ -26,6 +33,13 @@ class NativeBridgeDetectionResult {
   final List<List<double>> values;
   final List<List<double>> electricalDistances;
   final List<bool> distanceNormalizedPairs;
+  final double electricalDistanceScale;
+  final List<double> distributionElectricalDistances;
+  final List<double> distributionCounts;
+  final double? distributionPeak;
+  final double? electricalDistanceCutoff;
+  final List<double> pairBelowCutoffFractions;
+  final List<bool> bridgedPairs;
 
   factory NativeBridgeDetectionResult.fromJson(Map<String, dynamic> json) {
     return NativeBridgeDetectionResult(
@@ -55,6 +69,29 @@ class NativeBridgeDetectionResult {
       distanceNormalizedPairs:
           (json['distanceNormalizedPairs'] as List<dynamic>? ??
                   const <dynamic>[])
+              .map((dynamic value) => value == true)
+              .toList(growable: false),
+      electricalDistanceScale:
+          (json['electricalDistanceScale'] as num?)?.toDouble() ?? 0.0,
+      distributionElectricalDistances:
+          (json['distributionElectricalDistances'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      distributionCounts:
+          (json['distributionCounts'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      distributionPeak: (json['distributionPeak'] as num?)?.toDouble(),
+      electricalDistanceCutoff: (json['electricalDistanceCutoff'] as num?)
+          ?.toDouble(),
+      pairBelowCutoffFractions:
+          (json['pairBelowCutoffFractions'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
+      bridgedPairs:
+          (json['bridgedPairs'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value == true)
               .toList(growable: false),
     );

@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 const MIN_POSITIVE_METRIC: f64 = 1.0e-300;
 const MIN_DISTANCE: f64 = 1.0e-12;
+const DISTRIBUTION_BIN_WIDTH: f64 = 0.25;
+const INTERPOLATED_BIN_WIDTH: f64 = 0.05;
+const PEAK_MAX_ED: f64 = 5.0;
+const CUTOFF_MAX_ED: f64 = 10.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +22,16 @@ pub struct BridgeDetectionResult {
     pub electrical_distances: Vec<Vec<f64>>,
     /// Pair-order flags identifying values normalized by electrode distance.
     pub distance_normalized_pairs: Vec<bool>,
+    /// Multiplier used to express raw ED relative to the session median.
+    pub electrical_distance_scale: f64,
+    /// Cubic-spline-interpolated ED frequency distribution through ED 10.
+    pub distribution_electrical_distances: Vec<f64>,
+    pub distribution_counts: Vec<f64>,
+    pub distribution_peak: Option<f64>,
+    pub electrical_distance_cutoff: Option<f64>,
+    /// Fraction of epochs at or below the cutoff, in canonical pair order.
+    pub pair_below_cutoff_fractions: Vec<f64>,
+    pub bridged_pairs: Vec<bool>,
 }
 
 pub fn detect_bridges(
@@ -101,6 +115,7 @@ pub fn detect_bridges(
         };
     }
 
+    let classification = classify_bridges(&electrical_distances, pairs.len());
     Ok(BridgeDetectionResult {
         epoch_sample_count,
         interval_sample_count,
@@ -109,6 +124,184 @@ pub fn detect_bridges(
         values,
         electrical_distances,
         distance_normalized_pairs,
+        electrical_distance_scale: classification.scale,
+        distribution_electrical_distances: classification.distribution_x,
+        distribution_counts: classification.distribution_y,
+        distribution_peak: classification.peak,
+        electrical_distance_cutoff: classification.cutoff,
+        pair_below_cutoff_fractions: classification.pair_fractions,
+        bridged_pairs: classification.bridged_pairs,
+    })
+}
+
+struct BridgeClassification {
+    scale: f64,
+    distribution_x: Vec<f64>,
+    distribution_y: Vec<f64>,
+    peak: Option<f64>,
+    cutoff: Option<f64>,
+    pair_fractions: Vec<f64>,
+    bridged_pairs: Vec<bool>,
+}
+
+fn classify_bridges(electrical_distances: &[Vec<f64>], pair_count: usize) -> BridgeClassification {
+    let mut finite_values = electrical_distances
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .collect::<Vec<f64>>();
+    finite_values.sort_by(f64::total_cmp);
+    let median = median(&finite_values).filter(|value| *value > 0.0);
+    let scale = median.map_or(0.0, |value| 100.0 / value);
+    let mut pair_fractions = vec![0.0; pair_count];
+    let mut bridged_pairs = vec![false; pair_count];
+    if scale == 0.0 {
+        return BridgeClassification {
+            scale,
+            distribution_x: Vec::new(),
+            distribution_y: Vec::new(),
+            peak: None,
+            cutoff: None,
+            pair_fractions,
+            bridged_pairs,
+        };
+    }
+
+    let bin_count = (CUTOFF_MAX_ED / DISTRIBUTION_BIN_WIDTH).ceil() as usize;
+    let mut histogram = vec![0.0; bin_count];
+    for value in finite_values {
+        let scaled = value * scale;
+        if scaled >= 0.0 && scaled < CUTOFF_MAX_ED {
+            histogram[(scaled / DISTRIBUTION_BIN_WIDTH).floor() as usize] += 1.0;
+        }
+    }
+    let histogram_x = (0..bin_count)
+        .map(|index| (index as f64 + 0.5) * DISTRIBUTION_BIN_WIDTH)
+        .collect::<Vec<f64>>();
+    let distribution_x = interpolated_axis(
+        histogram_x[0],
+        *histogram_x.last().unwrap(),
+        INTERPOLATED_BIN_WIDTH,
+    );
+    let distribution_y = natural_cubic_spline(&histogram_x, &histogram, &distribution_x)
+        .into_iter()
+        .map(|value| value.max(0.0))
+        .collect::<Vec<f64>>();
+    let peak_index = first_local_peak(&distribution_x, &distribution_y, PEAK_MAX_ED);
+    let cutoff_index = peak_index.and_then(|index| {
+        first_local_minimum(&distribution_x, &distribution_y, index + 1, CUTOFF_MAX_ED)
+    });
+    let peak = peak_index.map(|index| distribution_x[index]);
+    let cutoff = cutoff_index.map(|index| distribution_x[index]);
+
+    if let Some(cutoff) = cutoff {
+        for pair_index in 0..pair_count {
+            let mut valid = 0usize;
+            let mut below = 0usize;
+            for epoch in electrical_distances {
+                let Some(value) = epoch.get(pair_index) else {
+                    continue;
+                };
+                if !value.is_finite() || *value < 0.0 {
+                    continue;
+                }
+                valid += 1;
+                if *value * scale <= cutoff {
+                    below += 1;
+                }
+            }
+            if valid > 0 {
+                pair_fractions[pair_index] = below as f64 / valid as f64;
+                bridged_pairs[pair_index] = below * 2 >= valid;
+            }
+        }
+    }
+
+    BridgeClassification {
+        scale,
+        distribution_x,
+        distribution_y,
+        peak,
+        cutoff,
+        pair_fractions,
+        bridged_pairs,
+    }
+}
+
+fn median(sorted: &[f64]) -> Option<f64> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let middle = sorted.len() / 2;
+    Some(if sorted.len().is_multiple_of(2) {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    } else {
+        sorted[middle]
+    })
+}
+
+fn interpolated_axis(start: f64, end: f64, step: f64) -> Vec<f64> {
+    let count = ((end - start) / step).floor() as usize;
+    (0..=count)
+        .map(|index| start + index as f64 * step)
+        .collect()
+}
+
+fn natural_cubic_spline(x: &[f64], y: &[f64], queries: &[f64]) -> Vec<f64> {
+    if x.len() < 3 || x.len() != y.len() {
+        return queries.iter().map(|_| 0.0).collect();
+    }
+    let n = x.len();
+    let mut second = vec![0.0; n];
+    let mut work = vec![0.0; n - 1];
+    for index in 1..(n - 1) {
+        let sigma = (x[index] - x[index - 1]) / (x[index + 1] - x[index - 1]);
+        let pivot = sigma * second[index - 1] + 2.0;
+        second[index] = (sigma - 1.0) / pivot;
+        let slope_delta = (y[index + 1] - y[index]) / (x[index + 1] - x[index])
+            - (y[index] - y[index - 1]) / (x[index] - x[index - 1]);
+        work[index] =
+            (6.0 * slope_delta / (x[index + 1] - x[index - 1]) - sigma * work[index - 1]) / pivot;
+    }
+    for index in (0..(n - 1)).rev() {
+        second[index] = second[index] * second[index + 1] + work[index];
+    }
+    queries
+        .iter()
+        .map(|query| {
+            let upper = x.partition_point(|value| *value < *query).clamp(1, n - 1);
+            let lower = upper - 1;
+            let width = x[upper] - x[lower];
+            let left = (x[upper] - query) / width;
+            let right = (query - x[lower]) / width;
+            left * y[lower]
+                + right * y[upper]
+                + ((left.powi(3) - left) * second[lower] + (right.powi(3) - right) * second[upper])
+                    * width.powi(2)
+                    / 6.0
+        })
+        .collect()
+}
+
+fn first_local_peak(x: &[f64], y: &[f64], maximum_x: f64) -> Option<usize> {
+    if y.len() < 2 {
+        return None;
+    }
+    if x[0] <= maximum_x && y[0] > y[1] && y[0] >= 1.0 {
+        return Some(0);
+    }
+    (1..y.len() - 1).find(|index| {
+        x[*index] <= maximum_x
+            && y[*index] >= 1.0
+            && y[*index] > y[*index - 1]
+            && y[*index] >= y[*index + 1]
+    })
+}
+
+fn first_local_minimum(x: &[f64], y: &[f64], start: usize, maximum_x: f64) -> Option<usize> {
+    (start.max(1)..y.len().saturating_sub(1)).find(|index| {
+        x[*index] <= maximum_x && y[*index] < y[*index - 1] && y[*index] <= y[*index + 1]
     })
 }
 
@@ -141,7 +334,7 @@ fn pair_distance(coordinates: &[Option<[f64; 3]>], first: usize, second: usize) 
 
 #[cfg(test)]
 mod tests {
-    use super::detect_bridges;
+    use super::{classify_bridges, detect_bridges};
 
     #[test]
     fn computes_negated_log_electrical_distance_in_pair_order() {
@@ -207,5 +400,24 @@ mod tests {
 
         assert!(result.values[0][0].is_finite());
         assert!(result.values[0][0] > 600.0);
+    }
+
+    #[test]
+    fn classifies_pairs_seen_below_the_distribution_cutoff_in_half_the_epochs() {
+        let epochs = (0..10)
+            .map(|index| {
+                vec![
+                    if index < 6 { 0.01 } else { 1.0 },
+                    1.0 + index as f64 * 0.01,
+                    1.2 + index as f64 * 0.01,
+                ]
+            })
+            .collect::<Vec<Vec<f64>>>();
+        let result = classify_bridges(&epochs, 3);
+
+        assert!(result.peak.is_some());
+        assert!(result.cutoff.is_some());
+        assert_eq!(result.bridged_pairs, vec![true, false, false]);
+        assert!((result.pair_fractions[0] - 0.6).abs() < 1.0e-12);
     }
 }
