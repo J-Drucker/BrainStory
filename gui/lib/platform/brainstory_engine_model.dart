@@ -42,6 +42,19 @@ class NativeBridgeDetectionResult {
   final List<bool> bridgedPairs;
 
   factory NativeBridgeDetectionResult.fromJson(Map<String, dynamic> json) {
+    const Set<String> classificationFields = <String>{
+      'electricalDistanceScale',
+      'distributionElectricalDistances',
+      'distributionCounts',
+      'pairBelowCutoffFractions',
+      'bridgedPairs',
+    };
+    if (!classificationFields.every(json.containsKey)) {
+      throw StateError(
+        'The packaged Rust engine is older than this BrainStory build. '
+        'Rebuild and relaunch the application before running Bridge Detector.',
+      );
+    }
     return NativeBridgeDetectionResult(
       epochSampleCount: (json['epochSampleCount'] as num?)?.toInt() ?? 0,
       intervalSampleCount: (json['intervalSampleCount'] as num?)?.toInt() ?? 0,

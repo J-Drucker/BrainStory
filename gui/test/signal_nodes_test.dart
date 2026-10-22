@@ -33,6 +33,7 @@ import 'package:brainstory_gui/nodes/recode_markers_node.dart';
 import 'package:brainstory_gui/nodes/realign_node.dart';
 import 'package:brainstory_gui/nodes/resample_node.dart';
 import 'package:brainstory_gui/nodes/segmentation_node.dart';
+import 'package:brainstory_gui/platform/brainstory_engine_model.dart';
 import 'package:brainstory_gui/nodes/sleep_staging_node.dart';
 import 'package:brainstory_gui/nodes/spectral_features_node.dart';
 import 'package:brainstory_gui/nodes/visualization_node.dart';
@@ -7305,6 +7306,25 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(node.defaultParams['epochSeconds'], 2.0);
     expect(node.defaultParams['intervalSeconds'], 10.0);
     expect(node.defaultParams['normalizeByDistance'], isFalse);
+  });
+
+  test('bridge detection rejects an outdated packaged Rust result', () {
+    expect(
+      () => NativeBridgeDetectionResult.fromJson(<String, dynamic>{
+        'epochSampleCount': 10,
+        'intervalSampleCount': 20,
+        'epochStarts': <int>[0],
+        'epochEnds': <int>[10],
+        'values': <List<double>>[
+          <double>[1],
+        ],
+        'electricalDistances': <List<double>>[
+          <double>[0.1],
+        ],
+        'distanceNormalizedPairs': <bool>[false],
+      }),
+      throwsA(isA<StateError>()),
+    );
   });
 
   test('bridge detection artifact preserves upper-triangle epoch values', () {
