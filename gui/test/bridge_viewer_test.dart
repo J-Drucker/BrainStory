@@ -186,6 +186,29 @@ void main() {
     );
     expect(
       find.byKey(const ValueKey<String>('bridge-regression-label')),
+      findsNothing,
+    );
+    final Finder region = find.byKey(
+      const ValueKey<String>('bridge-distance-region'),
+    );
+    final TestGesture mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+    );
+    await mouse.addPointer(location: Offset.zero);
+    final Offset origin = tester.getTopLeft(region);
+    final Size size = tester.getSize(region);
+    for (double y = 20; y < size.height - 40; y += 6) {
+      await mouse.moveTo(origin + Offset(size.width / 2, y));
+      await tester.pump();
+      if (find
+          .byKey(const ValueKey<String>('bridge-regression-label'))
+          .evaluate()
+          .isNotEmpty) {
+        break;
+      }
+    }
+    expect(
+      find.byKey(const ValueKey<String>('bridge-regression-label')),
       findsOneWidget,
     );
     expect(find.textContaining('r = '), findsOneWidget);

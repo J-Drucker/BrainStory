@@ -111,6 +111,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
       bridge.channelCoordinates,
       widget.dataset.timeSeries,
     );
+    final List<double> pairOpacities = _pairOpacities(pairs, pairDistances);
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         const double axisWidth = 76;
@@ -261,6 +262,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
                                         scoreRange: scoreRange,
                                         scoreCenter: _cachedValueBounds.center,
                                         hoveredPairIndex: _hoveredPairIndex,
+                                        pairOpacities: pairOpacities,
                                       ),
                                     ),
                                   ),
@@ -457,6 +459,48 @@ List<_BridgePair> _pairs(BridgeDetectionData bridge) {
     }
   }
   return result;
+}
+
+List<double> _pairOpacities(
+  List<_BridgePair> pairs,
+  List<double?> pairDistances,
+) {
+  final List<double> finiteDistances = pairDistances
+      .whereType<double>()
+      .where((double value) => value.isFinite && value >= 0)
+      .toList(growable: false);
+  final double? minimumDistance = finiteDistances.isEmpty
+      ? null
+      : finiteDistances.reduce(math.min);
+  final double? maximumDistance = finiteDistances.isEmpty
+      ? null
+      : finiteDistances.reduce(math.max);
+  final int maximumSeparation = pairs.fold<int>(
+    1,
+    (int maximum, _BridgePair pair) =>
+        math.max(maximum, (pair.secondIndex - pair.firstIndex).abs()),
+  );
+  return List<double>.generate(pairs.length, (int index) {
+    final double? distance = index < pairDistances.length
+        ? pairDistances[index]
+        : null;
+    final double proximity;
+    if (distance != null &&
+        distance.isFinite &&
+        minimumDistance != null &&
+        maximumDistance != null &&
+        maximumDistance > minimumDistance) {
+      proximity =
+          1 -
+          ((distance - minimumDistance) / (maximumDistance - minimumDistance))
+              .clamp(0.0, 1.0);
+    } else {
+      final int separation =
+          (pairs[index].secondIndex - pairs[index].firstIndex).abs();
+      proximity = 1 - ((separation - 1) / maximumSeparation).clamp(0.0, 1.0);
+    }
+    return 0.16 + (0.46 * proximity);
+  }, growable: false);
 }
 
 class _BridgeColorEncoding {
@@ -1068,7 +1112,7 @@ void _paintBridgeChartText(
   painter.paint(canvas, Offset(dx, anchor.dy));
 }
 
-class _BridgeScatterChart extends StatelessWidget {
+class _BridgeScatterChart extends StatefulWidget {
   const _BridgeScatterChart({
     required this.bridge,
     required this.pairs,
@@ -1084,16 +1128,22 @@ class _BridgeScatterChart extends StatelessWidget {
   final String coordinateUnits;
 
   @override
+  State<_BridgeScatterChart> createState() => _BridgeScatterChartState();
+}
+
+class _BridgeScatterChartState extends State<_BridgeScatterChart> {
+  bool _regressionHovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final List<_BridgeScatterPoint> points = <_BridgeScatterPoint>[];
-    for (int pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
-      final double? distance = pairIndex < pairDistances.length
-          ? pairDistances[pairIndex]
+    for (int pairIndex = 0; pairIndex < widget.pairs.length; pairIndex++) {
+      final double? distance = pairIndex < widget.pairDistances.length
+          ? widget.pairDistances[pairIndex]
           : null;
       if (distance == null || !distance.isFinite || distance <= 0) continue;
-      double scoreSum = 0;
-      int scoreCount = 0;
-      for (final BridgeEpochFrameData frame in bridge.frames) {
+      final List<double> scores = <double>[];
+      for (final BridgeEpochFrameData frame in widget.bridge.frames) {
         if (pairIndex >= frame.pairValues.length) continue;
         final double score;
         if (pairIndex < frame.pairElectricalDistances.length) {
@@ -1102,22 +1152,32 @@ class _BridgeScatterChart extends StatelessWidget {
           );
         } else {
           double legacyScore = frame.pairValues[pairIndex];
-          if (pairIndex < bridge.distanceNormalizedPairs.length &&
-              bridge.distanceNormalizedPairs[pairIndex]) {
+          if (pairIndex < widget.bridge.distanceNormalizedPairs.length &&
+              widget.bridge.distanceNormalizedPairs[pairIndex]) {
             legacyScore -= math.log(distance);
           }
           score = legacyScore;
         }
         if (!score.isFinite) continue;
-        scoreSum += score;
-        scoreCount++;
+        scores.add(score);
       }
-      if (scoreCount > 0) {
+      if (scores.isNotEmpty) {
+        final double mean =
+            scores.reduce((double a, double b) => a + b) / scores.length;
+        final double variance = scores.length < 2
+            ? 0
+            : scores.fold<double>(
+                    0,
+                    (double sum, double value) =>
+                        sum + math.pow(value - mean, 2).toDouble(),
+                  ) /
+                  (scores.length - 1);
         points.add(
           _BridgeScatterPoint(
             distance: distance,
-            score: scoreSum / scoreCount,
-            color: colors[pairIndex],
+            score: mean,
+            scoreStandardDeviation: math.sqrt(variance),
+            color: widget.colors[pairIndex],
           ),
         );
       }
@@ -1133,46 +1193,80 @@ class _BridgeScatterChart extends StatelessWidget {
       );
     }
     final _BridgeRegression? regression = _bridgeRegression(points);
-    return ViewerTraceSurface(
-      child: Stack(
-        children: <Widget>[
-          Positioned.fill(
-            child: CustomPaint(
-              key: const ValueKey<String>('bridge-distance-scatter'),
-              painter: _BridgeScatterPainter(
-                points: points,
-                coordinateUnits: coordinateUnits,
-                regression: regression,
-              ),
-            ),
-          ),
-          Positioned(
-            top: 14,
-            right: 18,
-            child: DecoratedBox(
-              key: const ValueKey<String>('bridge-regression-label'),
-              decoration: BoxDecoration(
-                color: const Color(0xD91B1B20),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.white24),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: Text(
-                  regression == null
-                      ? 'r = n/a'
-                      : 'r = ${regression.pearsonR.toStringAsFixed(3)}',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final Size size = constraints.biggest;
+        final Offset? labelCenter = regression == null
+            ? null
+            : _regressionLineMidpoint(size, points, regression);
+        return ViewerTraceSurface(
+          child: MouseRegion(
+            key: const ValueKey<String>('bridge-distance-region'),
+            onHover: (PointerHoverEvent event) {
+              final bool hovered =
+                  regression != null &&
+                  _isNearRegressionLine(
+                    event.localPosition,
+                    size,
+                    points,
+                    regression,
+                  );
+              if (hovered != _regressionHovered) {
+                setState(() => _regressionHovered = hovered);
+              }
+            },
+            onExit: (_) {
+              if (_regressionHovered) {
+                setState(() => _regressionHovered = false);
+              }
+            },
+            child: Stack(
+              children: <Widget>[
+                Positioned.fill(
+                  child: CustomPaint(
+                    key: const ValueKey<String>('bridge-distance-scatter'),
+                    painter: _BridgeScatterPainter(
+                      points: points,
+                      coordinateUnits: widget.coordinateUnits,
+                      regression: regression,
+                    ),
                   ),
                 ),
-              ),
+                if (_regressionHovered &&
+                    regression != null &&
+                    labelCenter != null)
+                  Positioned(
+                    left: labelCenter.dx - 33,
+                    top: labelCenter.dy - 13,
+                    child: IgnorePointer(
+                      child: Container(
+                        key: const ValueKey<String>('bridge-regression-label'),
+                        width: 66,
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xE6222228),
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: Colors.white30),
+                        ),
+                        child: Text(
+                          'r = ${regression.pearsonR.toStringAsFixed(3)}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontFeatures: <FontFeature>[
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1181,11 +1275,13 @@ class _BridgeScatterPoint {
   const _BridgeScatterPoint({
     required this.distance,
     required this.score,
+    required this.scoreStandardDeviation,
     required this.color,
   });
 
   final double distance;
   final double score;
+  final double scoreStandardDeviation;
   final Color color;
 }
 
@@ -1227,6 +1323,77 @@ _BridgeRegression? _bridgeRegression(List<_BridgeScatterPoint> points) {
   );
 }
 
+Rect _bridgeScatterPlot(Size size) =>
+    Rect.fromLTRB(76, 18, size.width - 18, size.height - 48);
+
+(double, double, double, double) _bridgeScatterBounds(
+  List<_BridgeScatterPoint> points,
+) {
+  final double minX = points.map((point) => point.distance).reduce(math.min);
+  final double maxX = points.map((point) => point.distance).reduce(math.max);
+  final double minY = points
+      .map((point) => point.score - (2 * point.scoreStandardDeviation))
+      .reduce(math.min);
+  final double maxY = points
+      .map((point) => point.score + (2 * point.scoreStandardDeviation))
+      .reduce(math.max);
+  return (minX, maxX, minY, maxY);
+}
+
+(Offset, Offset)? _regressionLineSegment(
+  Size size,
+  List<_BridgeScatterPoint> points,
+  _BridgeRegression regression,
+) {
+  final Rect plot = _bridgeScatterPlot(size);
+  if (plot.width <= 0 || plot.height <= 0 || points.isEmpty) return null;
+  final (double minX, double maxX, double minY, double maxY) =
+      _bridgeScatterBounds(points);
+  final double ySpan = math.max(0.1, maxY - minY);
+  double mapY(double score) =>
+      plot.bottom - (((score - minY) / ySpan) * plot.height);
+  return (
+    Offset(plot.left, mapY((regression.slope * minX) + regression.intercept)),
+    Offset(plot.right, mapY((regression.slope * maxX) + regression.intercept)),
+  );
+}
+
+Offset _regressionLineMidpoint(
+  Size size,
+  List<_BridgeScatterPoint> points,
+  _BridgeRegression regression,
+) {
+  final (Offset start, Offset end) = _regressionLineSegment(
+    size,
+    points,
+    regression,
+  )!;
+  return Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
+}
+
+bool _isNearRegressionLine(
+  Offset pointer,
+  Size size,
+  List<_BridgeScatterPoint> points,
+  _BridgeRegression regression,
+) {
+  final (Offset start, Offset end) = _regressionLineSegment(
+    size,
+    points,
+    regression,
+  )!;
+  final Offset segment = end - start;
+  final double lengthSquared =
+      segment.dx * segment.dx + segment.dy * segment.dy;
+  if (lengthSquared <= 0) return false;
+  final Offset relative = pointer - start;
+  final double fraction =
+      ((relative.dx * segment.dx + relative.dy * segment.dy) / lengthSquared)
+          .clamp(0.0, 1.0);
+  final Offset nearest = start + segment * fraction;
+  return (pointer - nearest).distance <= 8;
+}
+
 class _BridgeScatterPainter extends CustomPainter {
   const _BridgeScatterPainter({
     required this.points,
@@ -1240,21 +1407,10 @@ class _BridgeScatterPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const double left = 76;
-    const double top = 18;
-    const double right = 18;
-    const double bottom = 48;
-    final Rect plot = Rect.fromLTRB(
-      left,
-      top,
-      size.width - right,
-      size.height - bottom,
-    );
+    final Rect plot = _bridgeScatterPlot(size);
     if (plot.width <= 0 || plot.height <= 0) return;
-    final double minX = points.map((point) => point.distance).reduce(math.min);
-    final double maxX = points.map((point) => point.distance).reduce(math.max);
-    final double minY = points.map((point) => point.score).reduce(math.min);
-    final double maxY = points.map((point) => point.score).reduce(math.max);
+    final (double minX, double maxX, double minY, double maxY) =
+        _bridgeScatterBounds(points);
     final double xSpan = math.max(1.0e-12, maxX - minX);
     final double ySpan = math.max(0.1, maxY - minY);
     final Paint grid = Paint()
@@ -1284,31 +1440,49 @@ class _BridgeScatterPainter extends CustomPainter {
           plot.left + (((point.distance - minX) / xSpan) * plot.width);
       final double y =
           plot.bottom - (((point.score - minY) / ySpan) * plot.height);
+      final double twoSdPixels = math.max(
+        4,
+        (2 * point.scoreStandardDeviation / ySpan) * plot.height,
+      );
+      const double glowHalfWidth = 9;
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.scale(1, twoSdPixels / glowHalfWidth);
+      canvas.drawCircle(
+        Offset.zero,
+        glowHalfWidth,
+        Paint()
+          ..shader =
+              RadialGradient(
+                colors: <Color>[
+                  point.color.withValues(alpha: 0.30),
+                  point.color.withValues(alpha: 0.12),
+                  point.color.withValues(alpha: 0),
+                ],
+                stops: const <double>[0, 0.5, 1],
+              ).createShader(
+                Rect.fromCircle(center: Offset.zero, radius: glowHalfWidth),
+              ),
+      );
+      canvas.restore();
       canvas.drawCircle(
         Offset(x, y),
-        2.5,
-        Paint()..color = point.color.withValues(alpha: 0.58),
+        3.1,
+        Paint()..color = point.color.withValues(alpha: 0.92),
       );
     }
     if (regression != null) {
-      double mapY(double score) =>
-          plot.bottom - (((score - minY) / ySpan) * plot.height);
       final Paint line = Paint()
-        ..color = Colors.white.withValues(alpha: 0.78)
-        ..strokeWidth = 1.6;
+        ..color = Colors.white.withValues(alpha: 0.84)
+        ..strokeWidth = 1.8;
+      final (Offset start, Offset end) = _regressionLineSegment(
+        size,
+        points,
+        regression!,
+      )!;
       canvas.save();
       canvas.clipRect(plot);
-      canvas.drawLine(
-        Offset(
-          plot.left,
-          mapY((regression!.slope * minX) + regression!.intercept),
-        ),
-        Offset(
-          plot.right,
-          mapY((regression!.slope * maxX) + regression!.intercept),
-        ),
-        line,
-      );
+      canvas.drawLine(start, end, line);
       canvas.restore();
     }
     _paintText(
@@ -1487,6 +1661,7 @@ class _BridgeTracePainter extends CustomPainter {
     required this.scoreRange,
     required this.scoreCenter,
     required this.hoveredPairIndex,
+    required this.pairOpacities,
   });
 
   final BridgeDetectionData bridge;
@@ -1495,6 +1670,7 @@ class _BridgeTracePainter extends CustomPainter {
   final double scoreRange;
   final double scoreCenter;
   final int? hoveredPairIndex;
+  final List<double> pairOpacities;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1514,7 +1690,19 @@ class _BridgeTracePainter extends CustomPainter {
       visible.left / pixelsPerSecond,
     );
     final double lastVisibleSecond = visible.right / pixelsPerSecond;
-    for (int pair = 0; pair < pairCount; pair++) {
+    final List<int> paintOrder = List<int>.generate(pairCount, (int i) => i)
+      ..sort((int left, int right) {
+        if (left == hoveredPairIndex) return 1;
+        if (right == hoveredPairIndex) return -1;
+        final double leftOpacity = left < pairOpacities.length
+            ? pairOpacities[left]
+            : 0.3;
+        final double rightOpacity = right < pairOpacities.length
+            ? pairOpacities[right]
+            : 0.3;
+        return leftOpacity.compareTo(rightOpacity);
+      });
+    for (final int pair in paintOrder) {
       final Path path = Path();
       bool started = false;
       for (final BridgeEpochFrameData frame in bridge.frames) {
@@ -1543,9 +1731,10 @@ class _BridgeTracePainter extends CustomPainter {
       }
       final Paint trace = Paint()
         ..color = colors[pair].withValues(
-          alpha: hoveredPairIndex == null || hoveredPairIndex == pair
+          alpha: hoveredPairIndex == pair
               ? 0.95
-              : 0.32,
+              : (pair < pairOpacities.length ? pairOpacities[pair] : 0.3) *
+                    (hoveredPairIndex == null ? 1 : 0.42),
         )
         ..style = PaintingStyle.stroke
         ..strokeWidth = hoveredPairIndex == pair ? 2.4 : 1.4
@@ -1585,7 +1774,8 @@ class _BridgeTracePainter extends CustomPainter {
         oldDelegate.pixelsPerSecond != pixelsPerSecond ||
         oldDelegate.scoreRange != scoreRange ||
         oldDelegate.scoreCenter != scoreCenter ||
-        oldDelegate.hoveredPairIndex != hoveredPairIndex;
+        oldDelegate.hoveredPairIndex != hoveredPairIndex ||
+        oldDelegate.pairOpacities != pairOpacities;
   }
 }
 
