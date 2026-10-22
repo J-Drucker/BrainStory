@@ -750,6 +750,42 @@ class EditChannelsNodeType extends NodeType {
       outputChannels.add(values);
       outputLabels.add(name);
       outputSourceLabels.add(name);
+      final List<int> coordinateSourceIndices =
+          <int>{...effectiveAdd, ...effectiveSubtract}
+              .where((int index) => index >= 0 && index < sourceLabels.length)
+              .toList(growable: false);
+      final List<ChannelCoordinate> coordinateSources = coordinateSourceIndices
+          .map(
+            (int index) => timeSeries.channelCoordinates[sourceLabels[index]],
+          )
+          .whereType<ChannelCoordinate>()
+          .toList(growable: false);
+      if (coordinateSources.length == coordinateSourceIndices.length &&
+          coordinateSources.isNotEmpty) {
+        outputCoordinates[name] = ChannelCoordinate(
+          label: name,
+          x:
+              coordinateSources.fold<double>(
+                0,
+                (double sum, ChannelCoordinate value) => sum + value.x,
+              ) /
+              coordinateSources.length,
+          y:
+              coordinateSources.fold<double>(
+                0,
+                (double sum, ChannelCoordinate value) => sum + value.y,
+              ) /
+              coordinateSources.length,
+          z:
+              coordinateSources.fold<double>(
+                0,
+                (double sum, ChannelCoordinate value) => sum + value.z,
+              ) /
+              coordinateSources.length,
+          coordinateSystem: coordinateSources.first.coordinateSystem,
+          units: coordinateSources.first.units,
+        );
+      }
     }
 
     if (rereferenceMode == rereferenceAverage) {
@@ -1139,6 +1175,57 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
     return _sortedChannelIndices
         .where((int index) => !altered.contains(index))
         .toList(growable: false);
+  }
+
+  List<String> get _configuredChangeSummary {
+    final List<String> renamed = <String>[];
+    final List<String> deleted = <String>[];
+    final List<String> interpolated = <String>[];
+    for (final MapEntry<String, dynamic> entry in _edits.entries) {
+      final int? index = int.tryParse(entry.key);
+      final Map<String, dynamic> edit = Map<String, dynamic>.from(
+        entry.value as Map? ?? const <String, dynamic>{},
+      );
+      final String sourceLabel = (edit['sourceLabel'] ?? '').toString().trim();
+      final String label = sourceLabel.isNotEmpty
+          ? sourceLabel
+          : index != null && index >= 0 && index < widget.channelLabels.length
+          ? widget.channelLabels[index]
+          : 'Channel';
+      final String rename = (edit['rename'] ?? '').toString().trim();
+      if (rename.isNotEmpty) renamed.add('$label -> $rename');
+      if (edit['remove'] == true) {
+        ((edit['removeMode'] ?? 'delete').toString() == 'interpolate'
+                ? interpolated
+                : deleted)
+            .add(label);
+      }
+    }
+    final List<String> result = <String>[
+      if (renamed.isNotEmpty) 'Renamed: ${renamed.join(', ')}',
+      if (deleted.isNotEmpty) 'Deleted: ${deleted.join(', ')}',
+      if (interpolated.isNotEmpty)
+        'Marked for interpolation: ${interpolated.join(', ')}',
+      for (final Map<String, dynamic> row in _newChannels)
+        if ((row['name'] ?? '').toString().trim().isNotEmpty)
+          'Added: ${(row['name'] ?? '').toString().trim()} = ${_formulaTextForChannel(row)}',
+    ];
+    final Set<String> references = _rereferenceChannelLabels;
+    if (references.isNotEmpty) {
+      result.add('Re-reference: average of ${references.join(', ')}');
+    }
+    final String coordinateMode =
+        (_config['coordinateImportMode'] ??
+                EditChannelsNodeType.coordinateImportNone)
+            .toString();
+    if (coordinateMode != EditChannelsNodeType.coordinateImportNone) {
+      result.add(
+        coordinateMode == EditChannelsNodeType.coordinateImportStandard
+            ? 'Coordinates: assigned from standard montage'
+            : 'Coordinates: custom or imported values',
+      );
+    }
+    return result;
   }
 
   void _ensureSourceChannelLabels() {
@@ -1573,6 +1660,43 @@ class _ChannelEditConfigEditorState extends State<ChannelEditConfigEditor> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
+                      if (_configuredChangeSummary.isNotEmpty) ...<Widget>[
+                        Row(
+                          children: <Widget>[
+                            Icon(
+                              Icons.edit_note,
+                              size: 17,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Configured changes',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 5),
+                        ..._configuredChangeSummary.map(
+                          (String line) => Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text(
+                              line,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Divider(
+                          height: 1,
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                        const SizedBox(height: 10),
+                      ],
                       _buildHeaderRow(),
                       const SizedBox(height: 8),
                       Text(

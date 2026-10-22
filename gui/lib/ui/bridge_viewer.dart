@@ -106,6 +106,12 @@ class _BridgeViewerState extends State<BridgeViewer> {
         }.contains(requestedViewMode)
         ? requestedViewMode
         : 'butterfly';
+    final String requestedScatterScoreMode =
+        widget.params['bridgeViewer.scatterScoreMode']?.toString() ?? 'raw';
+    final String scatterScoreMode =
+        <String>{'raw', 'residual'}.contains(requestedScatterScoreMode)
+        ? requestedScatterScoreMode
+        : 'raw';
     final List<double?> pairDistances = _pairDistances(
       pairs,
       bridge.channelCoordinates,
@@ -163,6 +169,26 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   onSelectionChanged: (Set<String> selected) =>
                       _setStringParam('bridgeViewer.mode', selected.single),
                 ),
+                if (viewMode == 'scatter')
+                  SegmentedButton<String>(
+                    segments: const <ButtonSegment<String>>[
+                      ButtonSegment<String>(
+                        value: 'raw',
+                        label: Text('Raw score'),
+                      ),
+                      ButtonSegment<String>(
+                        value: 'residual',
+                        label: Text('Distance-adjusted'),
+                      ),
+                    ],
+                    selected: <String>{scatterScoreMode},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (Set<String> selected) =>
+                        _setStringParam(
+                          'bridgeViewer.scatterScoreMode',
+                          selected.single,
+                        ),
+                  ),
                 if (viewMode == 'butterfly')
                   const Text('Scale:', style: TextStyle(color: Colors.white70)),
                 if (viewMode == 'butterfly')
@@ -205,6 +231,7 @@ class _BridgeViewerState extends State<BridgeViewer> {
                   pairDistances: pairDistances,
                   colors: colors,
                   coordinateUnits: _cachedColorEncoding.units,
+                  scoreMode: scatterScoreMode,
                 ),
               )
             else if (viewMode == 'classification')
@@ -1119,6 +1146,7 @@ class _BridgeScatterChart extends StatefulWidget {
     required this.pairDistances,
     required this.colors,
     required this.coordinateUnits,
+    required this.scoreMode,
   });
 
   final BridgeDetectionData bridge;
@@ -1126,6 +1154,7 @@ class _BridgeScatterChart extends StatefulWidget {
   final List<double?> pairDistances;
   final List<Color> colors;
   final String coordinateUnits;
+  final String scoreMode;
 
   @override
   State<_BridgeScatterChart> createState() => _BridgeScatterChartState();
@@ -1192,13 +1221,39 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
         ),
       );
     }
-    final _BridgeRegression? regression = _bridgeRegression(points);
+    final _BridgeRegression? rawRegression = _bridgeRegression(points);
+    final bool distanceAdjusted = widget.scoreMode == 'residual';
+    final List<_BridgeScatterPoint> displayedPoints =
+        distanceAdjusted && rawRegression != null
+        ? points
+              .map(
+                (_BridgeScatterPoint point) => _BridgeScatterPoint(
+                  distance: point.distance,
+                  score:
+                      point.score -
+                      ((rawRegression.slope * point.distance) +
+                          rawRegression.intercept),
+                  scoreStandardDeviation: point.scoreStandardDeviation,
+                  color: point.color,
+                ),
+              )
+              .toList(growable: false)
+        : points;
+    final _BridgeRegression? regression = distanceAdjusted
+        ? rawRegression == null
+              ? null
+              : _BridgeRegression(
+                  slope: 0,
+                  intercept: 0,
+                  pearsonR: rawRegression.pearsonR,
+                )
+        : rawRegression;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final Size size = constraints.biggest;
         final Offset? labelCenter = regression == null
             ? null
-            : _regressionLineMidpoint(size, points, regression);
+            : _regressionLineMidpoint(size, displayedPoints, regression);
         return ViewerTraceSurface(
           child: MouseRegion(
             key: const ValueKey<String>('bridge-distance-region'),
@@ -1208,7 +1263,7 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
                   _isNearRegressionLine(
                     event.localPosition,
                     size,
-                    points,
+                    displayedPoints,
                     regression,
                   );
               if (hovered != _regressionHovered) {
@@ -1226,9 +1281,12 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
                   child: CustomPaint(
                     key: const ValueKey<String>('bridge-distance-scatter'),
                     painter: _BridgeScatterPainter(
-                      points: points,
+                      points: displayedPoints,
                       coordinateUnits: widget.coordinateUnits,
                       regression: regression,
+                      scoreAxisLabel: distanceAdjusted
+                          ? 'Distance-adjusted -ln(ED)'
+                          : '-ln(ED)',
                     ),
                   ),
                 ),
@@ -1399,11 +1457,13 @@ class _BridgeScatterPainter extends CustomPainter {
     required this.points,
     required this.coordinateUnits,
     required this.regression,
+    required this.scoreAxisLabel,
   });
 
   final List<_BridgeScatterPoint> points;
   final String coordinateUnits;
   final _BridgeRegression? regression;
+  final String scoreAxisLabel;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1499,7 +1559,7 @@ class _BridgeScatterPainter extends CustomPainter {
     canvas.rotate(-math.pi / 2);
     _paintText(
       canvas,
-      '-ln(ED)',
+      scoreAxisLabel,
       Offset.zero,
       centered: true,
       color: Colors.white70,
@@ -1534,7 +1594,8 @@ class _BridgeScatterPainter extends CustomPainter {
   bool shouldRepaint(covariant _BridgeScatterPainter oldDelegate) {
     return oldDelegate.points != points ||
         oldDelegate.coordinateUnits != coordinateUnits ||
-        oldDelegate.regression != regression;
+        oldDelegate.regression != regression ||
+        oldDelegate.scoreAxisLabel != scoreAxisLabel;
   }
 }
 

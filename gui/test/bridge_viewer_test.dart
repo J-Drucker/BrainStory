@@ -220,6 +220,44 @@ void main() {
     expect(find.byType(ViewerTimelineBar), findsNothing);
   });
 
+  testWidgets('distance mode can show scores adjusted for distance', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(),
+              params: <String, dynamic>{
+                'bridgeViewer.mode': 'scatter',
+                'bridgeViewer.scatterScoreMode': 'residual',
+              },
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Raw score'), findsOneWidget);
+    expect(find.text('Distance-adjusted'), findsOneWidget);
+    final Iterable<SegmentedButton<String>> controls = tester
+        .widgetList<SegmentedButton<String>>(
+          find.byType(SegmentedButton<String>),
+        );
+    expect(
+      controls.any(
+        (SegmentedButton<String> control) =>
+            control.selected.contains('residual'),
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('classification mode shows distribution and flagged pairs', (
     WidgetTester tester,
   ) async {

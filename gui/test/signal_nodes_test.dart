@@ -4785,6 +4785,11 @@ time,Fz,Cz
         ],
         sampleRate: 100.0,
         channelLabels: const <String>['Fz', 'Cz', 'Pz'],
+        channelCoordinates: const <String, ChannelCoordinate>{
+          'Fz': ChannelCoordinate(label: 'Fz', x: -1, y: 1, z: 0),
+          'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
+          'Pz': ChannelCoordinate(label: 'Pz', x: 1, y: -1, z: 0),
+        },
       );
 
       await EditChannelsNodeType().run(dataset, <String, dynamic>{
@@ -4826,6 +4831,12 @@ time,Fz,Cz
         5.0 / 3.0,
         2.0,
       ]);
+      final ChannelCoordinate derived =
+          dataset.timeSeries!.channelCoordinates['Difference']!;
+      expect(derived.label, 'Difference');
+      expect(derived.x, closeTo(0, 1.0e-12));
+      expect(derived.y, closeTo(0, 1.0e-12));
+      expect(derived.z, closeTo(1 / 3, 1.0e-12));
     },
   );
 
@@ -5340,6 +5351,56 @@ time,Fz,Cz
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Edit Channels summarizes configured changes and stays editable',
+    (WidgetTester tester) async {
+      final Map<String, dynamic> config = <String, dynamic>{
+        'sourceChannelLabels': <String>['Fz', 'Cz'],
+        'edits': <String, dynamic>{
+          '0': <String, dynamic>{
+            'sourceLabel': 'Fz',
+            'rename': 'Frontal',
+            'remove': false,
+          },
+        },
+        'newChannels': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'difference',
+            'name': 'Difference',
+            'addSourceIndices': <int>[0],
+            'subtractSourceIndices': <int>[1],
+          },
+        ],
+      };
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: SizedBox(
+              width: 950,
+              height: 600,
+              child: ChannelEditConfigEditor(
+                channelLabels: EditChannelsNodeType.channelLabelsForEditor(
+                  config,
+                  <String>['Frontal', 'Cz', 'Difference'],
+                ),
+                config: config,
+                onChanged: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Configured changes'), findsOneWidget);
+      expect(find.text('Renamed: Fz -> Frontal'), findsOneWidget);
+      expect(find.text('Added: Difference = Fz - Cz'), findsOneWidget);
+      expect(find.text('Edit formula'), findsOneWidget);
+      expect(find.byType(TextField), findsWidgets);
+    },
+  );
 
   test('channel editor merges live channels missing from stored inventory', () {
     final Map<String, dynamic> config = <String, dynamic>{
