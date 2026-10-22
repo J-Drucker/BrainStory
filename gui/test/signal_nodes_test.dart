@@ -7319,6 +7319,7 @@ Mk2=Artifact,Bad Segment,11,5,0
           startSample: 0,
           endSampleExclusive: 1000,
           pairValues: <double>[1.0, 2.0, 3.0],
+          pairElectricalDistances: <double>[0.5, 0.25, 0.125],
         ),
       ],
       distanceNormalizedPairs: <bool>[true, true, false],
@@ -7336,6 +7337,11 @@ Mk2=Artifact,Bad Segment,11,5,0
     expect(restored.epochSeconds, 2);
     expect(restored.intervalSeconds, 10);
     expect(restored.frames.single.pairValues, <double>[1.0, 2.0, 3.0]);
+    expect(restored.frames.single.pairElectricalDistances, <double>[
+      0.5,
+      0.25,
+      0.125,
+    ]);
     expect(restored.distanceNormalizedPairs, <bool>[true, true, false]);
     expect(restored.channelCoordinates.keys, containsAll(<String>['Fz', 'Cz']));
     expect(restored.channelCoordinates['Fz']?.y, 0.5);

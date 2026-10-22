@@ -259,6 +259,16 @@ class _BridgeViewerState extends State<BridgeViewer> {
                                       score: bridge
                                           .frames[_hoveredEpochIndex!]
                                           .pairValues[_hoveredPairIndex!],
+                                      electricalDistance:
+                                          _hoveredPairIndex! <
+                                              bridge
+                                                  .frames[_hoveredEpochIndex!]
+                                                  .pairElectricalDistances
+                                                  .length
+                                          ? bridge
+                                                .frames[_hoveredEpochIndex!]
+                                                .pairElectricalDistances[_hoveredPairIndex!]
+                                          : null,
                                       sampleRate: bridge.sampleRate,
                                     ),
                                 ],
@@ -691,10 +701,18 @@ class _BridgeScatterChart extends StatelessWidget {
       int scoreCount = 0;
       for (final BridgeEpochFrameData frame in bridge.frames) {
         if (pairIndex >= frame.pairValues.length) continue;
-        double score = frame.pairValues[pairIndex];
-        if (pairIndex < bridge.distanceNormalizedPairs.length &&
-            bridge.distanceNormalizedPairs[pairIndex]) {
-          score -= math.log(distance);
+        final double score;
+        if (pairIndex < frame.pairElectricalDistances.length) {
+          score = -math.log(
+            math.max(1.0e-300, frame.pairElectricalDistances[pairIndex]),
+          );
+        } else {
+          double legacyScore = frame.pairValues[pairIndex];
+          if (pairIndex < bridge.distanceNormalizedPairs.length &&
+              bridge.distanceNormalizedPairs[pairIndex]) {
+            legacyScore -= math.log(distance);
+          }
+          score = legacyScore;
         }
         if (!score.isFinite) continue;
         scoreSum += score;
@@ -913,7 +931,7 @@ class _BridgeScatterPainter extends CustomPainter {
     canvas.rotate(-math.pi / 2);
     _paintText(
       canvas,
-      '-ln(MSE)',
+      '-ln(ED)',
       Offset.zero,
       centered: true,
       color: Colors.white70,
@@ -1183,6 +1201,7 @@ class _BridgeHoverCard extends StatelessWidget {
     required this.pair,
     required this.frame,
     required this.score,
+    required this.electricalDistance,
     required this.sampleRate,
   });
 
@@ -1190,6 +1209,7 @@ class _BridgeHoverCard extends StatelessWidget {
   final _BridgePair pair;
   final BridgeEpochFrameData frame;
   final double score;
+  final double? electricalDistance;
   final double sampleRate;
 
   @override
@@ -1208,7 +1228,8 @@ class _BridgeHoverCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             child: Text(
               '${pair.firstLabel} / ${pair.secondLabel}\n'
-              '${(frame.startSample / sampleRate).toStringAsFixed(1)} s • ${score.toStringAsFixed(3)}',
+              '${(frame.startSample / sampleRate).toStringAsFixed(1)} s • ${score.toStringAsFixed(3)}'
+              '${electricalDistance == null ? '' : '\nED ${electricalDistance!.toStringAsPrecision(4)}'}',
               style: const TextStyle(color: Colors.white, fontSize: 11),
             ),
           ),

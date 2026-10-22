@@ -61,7 +61,7 @@ class BridgeDetectorNodeType extends NodeType {
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
           dense: true,
-          title: const Text('Normalize MSE by electrode distance'),
+          title: const Text('Normalize ED by electrode distance'),
           subtitle: const Text('Experimental; disabled by default.'),
           value: params['normalizeByDistance'] == true,
           onChanged: (bool? value) {
@@ -142,6 +142,9 @@ class BridgeDetectorNodeType extends NodeType {
           startSample: native.epochStarts[index],
           endSampleExclusive: native.epochEnds[index],
           pairValues: native.values[index],
+          pairElectricalDistances: index < native.electricalDistances.length
+              ? native.electricalDistances[index]
+              : const <double>[],
         ),
         growable: false,
       ),

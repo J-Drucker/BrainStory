@@ -1395,12 +1395,14 @@ class BridgeEpochFrameData {
     required this.startSample,
     required this.endSampleExclusive,
     required this.pairValues,
+    this.pairElectricalDistances = const <double>[],
   });
 
   final int epochIndex;
   final int startSample;
   final int endSampleExclusive;
   final List<double> pairValues;
+  final List<double> pairElectricalDistances;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -1408,6 +1410,7 @@ class BridgeEpochFrameData {
       'startSample': startSample,
       'endSampleExclusive': endSampleExclusive,
       'pairValues': pairValues,
+      'pairElectricalDistances': pairElectricalDistances,
     };
   }
 
@@ -1419,6 +1422,11 @@ class BridgeEpochFrameData {
       pairValues: (json['pairValues'] as List<dynamic>? ?? const <dynamic>[])
           .map((dynamic value) => (value as num).toDouble())
           .toList(growable: false),
+      pairElectricalDistances:
+          (json['pairElectricalDistances'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .map((dynamic value) => (value as num).toDouble())
+              .toList(growable: false),
     );
   }
 }

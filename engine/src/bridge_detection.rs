@@ -13,6 +13,9 @@ pub struct BridgeDetectionResult {
     /// One upper-triangle vector per epoch. Pair order is (0,1), (0,2), ...,
     /// (0,n-1), (1,2), ... (n-2,n-1).
     pub values: Vec<Vec<f64>>,
+    /// Raw temporal variance of each pairwise difference waveform, before any
+    /// optional physical-distance normalization or logarithmic transform.
+    pub electrical_distances: Vec<Vec<f64>>,
     /// Pair-order flags identifying values normalized by electrode distance.
     pub distance_normalized_pairs: Vec<bool>,
 }
@@ -56,6 +59,7 @@ pub fn detect_bridges(
     let mut epoch_starts = Vec::new();
     let mut epoch_ends = Vec::new();
     let mut values = Vec::new();
+    let mut electrical_distances = Vec::new();
     let mut start = 0usize;
     while start
         .checked_add(epoch_sample_count)
@@ -63,24 +67,34 @@ pub fn detect_bridges(
     {
         let end = start + epoch_sample_count;
         let mut epoch_values = Vec::with_capacity(pairs.len());
+        let mut epoch_electrical_distances = Vec::with_capacity(pairs.len());
         for (pair_index, &(first, second)) in pairs.iter().enumerate() {
-            let squared_difference_sum = channels[first][start..end]
+            let mean_difference = channels[first][start..end]
+                .iter()
+                .zip(&channels[second][start..end])
+                .map(|(left, right)| left - right)
+                .sum::<f64>()
+                / epoch_sample_count as f64;
+            let electrical_distance = channels[first][start..end]
                 .iter()
                 .zip(&channels[second][start..end])
                 .map(|(left, right)| {
-                    let difference = left - right;
-                    difference * difference
+                    let centered_difference = (left - right) - mean_difference;
+                    centered_difference * centered_difference
                 })
-                .sum::<f64>();
-            let mut mean_squared_difference = squared_difference_sum / epoch_sample_count as f64;
+                .sum::<f64>()
+                / epoch_sample_count as f64;
+            let mut score_metric = electrical_distance;
             if let Some(distance) = pair_distances[pair_index] {
-                mean_squared_difference /= distance;
+                score_metric /= distance;
             }
-            epoch_values.push(-mean_squared_difference.max(MIN_POSITIVE_METRIC).ln());
+            epoch_electrical_distances.push(electrical_distance);
+            epoch_values.push(-score_metric.max(MIN_POSITIVE_METRIC).ln());
         }
         epoch_starts.push(start);
         epoch_ends.push(end);
         values.push(epoch_values);
+        electrical_distances.push(epoch_electrical_distances);
         start = match start.checked_add(interval_sample_count) {
             Some(next) => next,
             None => break,
@@ -93,6 +107,7 @@ pub fn detect_bridges(
         epoch_starts,
         epoch_ends,
         values,
+        electrical_distances,
         distance_normalized_pairs,
     })
 }
@@ -129,7 +144,7 @@ mod tests {
     use super::detect_bridges;
 
     #[test]
-    fn computes_negated_log_mean_squared_difference_in_pair_order() {
+    fn computes_negated_log_electrical_distance_in_pair_order() {
         let result = detect_bridges(
             &[
                 vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
@@ -147,15 +162,17 @@ mod tests {
         assert_eq!(result.epoch_ends, vec![4, 6]);
         assert_eq!(result.values.len(), 2);
         assert_eq!(result.values[0].len(), 3);
-        let expected_01 = -(3.5_f64).ln();
+        let expected_01 = -(1.25_f64).ln();
         assert!((result.values[0][0] - expected_01).abs() < 1.0e-12);
-        assert!((result.values[0][1] - 0.0).abs() < 1.0e-12);
+        assert!(result.values[0][1] > 600.0);
+        assert!((result.electrical_distances[0][0] - 1.25).abs() < 1.0e-12);
+        assert_eq!(result.electrical_distances[0][1], 0.0);
     }
 
     #[test]
     fn normalizes_by_euclidean_distance_when_both_coordinates_exist() {
         let result = detect_bridges(
-            &[vec![0.0, 0.0], vec![2.0, 2.0]],
+            &[vec![0.0, 0.0], vec![0.0, 2.0]],
             1.0,
             2.0,
             10.0,
@@ -164,7 +181,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.distance_normalized_pairs, vec![true]);
-        assert!((result.values[0][0] - -(2.0_f64).ln()).abs() < 1.0e-12);
+        assert!((result.electrical_distances[0][0] - 1.0).abs() < 1.0e-12);
+        assert!((result.values[0][0] - (2.0_f64).ln()).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn constant_pair_offset_does_not_change_electrical_distance() {
+        let result = detect_bridges(
+            &[vec![1.0, 2.0, 4.0], vec![11.0, 12.0, 14.0]],
+            1.0,
+            3.0,
+            10.0,
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(result.electrical_distances[0][0], 0.0);
+        assert!(result.values[0][0] > 600.0);
     }
 
     #[test]

@@ -15,6 +15,7 @@ class NativeBridgeDetectionResult {
     required this.epochStarts,
     required this.epochEnds,
     required this.values,
+    required this.electricalDistances,
     required this.distanceNormalizedPairs,
   });
 
@@ -23,6 +24,7 @@ class NativeBridgeDetectionResult {
   final List<int> epochStarts;
   final List<int> epochEnds;
   final List<List<double>> values;
+  final List<List<double>> electricalDistances;
   final List<bool> distanceNormalizedPairs;
 
   factory NativeBridgeDetectionResult.fromJson(Map<String, dynamic> json) {
@@ -42,6 +44,14 @@ class NativeBridgeDetectionResult {
                 .toList(growable: false),
           )
           .toList(growable: false),
+      electricalDistances:
+          (json['electricalDistances'] as List<dynamic>? ?? const <dynamic>[])
+              .map(
+                (dynamic row) => (row as List<dynamic>)
+                    .map((dynamic value) => (value as num).toDouble())
+                    .toList(growable: false),
+              )
+              .toList(growable: false),
       distanceNormalizedPairs:
           (json['distanceNormalizedPairs'] as List<dynamic>? ??
                   const <dynamic>[])

@@ -160,7 +160,7 @@ void main() {
     expect(find.text('2 pair(s) use channel number'), findsOneWidget);
   });
 
-  testWidgets('distance mode shows MSE by Euclidean distance scatter', (
+  testWidgets('distance mode shows electrical distance by spatial distance', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
@@ -232,12 +232,14 @@ Dataset _bridgeDataset({
         startSample: 0,
         endSampleExclusive: 2,
         pairValues: <double>[10, 3, 5],
+        pairElectricalDistances: <double>[0.10, 1.0, 0.50],
       ),
       BridgeEpochFrameData(
         epochIndex: 1,
         startSample: 2,
         endSampleExclusive: 4,
         pairValues: <double>[11, 4, 6],
+        pairElectricalDistances: <double>[0.20, 1.1, 0.60],
       ),
     ],
     distanceNormalizedPairs: <bool>[true, true, true],

@@ -1576,7 +1576,8 @@ class CanvasLogic {
             (params['epochSeconds'] as num?)?.toDouble() ?? 2.0;
         final double intervalSeconds =
             (params['intervalSeconds'] as num?)?.toDouble() ?? 10.0;
-        return 'Bridge detection was performed in ${epochSeconds.toStringAsFixed(2)}-second epochs every ${intervalSeconds.toStringAsFixed(2)} seconds by taking the negated natural logarithm of each channel pair\'s mean squared difference, normalized by Euclidean electrode distance when coordinates were available.';
+        final bool normalizeByDistance = params['normalizeByDistance'] == true;
+        return 'Bridge detection was performed in ${epochSeconds.toStringAsFixed(2)}-second epochs every ${intervalSeconds.toStringAsFixed(2)} seconds. Electrical distance was calculated independently in each epoch as the temporal variance of the mean-centered pairwise difference waveform, and similarity was represented as its negated natural logarithm${normalizeByDistance ? ', with experimental normalization by Euclidean electrode distance' : ''}.';
       case 'Resample':
         final double sampleRate =
             (params['newSampleRate'] as num?)?.toDouble() ?? 256.0;

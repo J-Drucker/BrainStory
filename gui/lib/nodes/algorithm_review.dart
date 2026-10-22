@@ -219,13 +219,14 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
   'Bridge Detector': AlgorithmReview(
     implementation: AlgorithmImplementation.rust,
     summary:
-        'Computes a negated log mean-squared-difference score for every unique electrode pair in regularly spaced epochs.',
+        'Computes temporal variance of each pairwise difference waveform and its negated natural logarithm for regularly spaced epochs.',
     procedure: <String>[
       'Start a complete epoch at zero and then at each configured interval; ignore a trailing incomplete epoch.',
-      'For each unique channel pair, square the sample-by-sample difference, sum it, and divide by the epoch sample count.',
-      'Optionally divide mean squared difference by Euclidean electrode distance when experimental distance normalization is enabled.',
+      'For each unique channel pair within each epoch, compute the sample-by-sample difference and its epoch mean.',
+      'Subtract that epoch mean, square the centered differences, sum them, and divide by the epoch sample count to obtain raw electrical distance.',
+      'Optionally divide electrical distance by Euclidean electrode distance when experimental distance normalization is enabled.',
       'Take the natural logarithm and multiply by negative one, so more nearly identical signals receive larger scores.',
-      'Store one canonical upper-triangle vector per epoch.',
+      'Store raw electrical distance and the transformed score as canonical upper-triangle vectors for every epoch.',
     ],
     parameters: <String>[
       'Epoch length: seconds, default 2.',
