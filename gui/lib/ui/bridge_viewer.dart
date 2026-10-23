@@ -1162,6 +1162,7 @@ class _BridgeScatterChart extends StatefulWidget {
 
 class _BridgeScatterChartState extends State<_BridgeScatterChart> {
   bool _regressionHovered = false;
+  int? _hoveredPointIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -1203,6 +1204,8 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
                   (scores.length - 1);
         points.add(
           _BridgeScatterPoint(
+            pairLabel:
+                '${widget.pairs[pairIndex].firstLabel} / ${widget.pairs[pairIndex].secondLabel}',
             distance: distance,
             score: mean,
             scoreStandardDeviation: math.sqrt(variance),
@@ -1228,6 +1231,7 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
         ? points
               .map(
                 (_BridgeScatterPoint point) => _BridgeScatterPoint(
+                  pairLabel: point.pairLabel,
                   distance: point.distance,
                   score:
                       point.score -
@@ -1254,11 +1258,25 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
         final Offset? labelCenter = regression == null
             ? null
             : _regressionLineMidpoint(size, displayedPoints, regression);
+        final _BridgeScatterPoint? hoveredPoint =
+            _hoveredPointIndex != null &&
+                _hoveredPointIndex! < displayedPoints.length
+            ? displayedPoints[_hoveredPointIndex!]
+            : null;
+        final Offset? hoveredPointCenter = hoveredPoint == null
+            ? null
+            : _bridgeScatterPointOffset(size, displayedPoints, hoveredPoint);
         return ViewerTraceSurface(
           child: MouseRegion(
             key: const ValueKey<String>('bridge-distance-region'),
             onHover: (PointerHoverEvent event) {
+              final int? pointIndex = _nearestBridgeScatterPoint(
+                event.localPosition,
+                size,
+                displayedPoints,
+              );
               final bool hovered =
+                  pointIndex == null &&
                   regression != null &&
                   _isNearRegressionLine(
                     event.localPosition,
@@ -1266,13 +1284,20 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
                     displayedPoints,
                     regression,
                   );
-              if (hovered != _regressionHovered) {
-                setState(() => _regressionHovered = hovered);
+              if (hovered != _regressionHovered ||
+                  pointIndex != _hoveredPointIndex) {
+                setState(() {
+                  _regressionHovered = hovered;
+                  _hoveredPointIndex = pointIndex;
+                });
               }
             },
             onExit: (_) {
-              if (_regressionHovered) {
-                setState(() => _regressionHovered = false);
+              if (_regressionHovered || _hoveredPointIndex != null) {
+                setState(() {
+                  _regressionHovered = false;
+                  _hoveredPointIndex = null;
+                });
               }
             },
             child: Stack(
@@ -1320,6 +1345,41 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
                       ),
                     ),
                   ),
+                if (hoveredPoint != null && hoveredPointCenter != null)
+                  Positioned(
+                    left: (hoveredPointCenter.dx - 70).clamp(
+                      6,
+                      math.max(6, size.width - 146),
+                    ),
+                    top: (hoveredPointCenter.dy - 42).clamp(
+                      6,
+                      math.max(6, size.height - 58),
+                    ),
+                    child: IgnorePointer(
+                      child: Container(
+                        key: const ValueKey<String>('bridge-point-label'),
+                        width: 140,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xEC222228),
+                          borderRadius: BorderRadius.circular(3),
+                          border: Border.all(color: hoveredPoint.color),
+                        ),
+                        child: Text(
+                          hoveredPoint.pairLabel,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -1331,16 +1391,53 @@ class _BridgeScatterChartState extends State<_BridgeScatterChart> {
 
 class _BridgeScatterPoint {
   const _BridgeScatterPoint({
+    required this.pairLabel,
     required this.distance,
     required this.score,
     required this.scoreStandardDeviation,
     required this.color,
   });
 
+  final String pairLabel;
   final double distance;
   final double score;
   final double scoreStandardDeviation;
   final Color color;
+}
+
+Offset _bridgeScatterPointOffset(
+  Size size,
+  List<_BridgeScatterPoint> points,
+  _BridgeScatterPoint point,
+) {
+  final Rect plot = _bridgeScatterPlot(size);
+  final (double minX, double maxX, double minY, double maxY) =
+      _bridgeScatterBounds(points);
+  final double xSpan = math.max(1.0e-12, maxX - minX);
+  final double ySpan = math.max(0.1, maxY - minY);
+  return Offset(
+    plot.left + (((point.distance - minX) / xSpan) * plot.width),
+    plot.bottom - (((point.score - minY) / ySpan) * plot.height),
+  );
+}
+
+int? _nearestBridgeScatterPoint(
+  Offset pointer,
+  Size size,
+  List<_BridgeScatterPoint> points,
+) {
+  int? nearestIndex;
+  double nearestDistance = 12;
+  for (int index = 0; index < points.length; index++) {
+    final double distance =
+        (pointer - _bridgeScatterPointOffset(size, points, points[index]))
+            .distance;
+    if (distance <= nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  }
+  return nearestIndex;
 }
 
 class _BridgeRegression {

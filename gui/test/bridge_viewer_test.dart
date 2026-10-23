@@ -258,6 +258,53 @@ void main() {
     );
   });
 
+  testWidgets('distance dots identify pairs containing an added electrode', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 1100,
+            height: 700,
+            child: BridgeViewer(
+              dataset: _bridgeDataset(includeAddedChannel: true),
+              params: <String, dynamic>{'bridgeViewer.mode': 'scatter'},
+              onChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('4 channels'), findsOneWidget);
+    expect(find.textContaining('6 pairs'), findsOneWidget);
+    final Finder region = find.byKey(
+      const ValueKey<String>('bridge-distance-region'),
+    );
+    final Size size = tester.getSize(region);
+    final Offset origin = tester.getTopLeft(region);
+    final TestGesture mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+    );
+    await mouse.addPointer(location: Offset.zero);
+    for (double y = 18; y < size.height - 48; y += 10) {
+      for (double x = 76; x < size.width - 18; x += 10) {
+        await mouse.moveTo(origin + Offset(x, y));
+        await tester.pump();
+        if (find.textContaining('Added').evaluate().isNotEmpty) break;
+      }
+      if (find.textContaining('Added').evaluate().isNotEmpty) break;
+    }
+
+    expect(
+      find.byKey(const ValueKey<String>('bridge-point-label')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Added'), findsOneWidget);
+  });
+
   testWidgets('classification mode shows distribution and flagged pairs', (
     WidgetTester tester,
   ) async {
@@ -296,6 +343,7 @@ Dataset _bridgeDataset({
   bool includeCoordinates = true,
   bool coordinatesOnTimeSeries = true,
   bool omitPzCoordinate = false,
+  bool includeAddedChannel = false,
 }) {
   final Dataset dataset = Dataset('bridge', label: 'Bridge example');
   dataset.timeSeries = TimeSeriesData(
@@ -303,20 +351,28 @@ Dataset _bridgeDataset({
       <double>[0, 1, 2, 3, 4, 5, 6, 7],
       <double>[0, 1, 2, 3, 4, 5, 6, 7],
       <double>[1, 2, 3, 4, 5, 6, 7, 8],
+      if (includeAddedChannel) <double>[1, 1, 2, 2, 3, 3, 4, 4],
     ],
     sampleRate: 2,
-    channelLabels: <String>['Fz', 'Cz', 'Pz'],
+    channelLabels: <String>['Fz', 'Cz', 'Pz', if (includeAddedChannel) 'Added'],
     channelCoordinates: includeCoordinates && coordinatesOnTimeSeries
         ? <String, ChannelCoordinate>{
             'Fz': ChannelCoordinate(label: 'Fz', x: 0, y: 0.5, z: 0.8),
             'Cz': ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
             if (!omitPzCoordinate)
               'Pz': ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+            if (includeAddedChannel)
+              'Added': ChannelCoordinate(
+                label: 'Added',
+                x: 0.8,
+                y: 0.2,
+                z: 0.7,
+              ),
           }
         : const <String, ChannelCoordinate>{},
   );
   dataset.bridgeDetection = BridgeDetectionData(
-    channelLabels: <String>['Fz', 'Cz', 'Pz'],
+    channelLabels: <String>['Fz', 'Cz', 'Pz', if (includeAddedChannel) 'Added'],
     epochSampleCount: 2,
     intervalSampleCount: 2,
     sampleRate: 2,
@@ -325,18 +381,29 @@ Dataset _bridgeDataset({
         epochIndex: 0,
         startSample: 0,
         endSampleExclusive: 2,
-        pairValues: <double>[10, 3, 5],
-        pairElectricalDistances: <double>[0.10, 1.0, 0.50],
+        pairValues: includeAddedChannel
+            ? <double>[10, 3, 4, 5, 6, 7]
+            : <double>[10, 3, 5],
+        pairElectricalDistances: includeAddedChannel
+            ? <double>[0.10, 1.0, 0.30, 0.50, 0.40, 0.80]
+            : <double>[0.10, 1.0, 0.50],
       ),
       BridgeEpochFrameData(
         epochIndex: 1,
         startSample: 2,
         endSampleExclusive: 4,
-        pairValues: <double>[11, 4, 6],
-        pairElectricalDistances: <double>[0.20, 1.1, 0.60],
+        pairValues: includeAddedChannel
+            ? <double>[10, 3, 4, 5, 6, 7]
+            : <double>[11, 4, 6],
+        pairElectricalDistances: includeAddedChannel
+            ? <double>[0.10, 1.0, 0.30, 0.50, 0.40, 0.80]
+            : <double>[0.20, 1.1, 0.60],
       ),
     ],
-    distanceNormalizedPairs: <bool>[true, true, true],
+    distanceNormalizedPairs: List<bool>.filled(
+      includeAddedChannel ? 6 : 3,
+      true,
+    ),
     electricalDistanceScale: 100,
     distributionElectricalDistances: <double>[0, 1, 2, 3, 4, 5],
     distributionCounts: <double>[0, 4, 2, 1, 2, 3],
@@ -350,6 +417,13 @@ Dataset _bridgeDataset({
             'Cz': const ChannelCoordinate(label: 'Cz', x: 0, y: 0, z: 1),
             if (!omitPzCoordinate)
               'Pz': const ChannelCoordinate(label: 'Pz', x: 0, y: -0.5, z: 0.8),
+            if (includeAddedChannel)
+              'Added': const ChannelCoordinate(
+                label: 'Added',
+                x: 0.8,
+                y: 0.2,
+                z: 0.7,
+              ),
           }
         : const <String, ChannelCoordinate>{},
   );
