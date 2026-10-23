@@ -18,11 +18,13 @@ void main() {
     expect(entry.visible, isTrue);
     expect(entry.group, NodeGroup.machineLearning);
     expect(node.subcategory, 'Clustering');
+    expect(node.inputs.first.name, 'segments');
     expect(node.outputs.map((PortSpec port) => port.name), <String>[
       'table',
       'gaussian_mixture',
     ]);
     expect(node.defaultParams['standardize'], isTrue);
+    expect(node.defaultParams['observationSource'], 'raw_segments');
   });
 
   test('native Gaussian mixture response retains model diagnostics', () {
@@ -123,9 +125,136 @@ void main() {
     expect(
       () => GaussianMixtureNodeType().run(dataset, <String, dynamic>{
         ...GaussianMixtureNodeType().defaultParams,
+        'observationSource': 'feature_table',
         'componentCount': 3,
       }),
       throwsA(isA<StateError>()),
     );
+  });
+
+  test('raw Gaussian mixture requires equally shaped segments', () {
+    final Dataset dataset = Dataset('dataset-1', label: 'Segments');
+    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
+      sampleRate: 100,
+      channelLabels: <String>['Cz'],
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[1, 2, 3],
+          ],
+          startSeconds: 0,
+          stopSeconds: 0.03,
+          label: 'A',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[4, 5],
+          ],
+          startSeconds: 1,
+          stopSeconds: 1.02,
+          label: 'B',
+        ),
+      ],
+    );
+
+    expect(
+      () => GaussianMixtureNodeType().run(dataset, <String, dynamic>{
+        ...GaussianMixtureNodeType().defaultParams,
+        'componentCount': 2,
+      }),
+      throwsA(
+        isA<StateError>().having(
+          (StateError error) => error.message.toString(),
+          'message',
+          contains('Pool, select channels, or downsample upstream'),
+        ),
+      ),
+    );
+  });
+
+  test('raw Gaussian mixture fits unchanged segment samples', () async {
+    final Dataset dataset = Dataset('dataset-raw', label: 'Raw segments');
+    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
+      sampleRate: 100,
+      channelLabels: <String>['Cz'],
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0, 0.1],
+          ],
+          startSeconds: 0,
+          stopSeconds: 0.02,
+          label: 'low',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0.1, 0],
+          ],
+          startSeconds: 1,
+          stopSeconds: 1.02,
+          label: 'low',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[10, 10.1],
+          ],
+          startSeconds: 2,
+          stopSeconds: 2.02,
+          label: 'high',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[10.1, 10],
+          ],
+          startSeconds: 3,
+          stopSeconds: 3.02,
+          label: 'high',
+        ),
+      ],
+    );
+
+    await GaussianMixtureNodeType().run(dataset, <String, dynamic>{
+      ...GaussianMixtureNodeType().defaultParams,
+      'componentCount': 2,
+    });
+
+    expect(dataset.gaussianMixture?.featureColumns, <String>[
+      'value_1',
+      'value_2',
+    ]);
+    expect(dataset.gaussianMixture?.assessmentVariables, <String>['label']);
+    expect(dataset.featureTable?.rows, hasLength(4));
+    expect(dataset.featureTable?.rows.first['label'], 'low');
+    expect(dataset.featureTable?.rows.first, contains('gmm_cluster'));
+  });
+
+  test('Gaussian mixture assessment variables survive snapshots', () {
+    const GaussianMixtureData model = GaussianMixtureData(
+      featureColumns: <String>['value_1'],
+      assignments: <int>[0],
+      probabilities: <List<double>>[
+        <double>[1],
+      ],
+      weights: <double>[1],
+      means: <List<double>>[
+        <double>[0],
+      ],
+      variances: <List<double>>[
+        <double>[1],
+      ],
+      converged: true,
+      iterationCount: 1,
+      logLikelihood: 0,
+      aic: 0,
+      bic: 0,
+      standardized: false,
+      normalizationMean: <double>[0],
+      normalizationScale: <double>[1],
+      assessmentVariables: <String>['label', 'kind'],
+    );
+    final GaussianMixtureData restored = GaussianMixtureData.fromJson(
+      model.toJson(),
+    );
+    expect(restored.assessmentVariables, <String>['label', 'kind']);
   });
 }

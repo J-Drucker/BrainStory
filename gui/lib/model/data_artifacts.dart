@@ -1314,6 +1314,7 @@ class GaussianMixtureData {
     required this.standardized,
     required this.normalizationMean,
     required this.normalizationScale,
+    this.assessmentVariables = const <String>[],
     this.source = '',
   });
 
@@ -1331,6 +1332,7 @@ class GaussianMixtureData {
   final bool standardized;
   final List<double> normalizationMean;
   final List<double> normalizationScale;
+  final List<String> assessmentVariables;
   final String source;
 
   int get componentCount => weights.length;
@@ -1351,6 +1353,7 @@ class GaussianMixtureData {
     'standardized': standardized,
     'normalizationMean': normalizationMean,
     'normalizationScale': normalizationScale,
+    'assessmentVariables': assessmentVariables,
     'source': source,
   };
 
@@ -1384,6 +1387,10 @@ class GaussianMixtureData {
       standardized: json['standardized'] == true,
       normalizationMean: vector(json['normalizationMean']),
       normalizationScale: vector(json['normalizationScale']),
+      assessmentVariables:
+          (json['assessmentVariables'] as List<dynamic>? ?? const <dynamic>[])
+              .map((dynamic value) => value.toString())
+              .toList(growable: false),
       source: json['source']?.toString() ?? '',
     );
   }

@@ -254,9 +254,10 @@ nodeAlgorithmReviews = <String, AlgorithmReview>{
   'Gaussian Mixture': AlgorithmReview(
     implementation: AlgorithmImplementation.rust,
     summary:
-        'Deterministic expectation-maximization fit of a diagonal-covariance Gaussian mixture to feature-table rows.',
+        'Deterministic expectation-maximization fit of a diagonal-covariance Gaussian mixture to segmented observations, represented either as unchanged raw channel-by-time values or as an upstream feature table.',
     procedure: <String>[
-      'Select numeric feature columns and optionally standardize each to zero mean and unit population standard deviation.',
+      'Represent each segment as one observation. Raw mode flattens the supplied channel-by-time matrix without pooling, selection, or downsampling; feature-table mode selects numeric columns.',
+      'Exclude user-designated assessment variables from fitting and optionally standardize each fitting dimension to zero mean and unit population standard deviation.',
       'Initialize component means deterministically from data rows using the seed; initialize equal weights and global diagonal variance.',
       'Alternate log-sum-exp responsibility calculation (E step) and weighted means, variances, and weights (M step).',
       'Stop when absolute log-likelihood change <= tolerance x (1 + |previous log likelihood|), or at the iteration limit.',

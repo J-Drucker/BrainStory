@@ -404,7 +404,7 @@ void main() {
         (NodeModel node) => node.type is IcaComponentRejectionNodeType,
       );
       expect(created, 'Created Apply ICA.');
-      expect(rejection.datasetStates[dataset.id], DatasetState.ready);
+      expect(rejection.datasetStates[dataset.id], DatasetState.notReady);
       expect(rejection.params['excludedComponents'], <int>[0]);
       expect(
         rejection.params['selectedDatasetIds'],
@@ -415,13 +415,13 @@ void main() {
       });
       expect(
         logic.connections,
-        contains(
-          predicate<Map<String, dynamic>>(
-            (Map<String, dynamic> connection) =>
-                connection['fromNode'] == input.id &&
-                connection['fromPort'] == 0 &&
-                connection['toNode'] == rejection.id &&
-                connection['toPort'] == 0,
+        isNot(
+          contains(
+            predicate<Map<String, dynamic>>(
+              (Map<String, dynamic> connection) =>
+                  connection['fromNode'] == input.id &&
+                  connection['toNode'] == rejection.id,
+            ),
           ),
         ),
       );
@@ -434,6 +434,16 @@ void main() {
                 connection['fromPort'] == 1 &&
                 connection['toNode'] == rejection.id &&
                 connection['toPort'] == 1,
+          ),
+        ),
+      );
+      await expectLater(
+        logic.runThisStep(rejection.id, datasetIds: <String>{dataset.id}),
+        throwsA(
+          isA<StateError>().having(
+            (StateError error) => error.message.toString(),
+            'message',
+            contains('two explicit direct parents'),
           ),
         ),
       );

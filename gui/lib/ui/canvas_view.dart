@@ -482,6 +482,9 @@ class _CanvasViewState extends State<CanvasView> {
                                         collapsed: _recentJobsCollapsed,
                                         onToggleCollapsed:
                                             _toggleRecentJobsCollapsed,
+                                        onCancelRun: logic.cancelCurrentRun,
+                                        cancelRequested:
+                                            logic.runCancellationRequested,
                                       ),
                                     ],
                                   ),
@@ -889,6 +892,8 @@ class _RecentJobsPanel extends StatefulWidget {
     required this.visualizerPriorityActive,
     required this.collapsed,
     required this.onToggleCollapsed,
+    required this.onCancelRun,
+    required this.cancelRequested,
   });
 
   final RunActivity? runActivity;
@@ -898,6 +903,8 @@ class _RecentJobsPanel extends StatefulWidget {
   final bool visualizerPriorityActive;
   final bool collapsed;
   final VoidCallback onToggleCollapsed;
+  final VoidCallback onCancelRun;
+  final bool cancelRequested;
 
   @override
   State<_RecentJobsPanel> createState() => _RecentJobsPanelState();
@@ -976,6 +983,22 @@ class _RecentJobsPanelState extends State<_RecentJobsPanel> {
                         ),
                       ),
                     ),
+                    if (runActivity != null)
+                      IconButton(
+                        onPressed: widget.cancelRequested
+                            ? null
+                            : widget.onCancelRun,
+                        icon: Icon(
+                          widget.cancelRequested
+                              ? Icons.hourglass_top
+                              : Icons.stop_circle_outlined,
+                          size: 18,
+                        ),
+                        tooltip: widget.cancelRequested
+                            ? 'Cancel requested'
+                            : 'Cancel analysis',
+                        visualDensity: VisualDensity.compact,
+                      ),
                     IconButton(
                       onPressed: () => _copyText(
                         context,
@@ -1090,9 +1113,13 @@ class _RecentJobsPanelState extends State<_RecentJobsPanel> {
                               detail: _jobDetail(job),
                               statusLabel: job.state == RunJobState.done
                                   ? 'Done'
+                                  : job.state == RunJobState.canceled
+                                  ? 'Canceled'
                                   : 'Failed',
                               color: job.state == RunJobState.done
                                   ? const Color(0xFF43C26B)
+                                  : job.state == RunJobState.canceled
+                                  ? const Color(0xFFFFD166)
                                   : const Color(0xFFFF8A65),
                               onCopy: () => _copyText(
                                 context,
@@ -1102,6 +1129,8 @@ class _RecentJobsPanelState extends State<_RecentJobsPanel> {
                                   job,
                                   statusLabel: job.state == RunJobState.done
                                       ? 'Done'
+                                      : job.state == RunJobState.canceled
+                                      ? 'Canceled'
                                       : 'Failed',
                                   detail: _jobDetail(job),
                                 ),
@@ -1154,7 +1183,11 @@ class _RecentJobsPanelState extends State<_RecentJobsPanel> {
       lines.add(
         _jobClipboardText(
           job,
-          statusLabel: job.state == RunJobState.done ? 'Done' : 'Failed',
+          statusLabel: job.state == RunJobState.done
+              ? 'Done'
+              : job.state == RunJobState.canceled
+              ? 'Canceled'
+              : 'Failed',
           detail: _jobDetail(job),
         ),
       );

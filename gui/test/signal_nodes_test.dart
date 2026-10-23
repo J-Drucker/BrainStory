@@ -978,6 +978,7 @@ void main() {
     expect(find.text('Running PSD'), findsOneWidget);
     expect(find.text('Running Segmentation'), findsOneWidget);
     expect(find.text('Queued'), findsOneWidget);
+    expect(find.byTooltip('Cancel analysis'), findsOneWidget);
     expect(
       find.byWidgetPredicate(
         (Widget widget) =>
@@ -986,6 +987,11 @@ void main() {
       ),
       findsNothing,
     );
+
+    await tester.tap(find.byTooltip('Cancel analysis'));
+    await tester.pump();
+    expect(logic.runCancellationRequested, isTrue);
+    expect(find.byTooltip('Cancel requested'), findsOneWidget);
   });
 
   test('run queue serializes jobs and publishes queued work', () async {
@@ -1039,6 +1045,39 @@ void main() {
     expect(order, <String>['first-start', 'first-end', 'second-start']);
     expect(logic.queuedRunJobs.value, isEmpty);
     expect(logic.recentRunJobs.value.first.label, 'Second job');
+  });
+
+  test('active analysis cancels at a cooperative execution boundary', () async {
+    final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+    final Dataset dataset = Dataset('cancel-dataset', label: 'Cancel')
+      ..timeSeries = TimeSeriesData(
+        samples: const <double>[1, 2, 3],
+        sampleRate: 100,
+        channelLabels: const <String>['Cz'],
+      );
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(ImportNodeType());
+    logic.addNode(_CancelableNodeType());
+    final NodeModel input = logic.nodes.first;
+    final NodeModel analysis = logic.nodes.last;
+    input.datasetStates[dataset.id] = DatasetState.done;
+    logic.connections.add(_testConnection(input, analysis));
+
+    final Future<String> result = logic.runQueued(
+      label: 'Cancelable analysis',
+      lockedNodeIds: <String>{analysis.id},
+      action: () =>
+          logic.runThisStep(analysis.id, datasetIds: <String>{dataset.id}),
+      successDetail: () => 'Unexpected completion.',
+    );
+    for (int attempt = 0; attempt < 20 && !logic.hasActiveRun; attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    logic.cancelCurrentRun();
+
+    expect(await result, 'Canceled by user.');
+    expect(logic.recentRunJobs.value.first.state, RunJobState.canceled);
+    expect(analysis.datasetStates[dataset.id], isNot(DatasetState.done));
   });
 
   test('run all executes graph layers breadth-first', () async {
@@ -2437,12 +2476,21 @@ void main() {
       (NodeModel node) => node.type is BandpassNodeType,
     );
     final Dataset restoredDataset = restored.datasets.values.single;
+    final NodeDatasetStatusSnapshot beforeMaterializing = await restored
+        .datasetStatusSnapshotForNode(restoredBandpass.id);
+    expect(beforeMaterializing.ramLoadedDatasetIds, isEmpty);
     final Dataset restoredView = await restored.materializedDatasetViewForNode(
       restoredBandpass.id,
       restoredDataset,
     );
     expect(restoredView.timeSeries, isNotNull);
     expect(restoredView.timeSeries!.channelLabels, <String>['Cz']);
+    final NodeDatasetStatusSnapshot afterMaterializing = await restored
+        .datasetStatusSnapshotForNode(restoredBandpass.id);
+    expect(
+      afterMaterializing.ramLoadedDatasetIds,
+      contains(restoredDataset.id),
+    );
   });
 
   test('channel edit change sets describe topology changes', () {
@@ -7648,6 +7696,45 @@ class _RecordingNodeType extends NodeType {
   @override
   Future<void> run(Dataset dataset, Map<String, dynamic> params) async {
     order.add(title);
+  }
+}
+
+class _CancelableNodeType extends NodeType {
+  @override
+  String get title => 'Cancelable';
+
+  @override
+  Map<String, dynamic> get defaultParams => <String, dynamic>{};
+
+  @override
+  List<PortSpec> get inputs => const <PortSpec>[
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  List<PortSpec> get outputs => const <PortSpec>[
+    PortSpec(name: 'signal', type: PortType.signal),
+  ];
+
+  @override
+  Widget buildBody(
+    Map<String, dynamic> params, {
+    required Map<String, Dataset> datasets,
+    required void Function(void Function()) setState,
+  }) => const SizedBox.shrink();
+
+  @override
+  Future<void> run(Dataset dataset, Map<String, dynamic> params) async {}
+
+  @override
+  Future<void> runChunked(
+    Dataset dataset,
+    Map<String, dynamic> params,
+    NodeExecutionContext context,
+  ) async {
+    for (int index = 0; index < 1000; index++) {
+      await context.yieldIfNeeded();
+    }
   }
 }
 

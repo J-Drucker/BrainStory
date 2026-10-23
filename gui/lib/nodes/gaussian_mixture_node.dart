@@ -18,7 +18,9 @@ class GaussianMixtureNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'componentCount': 3,
+    'observationSource': 'raw_segments',
     'featureColumns': '',
+    'assessmentVariables': 'label',
     'standardize': true,
     'maxIterations': 200,
     'tolerance': 0.0001,
@@ -28,7 +30,8 @@ class GaussianMixtureNodeType extends NodeType {
 
   @override
   List<PortSpec> get inputs => const <PortSpec>[
-    PortSpec(name: 'feature_table', type: PortType.metadata),
+    PortSpec(name: 'segments', type: PortType.metadata),
+    PortSpec(name: 'feature_table (optional)', type: PortType.metadata),
   ];
 
   @override
@@ -53,7 +56,23 @@ class GaussianMixtureNodeType extends NodeType {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Text(
-          'Fits a diagonal-covariance Gaussian mixture to rows in the incoming feature table. Cluster assignments and probabilities are appended to the table.',
+          'Fits a diagonal-covariance Gaussian mixture to segments. Raw mode uses every supplied channel and time point exactly as received; dimensionality reduction belongs in upstream preprocessing.',
+        ),
+        const SizedBox(height: 12),
+        NodeParamDropdownField<String>(
+          params: params,
+          paramKey: 'observationSource',
+          labelText: 'Observations',
+          options: const <NodeDropdownOption<String>>[
+            NodeDropdownOption<String>(
+              value: 'raw_segments',
+              label: 'Raw segment time series',
+            ),
+            NodeDropdownOption<String>(
+              value: 'feature_table',
+              label: 'Upstream feature table',
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Wrap(
@@ -82,6 +101,13 @@ class GaussianMixtureNodeType extends NodeType {
           params: params,
           paramKey: 'featureColumns',
           labelText: 'Feature columns (comma-separated; blank = all numeric)',
+        ),
+        const SizedBox(height: 12),
+        NodeParamTextField(
+          params: params,
+          paramKey: 'assessmentVariables',
+          labelText:
+              'Assessment variables (comma-separated; never used for fitting)',
         ),
         const SizedBox(height: 6),
         CheckboxListTile(
@@ -137,16 +163,44 @@ class GaussianMixtureNodeType extends NodeType {
     Map<String, dynamic> params,
     NodeExecutionContext? context,
   ) async {
-    final FeatureTableData? table = dataset.featureTable;
-    if (table == null || table.rows.isEmpty) {
-      throw StateError('Gaussian Mixture requires a non-empty feature table.');
-    }
-    final List<String> requestedColumns = _requestedColumns(
-      params['featureColumns'],
+    final String observationSource =
+        params['observationSource']?.toString() ?? 'raw_segments';
+    final FeatureTableData table = observationSource == 'feature_table'
+        ? _featureTableObservations(dataset)
+        : _rawSegmentObservations(dataset);
+    final List<String> assessmentVariables = _requestedColumns(
+      params['assessmentVariables'],
     );
-    final List<String> featureColumns = requestedColumns.isEmpty
+    final List<String> missingAssessmentVariables = assessmentVariables
+        .where((String variable) => !table.columns.contains(variable))
+        .toList(growable: false);
+    if (missingAssessmentVariables.isNotEmpty) {
+      throw StateError(
+        'Assessment variables are not present in the observations: '
+        '${missingAssessmentVariables.join(', ')}.',
+      );
+    }
+    final List<String> requestedColumns = observationSource == 'feature_table'
+        ? _requestedColumns(params['featureColumns'])
+        : const <String>[];
+    final List<String> featureColumns = observationSource == 'raw_segments'
+        ? table.columns
+              .where((String column) => column.startsWith('value_'))
+              .toList(growable: false)
+        : requestedColumns.isEmpty
         ? _automaticNumericColumns(table)
+              .where((String column) => !assessmentVariables.contains(column))
+              .toList(growable: false)
         : requestedColumns;
+    final Set<String> assessmentFeatures = featureColumns
+        .where(assessmentVariables.contains)
+        .toSet();
+    if (assessmentFeatures.isNotEmpty) {
+      throw StateError(
+        'Assessment variables cannot also be fitting features: '
+        '${assessmentFeatures.join(', ')}.',
+      );
+    }
     if (featureColumns.isEmpty) {
       throw StateError('No numeric feature columns are available to cluster.');
     }
@@ -250,11 +304,81 @@ class GaussianMixtureNodeType extends NodeType {
       normalizationMean: result.normalizationMean,
       normalizationScale: result.normalizationScale,
       source: table.source,
+      assessmentVariables: assessmentVariables,
     );
     await context?.setProgress(
       result.converged
           ? 'Converged in ${result.iterationCount} iterations'
           : 'Stopped after ${result.iterationCount} iterations',
+    );
+  }
+
+  FeatureTableData _featureTableObservations(Dataset dataset) {
+    final FeatureTableData? table = dataset.featureTable;
+    if (table == null || table.rows.isEmpty) {
+      throw StateError(
+        'Gaussian Mixture feature-table mode requires a non-empty upstream feature table.',
+      );
+    }
+    return table;
+  }
+
+  FeatureTableData _rawSegmentObservations(Dataset dataset) {
+    final SegmentedTimeSeriesData? segmented = dataset.segmentedTimeSeries;
+    if (segmented == null || segmented.segments.isEmpty) {
+      throw StateError('Gaussian Mixture requires segmented time-series data.');
+    }
+    final List<SignalSegmentData> segments = segmented.materializedSegments();
+    final List<List<double>> flattened = segments
+        .map((SignalSegmentData segment) {
+          if (segment.channelSamples.isEmpty) {
+            throw StateError('A segment has no materialized signal samples.');
+          }
+          final int sampleCount = segment.channelSamples.first.length;
+          if (sampleCount == 0 ||
+              segment.channelSamples.any(
+                (List<double> channel) => channel.length != sampleCount,
+              )) {
+            throw StateError(
+              'Every segment channel must contain the same non-zero number of samples.',
+            );
+          }
+          return segment.channelSamples
+              .expand((List<double> channel) => channel)
+              .toList(growable: false);
+        })
+        .toList(growable: false);
+    final int width = flattened.first.length;
+    if (flattened.any((List<double> row) => row.length != width)) {
+      throw StateError(
+        'Raw GMM segments must have identical channel and sample dimensions. Pool, select channels, or downsample upstream before fitting.',
+      );
+    }
+    final List<String> valueColumns = List<String>.generate(
+      width,
+      (int index) => 'value_${index + 1}',
+      growable: false,
+    );
+    return FeatureTableData(
+      columns: <String>[
+        'label',
+        'kind',
+        'start_seconds',
+        'stop_seconds',
+        ...valueColumns,
+      ],
+      rows: List<Map<String, String>>.generate(segments.length, (int index) {
+        final SignalSegmentData segment = segments[index];
+        return <String, String>{
+          'label': segment.label,
+          'kind': segment.kind,
+          'start_seconds': segment.startSeconds.toString(),
+          'stop_seconds': segment.stopSeconds.toString(),
+          for (int valueIndex = 0; valueIndex < width; valueIndex++)
+            valueColumns[valueIndex]: flattened[index][valueIndex].toString(),
+        };
+      }, growable: false),
+      source: '${segmented.source} -> raw segments',
     );
   }
 

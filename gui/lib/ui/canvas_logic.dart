@@ -184,7 +184,14 @@ class RunActivity {
   }
 }
 
-enum RunJobState { queued, running, done, failed }
+enum RunJobState { queued, running, done, failed, canceled }
+
+class RunCanceledException implements Exception {
+  const RunCanceledException();
+
+  @override
+  String toString() => 'Analysis canceled.';
+}
 
 class RunJobEntry {
   const RunJobEntry({
@@ -1200,8 +1207,11 @@ class CanvasLogic {
   final Set<String> _runLockedNodeIds = <String>{};
   String? _runActiveNodeId;
   DateTime? _runStartedAt;
+  bool _runCancellationRequested = false;
   final Map<String, Map<String, DatasetArtifactSnapshot>> _nodeRamSnapshots =
       <String, Map<String, DatasetArtifactSnapshot>>{};
+  final Map<String, Map<String, String>> _embeddedProjectSnapshotJson =
+      <String, Map<String, String>>{};
   final Map<String, Set<String>> _nodeDiskSnapshotIds = <String, Set<String>>{};
   String? _currentBrainStoryPath;
   _ProjectArtifactSavePolicy _projectArtifactSavePolicy =
@@ -1236,7 +1246,25 @@ class CanvasLogic {
 
   bool get canUndo => _undoStack.isNotEmpty;
   bool get hasActiveRun => runActivity.value != null;
+  bool get runCancellationRequested => _runCancellationRequested;
   bool get hasConnectionDraft => _pendingFromNodeId != null;
+
+  void cancelCurrentRun() {
+    if (!hasActiveRun || _runCancellationRequested) return;
+    _runCancellationRequested = true;
+    final RunActivity? current = runActivity.value;
+    if (current != null) {
+      runActivity.value = current.copyWith(
+        detail: 'Cancel requested; stopping at the next safe boundary...',
+      );
+    }
+  }
+
+  void _throwIfRunCanceled() {
+    if (_runCancellationRequested) {
+      throw const RunCanceledException();
+    }
+  }
 
   bool get selectedMutationBlocked {
     final int? connectionIndex = selectedConnectionIndex;
@@ -1373,6 +1401,7 @@ class CanvasLogic {
     _ungroupedAutomaticRootNodeIds.clear();
     connections.clear();
     _nodeRamSnapshots.clear();
+    _embeddedProjectSnapshotJson.clear();
     _nodeDiskSnapshotIds.clear();
     _currentBrainStoryPath = null;
     _projectArtifactSavePolicy = _ProjectArtifactSavePolicy.pipelineOnly;
@@ -1636,6 +1665,16 @@ class CanvasLogic {
       if (snapshots?.remove(datasetId) != null &&
           (snapshots?.isEmpty ?? false)) {
         _nodeRamSnapshots.remove(nodeId);
+      }
+    }
+    for (final String nodeId in _embeddedProjectSnapshotJson.keys.toList(
+      growable: false,
+    )) {
+      final Map<String, String>? snapshots =
+          _embeddedProjectSnapshotJson[nodeId];
+      if (snapshots?.remove(datasetId) != null &&
+          (snapshots?.isEmpty ?? false)) {
+        _embeddedProjectSnapshotJson.remove(nodeId);
       }
     }
 
@@ -2253,9 +2292,58 @@ class CanvasLogic {
     if (file == null) {
       return;
     }
+    if (!context.mounted) {
+      return;
+    }
+
+    final ValueNotifier<String> progress = ValueNotifier<String>(
+      'Reading ${file.name}...',
+    );
+    bool progressDialogOpen = false;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext dialogContext) {
+          progressDialogOpen = true;
+          return PopScope(
+            canPop: false,
+            child: AlertDialog(
+              title: const Text('Opening BrainStory project'),
+              content: SizedBox(
+                width: 420,
+                child: ValueListenableBuilder<String>(
+                  valueListenable: progress,
+                  builder: (BuildContext context, String detail, _) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const LinearProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(detail),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Artifacts remain unloaded until a viewer or analysis needs them.',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
 
     try {
-      await _loadBrainStoryJsonPayload(await file.readAsString());
+      final String payload = await file.readAsString();
+      progress.value = 'Restoring the pipeline...';
+      await Future<void>.delayed(Duration.zero);
+      await _loadBrainStoryJsonPayload(
+        payload,
+        onProgress: (String detail) => progress.value = detail,
+      );
       final String path = file.path.trim();
       if (path.isNotEmpty) {
         await _rememberBrainStoryPath(path);
@@ -2273,6 +2361,11 @@ class CanvasLogic {
           'Could not open BrainStory project: $error',
         );
       }
+    } finally {
+      if (progressDialogOpen && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      progress.dispose();
     }
   }
 
@@ -2337,14 +2430,60 @@ class CanvasLogic {
     await _rememberBrainStoryPath(normalizedPath);
   }
 
-  Future<void> _loadBrainStoryJsonPayload(String jsonPayload) async {
+  Future<void> _loadBrainStoryJsonPayload(
+    String jsonPayload, {
+    ValueChanged<String>? onProgress,
+  }) async {
+    onProgress?.call('Reading project structure...');
+    await Future<void>.delayed(Duration.zero);
     final Map<String, dynamic> jsonMap = Map<String, dynamic>.from(
       jsonDecode(jsonPayload) as Map,
     );
+    onProgress?.call('Restoring datasets and nodes...');
+    await Future<void>.delayed(Duration.zero);
     _recordUndo('load BrainStory');
     importProjectJson(jsonMap);
+    await _spillEmbeddedProjectArtifactsToDisk(onProgress: onProgress);
+    onProgress?.call('Checking saved artifact locations...');
+    await Future<void>.delayed(Duration.zero);
     await _refreshDiskSnapshotFlagsForLoadedProject();
     _normalizeNodeStatesAfterProjectLoad();
+    onProgress?.call('Finishing project setup...');
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  Future<void> _spillEmbeddedProjectArtifactsToDisk({
+    ValueChanged<String>? onProgress,
+  }) async {
+    if (!supportsNodeSnapshotDiskStore ||
+        _embeddedProjectSnapshotJson.isEmpty) {
+      return;
+    }
+    final int total = _embeddedProjectSnapshotJson.values.fold<int>(
+      0,
+      (int count, Map<String, String> snapshots) => count + snapshots.length,
+    );
+    int completed = 0;
+    for (final MapEntry<String, Map<String, String>> nodeEntry
+        in _embeddedProjectSnapshotJson.entries) {
+      for (final MapEntry<String, String> datasetEntry
+          in nodeEntry.value.entries) {
+        onProgress?.call(
+          'Indexing saved artifacts ${completed + 1} of $total...',
+        );
+        await Future<void>.delayed(Duration.zero);
+        await saveNodeSnapshotJson(
+          nodeId: nodeEntry.key,
+          datasetId: datasetEntry.key,
+          jsonPayload: datasetEntry.value,
+        );
+        _nodeDiskSnapshotIds
+            .putIfAbsent(nodeEntry.key, () => <String>{})
+            .add(datasetEntry.key);
+        completed++;
+      }
+    }
+    _embeddedProjectSnapshotJson.clear();
   }
 
   Future<void> _rememberBrainStoryPath(String path) async {
@@ -2516,23 +2655,52 @@ class CanvasLogic {
                 Map<String, dynamic>.from(connection),
           )
           .toList(growable: false),
-      'artifacts': <Map<String, dynamic>>[
-        for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>>
-            nodeEntry
-            in _nodeRamSnapshots.entries)
-          for (final MapEntry<String, DatasetArtifactSnapshot> datasetEntry
-              in nodeEntry.value.entries)
-            if (includeEverything ||
-                selectedArtifactKeys.contains(
-                  _projectArtifactKey(nodeEntry.key, datasetEntry.key),
-                ))
-              <String, dynamic>{
-                'nodeId': nodeEntry.key,
-                'datasetId': datasetEntry.key,
-                'snapshot': datasetEntry.value.toJson(),
-              },
-      ],
+      'artifacts': _exportProjectArtifactEntries(
+        includeEverything: includeEverything,
+        selectedArtifactKeys: selectedArtifactKeys,
+      ),
     };
+  }
+
+  List<Map<String, dynamic>> _exportProjectArtifactEntries({
+    required bool includeEverything,
+    required Set<String> selectedArtifactKeys,
+  }) {
+    final Map<String, Map<String, dynamic>> entries =
+        <String, Map<String, dynamic>>{};
+    for (final MapEntry<String, Map<String, String>> nodeEntry
+        in _embeddedProjectSnapshotJson.entries) {
+      for (final MapEntry<String, String> datasetEntry
+          in nodeEntry.value.entries) {
+        final String key = _projectArtifactKey(nodeEntry.key, datasetEntry.key);
+        if (!includeEverything && !selectedArtifactKeys.contains(key)) {
+          continue;
+        }
+        entries[key] = <String, dynamic>{
+          'nodeId': nodeEntry.key,
+          'datasetId': datasetEntry.key,
+          'snapshot': Map<String, dynamic>.from(
+            jsonDecode(datasetEntry.value) as Map,
+          ),
+        };
+      }
+    }
+    for (final MapEntry<String, Map<String, DatasetArtifactSnapshot>> nodeEntry
+        in _nodeRamSnapshots.entries) {
+      for (final MapEntry<String, DatasetArtifactSnapshot> datasetEntry
+          in nodeEntry.value.entries) {
+        final String key = _projectArtifactKey(nodeEntry.key, datasetEntry.key);
+        if (!includeEverything && !selectedArtifactKeys.contains(key)) {
+          continue;
+        }
+        entries[key] = <String, dynamic>{
+          'nodeId': nodeEntry.key,
+          'datasetId': datasetEntry.key,
+          'snapshot': datasetEntry.value.toJson(),
+        };
+      }
+    }
+    return entries.values.toList(growable: false);
   }
 
   String _projectArtifactKey(String nodeId, String datasetId) {
@@ -2646,11 +2814,11 @@ class CanvasLogic {
       final dynamic rawSnapshot = entry['snapshot'];
       if (nodeId.isEmpty || datasetId.isEmpty || rawSnapshot is! Map) continue;
       embeddedArtifactKeys.add(_projectArtifactKey(nodeId, datasetId));
-      _nodeRamSnapshots.putIfAbsent(
+      _embeddedProjectSnapshotJson.putIfAbsent(
         nodeId,
-        () => <String, DatasetArtifactSnapshot>{},
-      )[datasetId] = DatasetArtifactSnapshot.fromJson(
-        Map<String, dynamic>.from(rawSnapshot),
+        () => <String, String>{},
+      )[datasetId] = jsonEncode(
+        rawSnapshot,
       );
     }
     _projectEmbeddedArtifactKeys
@@ -3810,6 +3978,8 @@ class CanvasLogic {
 
     _nodeRamSnapshots.remove(upstream.id);
     _nodeRamSnapshots.remove(downstream.id);
+    _embeddedProjectSnapshotJson.remove(upstream.id);
+    _embeddedProjectSnapshotJson.remove(downstream.id);
     _nodeDiskSnapshotIds.remove(upstream.id);
     _nodeDiskSnapshotIds.remove(downstream.id);
     _seedNodeDatasetStates(replacement);
@@ -4033,6 +4203,7 @@ class CanvasLogic {
     }
     for (final String id in replacedIds) {
       _nodeRamSnapshots.remove(id);
+      _embeddedProjectSnapshotJson.remove(id);
       _nodeDiskSnapshotIds.remove(id);
     }
     _ungroupedAutomaticRootNodeIds.removeAll(replacedIds);
@@ -5264,7 +5435,7 @@ class CanvasLogic {
     await _waitForVisualizerPriorityBeforeRun();
     _queuedRunTasks.removeWhere((_QueuedRunTask item) => item.id == task.id);
     _publishQueuedRunJobs();
-    bool succeeded = false;
+    RunJobState finalState = RunJobState.failed;
     String? finalDetail;
     try {
       await prepareRunUi(task.label, lockedNodeIds: task.lockedNodeIds);
@@ -5274,8 +5445,14 @@ class CanvasLogic {
         'Committing run results...',
         phase: RunActivityPhase.finalizing,
       );
-      succeeded = true;
+      finalState = RunJobState.done;
       finalDetail = _decorateRunDetailWithSkips(task.successDetail());
+      if (!task.completer.isCompleted) {
+        task.completer.complete(finalDetail);
+      }
+    } on RunCanceledException {
+      finalState = RunJobState.canceled;
+      finalDetail = 'Canceled by user.';
       if (!task.completer.isCompleted) {
         task.completer.complete(finalDetail);
       }
@@ -5285,7 +5462,7 @@ class CanvasLogic {
         task.completer.completeError(error, stackTrace);
       }
     } finally {
-      finishRunUi(succeeded: succeeded, detail: finalDetail);
+      finishRunUi(state: finalState, detail: finalDetail);
     }
   }
 
@@ -5321,7 +5498,9 @@ class CanvasLogic {
   }
 
   Future<void> _executionChunkBoundary() async {
+    _throwIfRunCanceled();
     await _waitForVisualizerPriorityDuringRun();
+    _throwIfRunCanceled();
     final ProcessingResponsiveness policy = processingResponsiveness.value;
     if (policy == ProcessingResponsiveness.off) {
       _executionChunkStopwatch
@@ -5367,6 +5546,7 @@ class CanvasLogic {
     Set<String> lockedNodeIds = const <String>{},
   }) async {
     _lastSkippedNodeCount = 0;
+    _runCancellationRequested = false;
     _runStartedAt = DateTime.now();
     _executionChunkStopwatch
       ..reset()
@@ -5396,7 +5576,9 @@ class CanvasLogic {
     return '$detail Reused $_lastSkippedNodeCount completed $noun.';
   }
 
-  void finishRunUi({bool succeeded = true, String? detail}) {
+  void finishRunUi({RunJobState? state, bool? succeeded, String? detail}) {
+    final RunJobState resolvedState =
+        state ?? (succeeded == false ? RunJobState.failed : RunJobState.done);
     final RunActivity? current = runActivity.value;
     if (current != null) {
       final Duration elapsed = _runStartedAt == null
@@ -5406,7 +5588,7 @@ class CanvasLogic {
         RunJobEntry(
           label: current.label,
           detail: (detail ?? current.detail).trim(),
-          state: succeeded ? RunJobState.done : RunJobState.failed,
+          state: resolvedState,
           finishedAt: DateTime.now(),
           elapsed: elapsed,
         ),
@@ -5418,6 +5600,7 @@ class CanvasLogic {
     _runLockedNodeIds.clear();
     _runActiveNodeId = null;
     _runStartedAt = null;
+    _runCancellationRequested = false;
     _executionChunkStopwatch
       ..reset()
       ..stop();
@@ -5581,8 +5764,10 @@ class CanvasLogic {
     final String hotDatasetId = targetDatasets.first.id;
 
     for (final Dataset dataset in targetDatasets) {
+      _throwIfRunCanceled();
       await setRunDetail('Preparing ${dataset.label}...');
       for (final NodeModel node in orderedNodes) {
+        _throwIfRunCanceled();
         if (!_datasetsForNode(node).contains(dataset.id)) {
           continue;
         }
@@ -5633,6 +5818,7 @@ class CanvasLogic {
               yieldIfNeeded: _executionChunkBoundary,
             ),
           );
+          _throwIfRunCanceled();
           node.datasetStates[dataset.id] = DatasetState.done;
           _rememberLastRunParams(node, dataset.id);
           await _materializeNodeOutput(
@@ -6794,12 +6980,11 @@ class CanvasLogic {
       datasetArtifactIds: <String>{dataset.id},
     );
     if (rejectionNode == null) {
-      final NodeModel signalSourceNode =
-          _icaDefaultSignalSourceNode(sourceNode) ?? sourceNode;
       rejectionNode = _spawnViewerEditNode(
-        sourceNode: signalSourceNode,
+        sourceNode: sourceNode,
         type: IcaComponentRejectionNodeType(),
         datasetId: dataset.id,
+        connectSource: false,
         params: <String, dynamic>{
           'excludedComponents': sortedExcluded,
           'excludedComponentsByDataset': <String, List<int>>{
@@ -6887,28 +7072,6 @@ class CanvasLogic {
       }
     }
     return const <int>{};
-  }
-
-  NodeModel? _icaDefaultSignalSourceNode(NodeModel icaNode) {
-    final int signalInputIndex = icaNode.inputPorts.indexWhere(
-      (PortSpec port) => port.type == PortType.signal,
-    );
-    if (signalInputIndex < 0) {
-      return null;
-    }
-    for (final Map<String, dynamic> connection in connections) {
-      if (connection['toNode'] != icaNode.id ||
-          (connection['toPort'] as num?)?.toInt() != signalInputIndex) {
-        continue;
-      }
-      final NodeModel? parent = _findNode(
-        connection['fromNode']?.toString() ?? '',
-      );
-      if (parent != null) {
-        return parent;
-      }
-    }
-    return null;
   }
 
   void _connectIcaTransform(NodeModel icaNode, NodeModel applyNode) {
@@ -7055,6 +7218,7 @@ class CanvasLogic {
       _addAllMatchingConnections(replacement, child);
     }
     _nodeRamSnapshots.remove(existing.id);
+    _embeddedProjectSnapshotJson.remove(existing.id);
     _nodeDiskSnapshotIds.remove(existing.id);
     _seedNodeDatasetStates(replacement);
     return replacement;
@@ -7159,6 +7323,7 @@ class CanvasLogic {
     required String datasetId,
     required Map<String, dynamic> params,
     NodeModel? insertBeforeNode,
+    bool connectSource = true,
   }) {
     final List<String> availableDatasetIds = type is AddRemoveMarkersNodeType
         ? <String>[datasetId]
@@ -7187,10 +7352,9 @@ class CanvasLogic {
       );
     }
 
-    final _PortConnection? fromConnection = _firstMatchingPortConnection(
-      sourceNode,
-      node,
-    );
+    final _PortConnection? fromConnection = connectSource
+        ? _firstMatchingPortConnection(sourceNode, node)
+        : null;
     if (fromConnection != null) {
       connections.add(<String, dynamic>{
         'fromNode': sourceNode.id,
@@ -8923,6 +9087,14 @@ class CanvasLogic {
       if (snapshots != null && snapshots.isEmpty) {
         _nodeRamSnapshots.remove(node.id);
       }
+      final Map<String, String>? embeddedSnapshots =
+          _embeddedProjectSnapshotJson[node.id];
+      if (embeddedSnapshots?.remove(dataset.id) != null) {
+        changed = true;
+      }
+      if (embeddedSnapshots != null && embeddedSnapshots.isEmpty) {
+        _embeddedProjectSnapshotJson.remove(node.id);
+      }
       if (supportsNodeSnapshotDiskStore) {
         final bool exists = await hasNodeSnapshotOnDisk(
           nodeId: node.id,
@@ -9069,6 +9241,40 @@ class CanvasLogic {
     NodeModel node,
     Dataset dataset,
   ) async {
+    final List<Map<String, dynamic>> directConnections = connections
+        .where((Map<String, dynamic> value) => value['toNode'] == node.id)
+        .toList(growable: false);
+    final Set<String> directParentIds = directConnections
+        .map(
+          (Map<String, dynamic> value) => value['fromNode']?.toString() ?? '',
+        )
+        .where((String value) => value.isNotEmpty)
+        .toSet();
+    final bool hasSignalParent = directConnections.any((
+      Map<String, dynamic> connection,
+    ) {
+      final int port = (connection['toPort'] as num?)?.toInt() ?? -1;
+      return port >= 0 &&
+          port < node.inputPorts.length &&
+          node.inputPorts[port].type == PortType.signal;
+    });
+    final bool hasIcaParent = directConnections.any((
+      Map<String, dynamic> connection,
+    ) {
+      final int port = (connection['toPort'] as num?)?.toInt() ?? -1;
+      final NodeModel? parent = _findNode(
+        connection['fromNode']?.toString() ?? '',
+      );
+      return port >= 0 &&
+          port < node.inputPorts.length &&
+          node.inputPorts[port].type == PortType.matrixTransformation &&
+          parent?.type is ICANodeType;
+    });
+    if (directParentIds.length < 2 || !hasSignalParent || !hasIcaParent) {
+      throw StateError(
+        'Apply ICA requires two explicit direct parents: an ICA transform and the signal dataset to which it will be applied.',
+      );
+    }
     final Dataset view = _datasetShell(dataset);
     bool appliedAnySnapshot = false;
     bool appliedTransform = false;
@@ -9140,44 +9346,10 @@ class CanvasLogic {
           break;
       }
     }
-    if (!appliedTransform) {
-      final String icaSourceNodeId =
-          node.params['icaSourceNodeId']?.toString() ?? '';
-      final NodeModel? icaSourceNode = _findNode(icaSourceNodeId);
-      if (icaSourceNode != null &&
-          icaSourceNode.datasetStates[dataset.id] == DatasetState.done) {
-        final DatasetArtifactSnapshot? snapshot =
-            await _loadSnapshotForNodeDataset(icaSourceNode.id, dataset.id);
-        if (snapshot?.matrixTransformation != null) {
-          DatasetArtifactSnapshot(
-            datasetLabel: snapshot!.datasetLabel,
-            matrixTransformation: snapshot.matrixTransformation,
-            includedKinds: const <BrainStoryArtifactKind>{
-              BrainStoryArtifactKind.matrixTransformation,
-            },
-          ).applyToDataset(view);
-          appliedAnySnapshot = true;
-        }
-      }
-    }
-    if (!appliedSignal) {
-      final String icaSourceNodeId =
-          node.params['icaSourceNodeId']?.toString() ?? '';
-      final NodeModel? icaSourceNode = _findNode(icaSourceNodeId);
-      final DatasetArtifactSnapshot? snapshot = icaSourceNode == null
-          ? null
-          : await _loadSnapshotForNodeDataset(icaSourceNode.id, dataset.id);
-      final TimeSeriesData? activations = snapshot?.timeSeries;
-      final MatrixTransformationData? transform =
-          view.matrixTransformation ?? snapshot?.matrixTransformation;
-      if (activations != null &&
-          transform != null &&
-          transform.matchesComponentActivations(activations) &&
-          transform.sourceChannelLabels.length ==
-              transform.originalChannelLabels.length) {
-        view.timeSeries = activations;
-        appliedAnySnapshot = true;
-      }
+    if (!appliedTransform || !appliedSignal) {
+      throw StateError(
+        'Apply ICA could not load both explicitly connected inputs for ${dataset.label}.',
+      );
     }
     if (appliedAnySnapshot) {
       _replaceDatasetRam(dataset, view);
@@ -9363,6 +9535,21 @@ class CanvasLogic {
       return ramSnapshot;
     }
 
+    final String? embeddedJson =
+        _embeddedProjectSnapshotJson[nodeId]?[datasetId];
+    if (embeddedJson != null && embeddedJson.trim().isNotEmpty) {
+      final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
+        Map<String, dynamic>.from(jsonDecode(embeddedJson) as Map),
+      );
+      if (!snapshot.isEmpty) {
+        _nodeRamSnapshots.putIfAbsent(
+          nodeId,
+          () => <String, DatasetArtifactSnapshot>{},
+        )[datasetId] = snapshot;
+        return snapshot;
+      }
+    }
+
     final String? jsonPayload = await loadNodeSnapshotJson(
       nodeId: nodeId,
       datasetId: datasetId,
@@ -9462,6 +9649,8 @@ class CanvasLogic {
         }
         final bool hasResult =
             _nodeRamSnapshots[node.id]?.containsKey(dataset.id) == true ||
+            _embeddedProjectSnapshotJson[node.id]?.containsKey(dataset.id) ==
+                true ||
             _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
         node.datasetStates[dataset.id] = hasResult
             ? rawState == DatasetState.stale
@@ -9481,6 +9670,7 @@ class CanvasLogic {
 
     final bool hasResult =
         _nodeRamSnapshots[node.id]?.containsKey(datasetId) == true ||
+        _embeddedProjectSnapshotJson[node.id]?.containsKey(datasetId) == true ||
         _nodeDiskSnapshotIds[node.id]?.contains(datasetId) == true;
     if (hasResult) {
       return DatasetState.stale;
