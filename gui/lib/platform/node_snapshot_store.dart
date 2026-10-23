@@ -52,6 +52,13 @@ Future<bool> hasNodeSnapshotOnDisk({
   return impl.hasNodeSnapshotOnDisk(nodeId: nodeId, datasetId: datasetId);
 }
 
+Future<Map<String, Object?>?> inspectNodeSnapshotOnDisk({
+  required String nodeId,
+  required String datasetId,
+}) {
+  return impl.inspectNodeSnapshotOnDisk(nodeId: nodeId, datasetId: datasetId);
+}
+
 Future<void> deleteNodeSnapshotFromDisk({
   required String nodeId,
   required String datasetId,

@@ -37,6 +37,11 @@ Future<bool> hasNodeSnapshotOnDisk({
   return false;
 }
 
+Future<Map<String, Object?>?> inspectNodeSnapshotOnDisk({
+  required String nodeId,
+  required String datasetId,
+}) async => null;
+
 Future<void> deleteNodeSnapshotFromDisk({
   required String nodeId,
   required String datasetId,

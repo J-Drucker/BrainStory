@@ -48,7 +48,20 @@ void saveNodeSnapshotMetadataJsonSync({
 }) {
   final File file = _snapshotMetadataFile(nodeId: nodeId, datasetId: datasetId);
   file.parent.createSync(recursive: true);
-  file.writeAsStringSync(jsonPayload, flush: true);
+  Map<String, dynamic> merged = <String, dynamic>{};
+  if (file.existsSync()) {
+    try {
+      merged = Map<String, dynamic>.from(
+        jsonDecode(file.readAsStringSync()) as Map,
+      );
+    } catch (_) {}
+  }
+  try {
+    merged.addAll(Map<String, dynamic>.from(jsonDecode(jsonPayload) as Map));
+    file.writeAsStringSync(jsonEncode(merged), flush: true);
+  } catch (_) {
+    file.writeAsStringSync(jsonPayload, flush: true);
+  }
 }
 
 Future<String?> loadNodeSnapshotMetadataJson({
@@ -71,6 +84,29 @@ Future<bool> hasNodeSnapshotOnDisk({
         datasetId: datasetId,
       ).exists() ||
       await _snapshotFile(nodeId: nodeId, datasetId: datasetId).exists();
+}
+
+Future<Map<String, Object?>?> inspectNodeSnapshotOnDisk({
+  required String nodeId,
+  required String datasetId,
+}) async {
+  final File compressed = _compressedSnapshotFile(
+    nodeId: nodeId,
+    datasetId: datasetId,
+  );
+  final File legacy = _snapshotFile(nodeId: nodeId, datasetId: datasetId);
+  final File? file = await compressed.exists()
+      ? compressed
+      : await legacy.exists()
+      ? legacy
+      : null;
+  if (file == null) return null;
+  final FileStat stat = await file.stat();
+  return <String, Object?>{
+    'path': file.path,
+    'bytes': stat.size,
+    'modifiedUtcMicros': stat.modified.toUtc().microsecondsSinceEpoch,
+  };
 }
 
 Future<void> deleteNodeSnapshotFromDisk({

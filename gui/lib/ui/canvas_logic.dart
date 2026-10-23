@@ -246,7 +246,13 @@ class _MemoryRowSummary {
     required this.processingLabel,
     required this.inRam,
     required this.onDisk,
+    required this.projectStatus,
     required this.precisionLabel,
+    required this.artifactLabels,
+    this.projectPath,
+    this.diskPath,
+    this.diskBytes,
+    this.diskModifiedUtcMicros,
   });
 
   final String nodeId;
@@ -257,7 +263,13 @@ class _MemoryRowSummary {
   final String processingLabel;
   final bool inRam;
   final bool onDisk;
+  final String projectStatus;
   final String precisionLabel;
+  final List<String> artifactLabels;
+  final String? projectPath;
+  final String? diskPath;
+  final int? diskBytes;
+  final int? diskModifiedUtcMicros;
 }
 
 class _DatasetUndoSnapshot {
@@ -495,7 +507,6 @@ class _CanvasUndoSnapshot {
 class _MemoryRowWidget extends StatelessWidget {
   const _MemoryRowWidget({
     required this.row,
-    required this.supportsDisk,
     this.onLoadFromDisk,
     this.onReleaseRam,
     this.onSaveToDisk,
@@ -503,164 +514,348 @@ class _MemoryRowWidget extends StatelessWidget {
   });
 
   final _MemoryRowSummary row;
-  final bool supportsDisk;
   final Future<void> Function()? onLoadFromDisk;
   final Future<void> Function()? onReleaseRam;
   final Future<void> Function()? onSaveToDisk;
   final Future<void> Function()? onPurgeDisk;
 
-  static final ButtonStyle _actionStyle = OutlinedButton.styleFrom(
-    visualDensity: VisualDensity.compact,
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-  );
-
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          '${row.nodeDescriptor} • ${row.datasetLabel}',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 5),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              flex: 2,
-              child: _MemoryStatusColumn(
-                label: 'Processing',
-                value: row.processingLabel,
-                color: switch (row.processingLabel) {
-                  'Done' => const Color(0xFF43C26B),
-                  'Ready' => const Color(0xFF5CC8FF),
-                  'Stale' => const Color(0xFFFFB347),
-                  'Partial' => const Color(0xFFC7D85A),
-                  'Running' => const Color(0xFF7FE36A),
-                  'Waiting' => const Color(0xFFC0CAD4),
-                  'Input locked' => const Color(0xFFFFD166),
-                  _ => const Color(0xFF8C98A4),
-                },
+    final Color processingColor = switch (row.processingLabel) {
+      'Done' => const Color(0xFF43C26B),
+      'Ready' => const Color(0xFF5CC8FF),
+      'Stale' => const Color(0xFFFFB347),
+      'Partial' => const Color(0xFFC7D85A),
+      'Running' => const Color(0xFF7FE36A),
+      'Waiting' => const Color(0xFFC0CAD4),
+      'Input locked' => const Color(0xFFFFD166),
+      _ => const Color(0xFF8C98A4),
+    };
+    return SizedBox(
+      height: 64,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _PersistenceTableCell(
+            width: 220,
+            child: Text(
+              row.nodeDescriptor,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 3,
-              child: _MemoryStatusColumn(
-                label: 'RAM',
-                value: row.inRam ? 'Loaded' : 'Not loaded',
+          ),
+          _PersistenceTableCell(
+            width: 160,
+            child: Text(
+              row.datasetLabel,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 220,
+            child: Text(
+              row.artifactLabels.join(', '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 100,
+            child: Text(
+              row.processingLabel,
+              style: TextStyle(
+                color: processingColor,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 90,
+            child: Text(
+              row.inRam ? 'Loaded' : 'Not loaded',
+              style: TextStyle(
                 color: row.inRam
                     ? const Color(0xFF5CC8FF)
                     : const Color(0xFF8C98A4),
-                actions: <Widget>[
-                  OutlinedButton(
-                    style: _actionStyle,
-                    onPressed: onLoadFromDisk == null
-                        ? null
-                        : () => onLoadFromDisk!(),
-                    child: const Text('Load from disk'),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 140,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  row.onDisk ? 'Cached' : 'Not cached',
+                  style: TextStyle(
+                    color: row.onDisk
+                        ? const Color(0xFF43C26B)
+                        : const Color(0xFF8C98A4),
+                    fontWeight: FontWeight.w700,
                   ),
-                  OutlinedButton(
-                    style: _actionStyle,
-                    onPressed: onReleaseRam == null
-                        ? null
-                        : () => onReleaseRam!(),
-                    child: const Text('Purge RAM'),
+                ),
+                if (row.onDisk && row.diskBytes != null)
+                  Text(
+                    _persistenceByteLabel(row.diskBytes!),
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
                   ),
-                ],
+              ],
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 150,
+            child: Text(
+              row.projectStatus,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: switch (row.projectStatus) {
+                  'Included' => const Color(0xFF43C26B),
+                  'Older copy' => const Color(0xFFFFB347),
+                  _ => const Color(0xFF8C98A4),
+                },
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 3,
-              child: _MemoryStatusColumn(
-                label: 'Disk',
-                value: row.onDisk ? 'Saved' : 'Not saved',
-                color: row.onDisk
-                    ? const Color(0xFF43C26B)
-                    : const Color(0xFF8C98A4),
-                actions: supportsDisk
-                    ? <Widget>[
-                        OutlinedButton(
-                          style: _actionStyle,
-                          onPressed: onSaveToDisk == null
-                              ? null
-                              : () => onSaveToDisk!(),
-                          child: const Text('Save to disk'),
+          ),
+          _PersistenceTableCell(
+            width: 110,
+            child: Text(
+              row.precisionLabel,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFD0B56E), fontSize: 12),
+            ),
+          ),
+          _PersistenceTableCell(
+            width: 420,
+            child: row.diskPath == null && row.projectPath == null
+                ? const Text(
+                    'No artifact copy saved',
+                    style: TextStyle(color: Colors.white38, fontSize: 12),
+                  )
+                : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      if (row.projectPath != null)
+                        _PersistenceLocation(
+                          label: 'BST',
+                          path: row.projectPath!,
                         ),
-                        OutlinedButton(
-                          style: _actionStyle,
-                          onPressed: onPurgeDisk == null
+                      if (row.diskPath != null)
+                        _PersistenceLocation(
+                          label: 'Cache',
+                          path: row.diskPath!,
+                          detail: row.diskModifiedUtcMicros == null
                               ? null
-                              : () => onPurgeDisk!(),
-                          child: const Text('Purge disk'),
+                              : 'Modified ${_persistenceDateLabel(row.diskModifiedUtcMicros!)}',
                         ),
-                      ]
-                    : const <Widget>[],
-              ),
+                    ],
+                  ),
+          ),
+          _PersistenceTableCell(
+            width: 180,
+            child: Wrap(
+              spacing: 2,
+              children: <Widget>[
+                IconButton(
+                  tooltip: 'Load from disk',
+                  onPressed: onLoadFromDisk == null
+                      ? null
+                      : () => onLoadFromDisk!(),
+                  icon: const Icon(Icons.download, size: 18),
+                ),
+                IconButton(
+                  tooltip: 'Release from RAM',
+                  onPressed: onReleaseRam == null
+                      ? null
+                      : () => onReleaseRam!(),
+                  icon: const Icon(Icons.memory, size: 18),
+                ),
+                IconButton(
+                  tooltip: 'Save to disk cache',
+                  onPressed: onSaveToDisk == null
+                      ? null
+                      : () => onSaveToDisk!(),
+                  icon: const Icon(Icons.save, size: 18),
+                ),
+                IconButton(
+                  tooltip: 'Remove disk cache copy',
+                  onPressed: onPurgeDisk == null ? null : () => onPurgeDisk!(),
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 2,
-              child: _MemoryStatusColumn(
-                label: 'Precision',
-                value: row.precisionLabel,
-                color: const Color(0xFFD0B56E),
-              ),
-            ),
-          ],
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _MemoryStatusColumn extends StatelessWidget {
-  const _MemoryStatusColumn({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.actions = const <Widget>[],
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-  final List<Widget> actions;
+class _PersistenceTableHeader extends StatelessWidget {
+  const _PersistenceTableHeader();
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: TextStyle(
-            color: color,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        if (actions.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 5),
-          Wrap(spacing: 6, runSpacing: 5, children: actions),
+    return const SizedBox(
+      height: 38,
+      child: Row(
+        children: <Widget>[
+          _PersistenceTableHeading(width: 220, label: 'Node'),
+          _PersistenceTableHeading(width: 160, label: 'Dataset'),
+          _PersistenceTableHeading(width: 220, label: 'Artifacts'),
+          _PersistenceTableHeading(width: 100, label: 'State'),
+          _PersistenceTableHeading(width: 90, label: 'RAM'),
+          _PersistenceTableHeading(width: 140, label: 'Disk cache'),
+          _PersistenceTableHeading(width: 150, label: 'BST project'),
+          _PersistenceTableHeading(width: 110, label: 'Precision'),
+          _PersistenceTableHeading(width: 420, label: 'Saved locations'),
+          _PersistenceTableHeading(width: 180, label: 'Actions'),
         ],
-      ],
+      ),
     );
   }
+}
+
+class _PersistenceLocation extends StatelessWidget {
+  const _PersistenceLocation({
+    required this.label,
+    required this.path,
+    this.detail,
+  });
+
+  final String label;
+  final String path;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 28,
+      child: Row(
+        children: <Widget>[
+          SizedBox(
+            width: 42,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Tooltip(
+              message: detail == null ? path : '$path\n$detail',
+              child: Text(
+                path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Copy $label location',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+            onPressed: () => Clipboard.setData(ClipboardData(text: path)),
+            icon: const Icon(Icons.copy, size: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PersistenceTableHeading extends StatelessWidget {
+  const _PersistenceTableHeading({required this.width, required this.label});
+
+  final double width;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        border: Border(
+          right: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.14)),
+        ),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _PersistenceTableCell extends StatelessWidget {
+  const _PersistenceTableCell({required this.width, required this.child});
+
+  final double width;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+String _persistenceByteLabel(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  final double kib = bytes / 1024;
+  if (kib < 1024) return '${kib.toStringAsFixed(1)} KB';
+  final double mib = kib / 1024;
+  if (mib < 1024) return '${mib.toStringAsFixed(1)} MB';
+  return '${(mib / 1024).toStringAsFixed(2)} GB';
+}
+
+String _persistenceDateLabel(int utcMicros) {
+  final DateTime value = DateTime.fromMicrosecondsSinceEpoch(
+    utcMicros,
+    isUtc: true,
+  ).toLocal();
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${value.year}-${two(value.month)}-${two(value.day)} '
+      '${two(value.hour)}:${two(value.minute)}';
 }
 
 class _ProcessingPolicyControl extends StatelessWidget {
@@ -1011,6 +1206,8 @@ class CanvasLogic {
   _ProjectArtifactSavePolicy _projectArtifactSavePolicy =
       _ProjectArtifactSavePolicy.pipelineOnly;
   Set<String> _projectArtifactSelections = <String>{};
+  final Set<String> _projectEmbeddedArtifactKeys = <String>{};
+  final Set<String> _projectCurrentArtifactKeys = <String>{};
 
   String? selectedNodeId;
   final Set<String> selectedNodeIds = <String>{};
@@ -1179,6 +1376,8 @@ class CanvasLogic {
     _currentBrainStoryPath = null;
     _projectArtifactSavePolicy = _ProjectArtifactSavePolicy.pipelineOnly;
     _projectArtifactSelections.clear();
+    _projectEmbeddedArtifactKeys.clear();
+    _projectCurrentArtifactKeys.clear();
     selectedNodeId = null;
     selectedNodeIds.clear();
     selectedConnectionIndex = null;
@@ -1808,12 +2007,13 @@ class CanvasLogic {
     }
 
     await _hydrateArtifactsForProjectSave(policy, selectedArtifacts);
-    final String jsonPayload = const JsonEncoder.withIndent('  ').convert(
-      exportProjectJson(
-        artifactSavePolicy: policy.name,
-        selectedArtifactKeys: selectedArtifacts,
-      ),
+    final Map<String, dynamic> projectJson = exportProjectJson(
+      artifactSavePolicy: policy.name,
+      selectedArtifactKeys: selectedArtifacts,
     );
+    final String jsonPayload = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(projectJson);
     final String? savedPath = await saveBrainStoryProject(
       suggestedName: 'brainstory_project',
       targetPath: location.path,
@@ -1822,6 +2022,25 @@ class CanvasLogic {
     if (savedPath != null) {
       _projectArtifactSavePolicy = policy;
       _projectArtifactSelections = selectedArtifacts;
+      final Set<String> savedArtifactKeys =
+          (projectJson['artifacts'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map(
+                (Map<dynamic, dynamic> artifact) => _projectArtifactKey(
+                  artifact['nodeId']?.toString() ?? '',
+                  artifact['datasetId']?.toString() ?? '',
+                ),
+              )
+              .where(
+                (String key) => !key.startsWith('::') && !key.endsWith('::'),
+              )
+              .toSet();
+      _projectEmbeddedArtifactKeys
+        ..clear()
+        ..addAll(savedArtifactKeys);
+      _projectCurrentArtifactKeys
+        ..clear()
+        ..addAll(savedArtifactKeys);
       await _rememberBrainStoryPath(savedPath);
     }
     if (context.mounted) {
@@ -2352,6 +2571,7 @@ class CanvasLogic {
 
     final List<dynamic> artifactEntries =
         jsonMap['artifacts'] as List<dynamic>? ?? const <dynamic>[];
+    final Set<String> embeddedArtifactKeys = <String>{};
     for (final dynamic rawEntry in artifactEntries) {
       final Map<String, dynamic> entry = Map<String, dynamic>.from(
         rawEntry as Map,
@@ -2360,6 +2580,7 @@ class CanvasLogic {
       final String datasetId = entry['datasetId']?.toString() ?? '';
       final dynamic rawSnapshot = entry['snapshot'];
       if (nodeId.isEmpty || datasetId.isEmpty || rawSnapshot is! Map) continue;
+      embeddedArtifactKeys.add(_projectArtifactKey(nodeId, datasetId));
       _nodeRamSnapshots.putIfAbsent(
         nodeId,
         () => <String, DatasetArtifactSnapshot>{},
@@ -2367,6 +2588,12 @@ class CanvasLogic {
         Map<String, dynamic>.from(rawSnapshot),
       );
     }
+    _projectEmbeddedArtifactKeys
+      ..clear()
+      ..addAll(embeddedArtifactKeys);
+    _projectCurrentArtifactKeys
+      ..clear()
+      ..addAll(embeddedArtifactKeys);
 
     final Set<String> importedNodeIds = nodes
         .map((NodeModel node) => node.id)
@@ -7170,6 +7397,9 @@ class CanvasLogic {
     List<String> sourceArtifactIds = const <String>[],
     bool keepRamSnapshot = true,
   }) async {
+    _projectCurrentArtifactKeys.remove(
+      _projectArtifactKey(node.id, dataset.id),
+    );
     await setRunDetail(
       'Materializing ${node.title} for ${dataset.label}...',
       phase: RunActivityPhase.finalizing,
@@ -7218,7 +7448,7 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: await encodeNodeSnapshotJson(snapshot.toJson()),
       );
-      _saveSnapshotMetadata(node.id, dataset);
+      _saveSnapshotMetadata(node.id, dataset, snapshot: snapshot);
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
@@ -8144,6 +8374,10 @@ class CanvasLogic {
             _nodeDiskSnapshotIds[node.id]?.contains(dataset.id) == true;
         final DatasetState state =
             node.datasetStates[dataset.id] ?? DatasetState.notReady;
+        final String projectArtifactKey = _projectArtifactKey(
+          node.id,
+          dataset.id,
+        );
         final bool hasRun =
             state == DatasetState.done ||
             state == DatasetState.partial ||
@@ -8151,19 +8385,50 @@ class CanvasLogic {
         if (nodeId == null && !inRam && !onDisk && !hasRun) {
           continue;
         }
-        if (!onDisk && supportsNodeSnapshotDiskStore) {
-          onDisk = await hasNodeSnapshotOnDisk(
+        Map<String, Object?>? diskInfo;
+        if (supportsNodeSnapshotDiskStore) {
+          diskInfo = await inspectNodeSnapshotOnDisk(
             nodeId: node.id,
             datasetId: dataset.id,
           );
+          onDisk = diskInfo != null;
           if (onDisk) {
             _nodeDiskSnapshotIds
                 .putIfAbsent(node.id, () => <String>{})
                 .add(dataset.id);
+          } else {
+            _nodeDiskSnapshotIds[node.id]?.remove(dataset.id);
           }
         }
         final DatasetArtifactSnapshot? snapshot =
             _nodeRamSnapshots[node.id]?[dataset.id];
+        Set<BrainStoryArtifactKind> artifactKinds = snapshot == null
+            ? <BrainStoryArtifactKind>{}
+            : _artifactKindsInSnapshot(snapshot);
+        if (artifactKinds.isEmpty && onDisk) {
+          final String? metadataJson = await loadNodeSnapshotMetadataJson(
+            nodeId: node.id,
+            datasetId: dataset.id,
+          );
+          if (metadataJson != null) {
+            try {
+              final Map<String, dynamic> metadata = Map<String, dynamic>.from(
+                jsonDecode(metadataJson) as Map,
+              );
+              final Set<String> storedKinds =
+                  (metadata['artifactKinds'] as List<dynamic>? ??
+                          const <dynamic>[])
+                      .map((dynamic value) => value.toString())
+                      .toSet();
+              artifactKinds = BrainStoryArtifactKind.values
+                  .where(
+                    (BrainStoryArtifactKind kind) =>
+                        storedKinds.contains(kind.name),
+                  )
+                  .toSet();
+            } catch (_) {}
+          }
+        }
         rows.add(
           _MemoryRowSummary(
             nodeId: node.id,
@@ -8174,11 +8439,29 @@ class CanvasLogic {
             processingLabel: _datasetProcessingLabel(node, dataset.id),
             inRam: inRam,
             onDisk: onDisk,
+            projectStatus: _projectArtifactStatus(
+              artifactKey: projectArtifactKey,
+              state: state,
+            ),
             precisionLabel: _memoryPrecisionLabel(
               node: node,
               dataset: dataset,
               snapshot: snapshot,
             ),
+            artifactLabels: artifactKinds.isEmpty
+                ? <String>[
+                    onDisk ? 'Cached output' : 'No materialized artifacts',
+                  ]
+                : (artifactKinds.map(_brainStoryArtifactLabel).toList()
+                    ..sort()),
+            projectPath:
+                _projectEmbeddedArtifactKeys.contains(projectArtifactKey)
+                ? _currentBrainStoryPath
+                : null,
+            diskPath: diskInfo?['path']?.toString(),
+            diskBytes: (diskInfo?['bytes'] as num?)?.toInt(),
+            diskModifiedUtcMicros: (diskInfo?['modifiedUtcMicros'] as num?)
+                ?.toInt(),
           ),
         );
       }
@@ -8192,6 +8475,68 @@ class CanvasLogic {
     });
     return rows;
   }
+
+  String _projectArtifactStatus({
+    required String artifactKey,
+    required DatasetState state,
+  }) {
+    if (_currentBrainStoryPath == null) return 'Project not saved';
+    if (!_projectEmbeddedArtifactKeys.contains(artifactKey)) {
+      return _projectArtifactSavePolicy ==
+              _ProjectArtifactSavePolicy.pipelineOnly
+          ? 'Pipeline only'
+          : 'Not included';
+    }
+    if (state == DatasetState.stale ||
+        !_projectCurrentArtifactKeys.contains(artifactKey)) {
+      return 'Older copy';
+    }
+    return 'Included';
+  }
+
+  Set<BrainStoryArtifactKind> _artifactKindsInSnapshot(
+    DatasetArtifactSnapshot snapshot,
+  ) {
+    return <BrainStoryArtifactKind>{
+      ...?snapshot.includedKinds,
+      ...snapshot.artifactIdentities.keys,
+      if (snapshot.timeSeries != null) BrainStoryArtifactKind.timeSeries,
+      if (snapshot.timeSeries?.channelCoordinates.isNotEmpty == true)
+        BrainStoryArtifactKind.channelCoordinates,
+      if (snapshot.markers != null ||
+          snapshot.timeSeries?.markers.isNotEmpty == true)
+        BrainStoryArtifactKind.markers,
+      if (snapshot.segmentedTimeSeries != null)
+        BrainStoryArtifactKind.segmentedTimeSeries,
+      if (snapshot.spectrum != null) BrainStoryArtifactKind.spectrum,
+      if (snapshot.fooofResult != null) BrainStoryArtifactKind.fooofResult,
+      if (snapshot.featureTable != null) BrainStoryArtifactKind.featureTable,
+      if (snapshot.gaussianMixture != null)
+        BrainStoryArtifactKind.gaussianMixture,
+      if (snapshot.bridgeDetection != null)
+        BrainStoryArtifactKind.bridgeDetection,
+      if (snapshot.timeFrequency != null) BrainStoryArtifactKind.timeFrequency,
+      if (snapshot.matrixTransformation != null)
+        BrainStoryArtifactKind.matrixTransformation,
+    };
+  }
+
+  String _brainStoryArtifactLabel(BrainStoryArtifactKind kind) =>
+      switch (kind) {
+        BrainStoryArtifactKind.timeSeries => 'Time series',
+        BrainStoryArtifactKind.markers => 'Markers',
+        BrainStoryArtifactKind.channelCoordinates => 'Coordinates',
+        BrainStoryArtifactKind.segmentedTimeSeries => 'Segments',
+        BrainStoryArtifactKind.spectrum => 'Spectrum',
+        BrainStoryArtifactKind.fooofResult => 'FOOOF',
+        BrainStoryArtifactKind.featureTable => 'Feature table',
+        BrainStoryArtifactKind.gaussianMixture => 'Gaussian mixture',
+        BrainStoryArtifactKind.bridgeDetection => 'Bridge detection',
+        BrainStoryArtifactKind.timeFrequency => 'Time-frequency',
+        BrainStoryArtifactKind.matrixTransformation => 'Transformation matrix',
+        BrainStoryArtifactKind.markerChange => 'Marker changes',
+        BrainStoryArtifactKind.unknown => 'Other',
+      };
 
   String _datasetProcessingLabel(NodeModel node, String datasetId) {
     if (_runActiveNodeId == node.id) {
@@ -8339,7 +8684,7 @@ class CanvasLogic {
         datasetId: dataset.id,
         jsonPayload: await encodeNodeSnapshotJson(snapshot.toJson()),
       );
-      _saveSnapshotMetadata(node.id, dataset);
+      _saveSnapshotMetadata(node.id, dataset, snapshot: snapshot);
       _nodeDiskSnapshotIds
           .putIfAbsent(node.id, () => <String>{})
           .add(dataset.id);
@@ -8980,11 +9325,21 @@ class CanvasLogic {
     return snapshot;
   }
 
-  void _saveSnapshotMetadata(String nodeId, Dataset dataset) {
+  void _saveSnapshotMetadata(
+    String nodeId,
+    Dataset dataset, {
+    required DatasetArtifactSnapshot snapshot,
+  }) {
     saveNodeSnapshotMetadataJsonSync(
       nodeId: nodeId,
       datasetId: dataset.id,
-      jsonPayload: jsonEncode(<String, dynamic>{'datasetLabel': dataset.label}),
+      jsonPayload: jsonEncode(<String, dynamic>{
+        'datasetLabel': dataset.label,
+        'artifactKinds': _artifactKindsInSnapshot(
+          snapshot,
+        ).map((BrainStoryArtifactKind kind) => kind.name).toList(),
+        'savedAtUtcMicros': DateTime.now().toUtc().microsecondsSinceEpoch,
+      }),
     );
   }
 
@@ -9549,8 +9904,8 @@ class CanvasLogic {
         ? 'No node outputs are available yet.'
         : 'No datasets are available for this node yet.';
     final String helperText = node == null
-        ? 'Manage every node output held in RAM or saved on disk.'
-        : 'Manage RAM and disk cache for this node only. Disabled buttons mean that dataset has nothing to load, save, or purge right now.';
+        ? 'Each row is one node output for one dataset. BST project and disk cache are separate saved copies; locations are shown exactly when available.'
+        : 'Each row is one output for this node. BST project and disk cache are separate saved copies; locations are shown exactly when available.';
 
     await showDialog<void>(
       context: context,
@@ -9604,128 +9959,172 @@ class CanvasLogic {
                             ),
                             const SizedBox(height: 8),
                             Expanded(
-                              child: ListView.separated(
-                                itemCount: rows.length,
-                                separatorBuilder: (_, __) => Divider(
-                                  height: 10,
-                                  color: Colors.white.withValues(alpha: 0.10),
+                              child: LayoutBuilder(
+                                builder: (BuildContext context, BoxConstraints constraints) => SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: SizedBox(
+                                    width: 1790,
+                                    height: constraints.maxHeight,
+                                    child: Column(
+                                      children: <Widget>[
+                                        const _PersistenceTableHeader(),
+                                        Expanded(
+                                          child: ListView.builder(
+                                            itemCount: rows.length,
+                                            itemBuilder: (BuildContext context, int index) {
+                                              final _MemoryRowSummary row =
+                                                  rows[index];
+                                              return _MemoryRowWidget(
+                                                row: row,
+                                                onLoadFromDisk: row.onDisk
+                                                    ? () async {
+                                                        final NodeModel? node =
+                                                            _findNode(
+                                                              row.nodeId,
+                                                            );
+                                                        if (node == null) {
+                                                          return;
+                                                        }
+                                                        final String message =
+                                                            await _loadNodeSnapshotsToRam(
+                                                              node: node,
+                                                              datasetIds:
+                                                                  <String>{
+                                                                    row.datasetId,
+                                                                  },
+                                                              update: update,
+                                                            );
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(
+                                                            context,
+                                                          ).showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                message,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                        await refresh(
+                                                          setDialogState,
+                                                        );
+                                                      }
+                                                    : null,
+                                                onReleaseRam: row.inRam
+                                                    ? () async {
+                                                        final NodeModel? node =
+                                                            _findNode(
+                                                              row.nodeId,
+                                                            );
+                                                        if (node == null) {
+                                                          return;
+                                                        }
+                                                        final String message =
+                                                            await _releaseNodeSnapshotsFromRam(
+                                                              node: node,
+                                                              datasetIds:
+                                                                  <String>{
+                                                                    row.datasetId,
+                                                                  },
+                                                              update: update,
+                                                            );
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(
+                                                            context,
+                                                          ).showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                message,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                        await refresh(
+                                                          setDialogState,
+                                                        );
+                                                      }
+                                                    : null,
+                                                onSaveToDisk:
+                                                    supportsNodeSnapshotDiskStore &&
+                                                        row.inRam &&
+                                                        !row.onDisk
+                                                    ? () async {
+                                                        final NodeModel? node =
+                                                            _findNode(
+                                                              row.nodeId,
+                                                            );
+                                                        if (node == null) {
+                                                          return;
+                                                        }
+                                                        final String message =
+                                                            await _saveNodeSnapshotsToDisk(
+                                                              node: node,
+                                                              datasetIds:
+                                                                  <String>{
+                                                                    row.datasetId,
+                                                                  },
+                                                              update: update,
+                                                            );
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(
+                                                            context,
+                                                          ).showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                message,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                        await refresh(
+                                                          setDialogState,
+                                                        );
+                                                      }
+                                                    : null,
+                                                onPurgeDisk:
+                                                    supportsNodeSnapshotDiskStore &&
+                                                        row.onDisk
+                                                    ? () async {
+                                                        final NodeModel? node =
+                                                            _findNode(
+                                                              row.nodeId,
+                                                            );
+                                                        if (node == null) {
+                                                          return;
+                                                        }
+                                                        final String message =
+                                                            await _deleteNodeSnapshotsFromDisk(
+                                                              node: node,
+                                                              datasetIds:
+                                                                  <String>{
+                                                                    row.datasetId,
+                                                                  },
+                                                              update: update,
+                                                            );
+                                                        if (context.mounted) {
+                                                          ScaffoldMessenger.of(
+                                                            context,
+                                                          ).showSnackBar(
+                                                            SnackBar(
+                                                              content: Text(
+                                                                message,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                        await refresh(
+                                                          setDialogState,
+                                                        );
+                                                      }
+                                                    : null,
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                                itemBuilder: (BuildContext context, int index) {
-                                  final _MemoryRowSummary row = rows[index];
-                                  return _MemoryRowWidget(
-                                    row: row,
-                                    supportsDisk: supportsNodeSnapshotDiskStore,
-                                    onLoadFromDisk: row.onDisk
-                                        ? () async {
-                                            final NodeModel? node = _findNode(
-                                              row.nodeId,
-                                            );
-                                            if (node == null) return;
-                                            final String message =
-                                                await _loadNodeSnapshotsToRam(
-                                                  node: node,
-                                                  datasetIds: <String>{
-                                                    row.datasetId,
-                                                  },
-                                                  update: update,
-                                                );
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(message),
-                                                ),
-                                              );
-                                            }
-                                            await refresh(setDialogState);
-                                          }
-                                        : null,
-                                    onReleaseRam: row.inRam
-                                        ? () async {
-                                            final NodeModel? node = _findNode(
-                                              row.nodeId,
-                                            );
-                                            if (node == null) return;
-                                            final String message =
-                                                await _releaseNodeSnapshotsFromRam(
-                                                  node: node,
-                                                  datasetIds: <String>{
-                                                    row.datasetId,
-                                                  },
-                                                  update: update,
-                                                );
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(message),
-                                                ),
-                                              );
-                                            }
-                                            await refresh(setDialogState);
-                                          }
-                                        : null,
-                                    onSaveToDisk:
-                                        supportsNodeSnapshotDiskStore &&
-                                            row.inRam &&
-                                            !row.onDisk
-                                        ? () async {
-                                            final NodeModel? node = _findNode(
-                                              row.nodeId,
-                                            );
-                                            if (node == null) return;
-                                            final String message =
-                                                await _saveNodeSnapshotsToDisk(
-                                                  node: node,
-                                                  datasetIds: <String>{
-                                                    row.datasetId,
-                                                  },
-                                                  update: update,
-                                                );
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(message),
-                                                ),
-                                              );
-                                            }
-                                            await refresh(setDialogState);
-                                          }
-                                        : null,
-                                    onPurgeDisk:
-                                        supportsNodeSnapshotDiskStore &&
-                                            row.onDisk
-                                        ? () async {
-                                            final NodeModel? node = _findNode(
-                                              row.nodeId,
-                                            );
-                                            if (node == null) return;
-                                            final String message =
-                                                await _deleteNodeSnapshotsFromDisk(
-                                                  node: node,
-                                                  datasetIds: <String>{
-                                                    row.datasetId,
-                                                  },
-                                                  update: update,
-                                                );
-                                            if (context.mounted) {
-                                              ScaffoldMessenger.of(
-                                                context,
-                                              ).showSnackBar(
-                                                SnackBar(
-                                                  content: Text(message),
-                                                ),
-                                              );
-                                            }
-                                            await refresh(setDialogState);
-                                          }
-                                        : null,
-                                  );
-                                },
                               ),
                             ),
                           ],
