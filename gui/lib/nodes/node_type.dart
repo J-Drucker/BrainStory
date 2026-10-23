@@ -455,6 +455,12 @@ abstract class NodeType {
     );
   }
 
+  ArtifactChangeSet? downstreamChangeSetForParameterChange(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) => null;
+
   bool get supportsIncrementalStaleRecompute => false;
 
   NodeParameterChangeImpact parameterChangeImpact(

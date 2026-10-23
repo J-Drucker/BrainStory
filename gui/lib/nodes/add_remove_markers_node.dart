@@ -60,6 +60,19 @@ class AddRemoveMarkersNodeType extends NodeType {
   ];
 
   @override
+  ArtifactChangeSet downstreamChangeSetForParameterChange(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {
+    return ArtifactChangeSet(
+      datasetId: dataset.id,
+      changeTypes: const <ArtifactChangeType>{ArtifactChangeType.markers},
+      description: 'Edit Markers parameters',
+    );
+  }
+
+  @override
   Widget buildBody(
     Map<String, dynamic> params, {
     required Map<String, Dataset> datasets,

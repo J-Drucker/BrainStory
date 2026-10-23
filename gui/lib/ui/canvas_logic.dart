@@ -3962,7 +3962,15 @@ class CanvasLogic {
       }
       if (impact == NodeParameterChangeImpact.computation) {
         node.datasetStates[dataset.id] = DatasetState.stale;
-        _markImmediateChildrenStale(node.id, dataset.id);
+        _markImmediateChildrenStale(
+          node.id,
+          dataset.id,
+          changeSet: node.type.downstreamChangeSetForParameterChange(
+            previousParams,
+            nextParams,
+            dataset,
+          ),
+        );
       }
     }
     update();
@@ -6206,11 +6214,37 @@ class CanvasLogic {
         }
       }
       for (final String affectedDatasetId in _datasetsForNode(existing)) {
+        final Dataset? affectedDataset = _datasetById(affectedDatasetId);
+        final Set<ArtifactChangeType> downstreamChangeTypes =
+            <ArtifactChangeType>{
+              if (hasMarkerEdits) ArtifactChangeType.markers,
+            };
+        if (hasChannelEdits && affectedDataset?.timeSeries != null) {
+          downstreamChangeTypes.addAll(
+            EditChannelsNodeType.changeSetForConfig(
+              datasetId: affectedDatasetId,
+              timeSeries: affectedDataset!.timeSeries!,
+              config: EditChannelsNodeType.executionConfigForDataset(
+                existing.params,
+                affectedDatasetId,
+              ),
+            ).changeTypes,
+          );
+        }
         existing.datasetStates[affectedDatasetId] =
             existing.datasetStates[affectedDatasetId] == DatasetState.done
             ? DatasetState.stale
             : DatasetState.ready;
-        _markImmediateChildrenStale(existing.id, affectedDatasetId);
+        _markImmediateChildrenStale(
+          existing.id,
+          affectedDatasetId,
+          changeSet: ArtifactChangeSet(
+            datasetId: affectedDatasetId,
+            sourceNodeId: existing.id,
+            changeTypes: downstreamChangeTypes,
+            description: 'Saved viewer edits',
+          ),
+        );
       }
       lastCreatedNode = existing;
       anchorNode = existing;

@@ -42,6 +42,21 @@ class EditChannelsNodeType extends NodeType {
   ];
 
   @override
+  ArtifactChangeSet? downstreamChangeSetForParameterChange(
+    Map<String, dynamic> previousParams,
+    Map<String, dynamic> nextParams,
+    Dataset dataset,
+  ) {
+    final TimeSeriesData? timeSeries = dataset.timeSeries;
+    if (timeSeries == null) return null;
+    return changeSetForConfig(
+      datasetId: dataset.id,
+      timeSeries: timeSeries,
+      config: executionConfigForDataset(nextParams, dataset.id),
+    );
+  }
+
+  @override
   Widget buildBody(
     Map<String, dynamic> params, {
     required Map<String, Dataset> datasets,

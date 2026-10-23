@@ -2624,6 +2624,75 @@ void main() {
     expect(wholeIca.datasetStates[dataset.id], DatasetState.done);
   });
 
+  test(
+    'saving marker parameters preserves marker-independent ICA fits',
+    () async {
+      final CanvasLogic logic = CanvasLogic(runUiYieldsEnabled: false);
+      final Dataset dataset =
+          Dataset('ica-saved-marker-dataset', label: 'Example')
+            ..timeSeries = TimeSeriesData(
+              channelSamples: const <List<double>>[
+                <double>[1, 2, 3, 4],
+                <double>[4, 3, 2, 1],
+              ],
+              sampleRate: 100,
+              channelLabels: const <String>['Fz', 'Cz'],
+              markers: const <TimeMarker>[
+                TimeMarker(onsetMicros: 1000, label: 'blink'),
+              ],
+            );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      logic.addNode(AddRemoveMarkersNodeType());
+      logic.addNode(ICANodeType());
+      logic.addNode(ICANodeType());
+      final NodeModel source = logic.nodes[0];
+      final NodeModel markerEdit = logic.nodes[1];
+      final NodeModel markerIca = logic.nodes[2];
+      final NodeModel wholeIca = logic.nodes[3];
+      markerIca.params['fitScope'] = 'markers';
+      wholeIca.params['fitScope'] = 'whole';
+      logic.connections.addAll(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'fromNode': source.id,
+          'fromPort': 0,
+          'toNode': markerEdit.id,
+          'toPort': 0,
+        },
+        for (final NodeModel ica in <NodeModel>[markerIca, wholeIca])
+          <String, dynamic>{
+            'fromNode': markerEdit.id,
+            'fromPort': 0,
+            'toNode': ica.id,
+            'toPort': 0,
+          },
+      ]);
+      source.datasetStates[dataset.id] = DatasetState.done;
+      markerEdit.datasetStates[dataset.id] = DatasetState.done;
+      markerIca.datasetStates[dataset.id] = DatasetState.done;
+      wholeIca.datasetStates[dataset.id] = DatasetState.done;
+
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: dataset,
+        markerEdits: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            'label': 'blink',
+            'onsetMicros': 2000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+        ],
+        saveToExistingNode: true,
+      );
+
+      expect(markerEdit.datasetStates[dataset.id], DatasetState.stale);
+      expect(markerIca.datasetStates[dataset.id], DatasetState.stale);
+      expect(wholeIca.datasetStates[dataset.id], DatasetState.done);
+    },
+  );
+
   test('node runs stamp output artifact identity and lineage', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example');
