@@ -5240,6 +5240,65 @@ time,Fz,Cz
     expect(find.text('Z'), findsOneWidget);
   });
 
+  testWidgets('Edit Channels node parameters reuse the viewer channel panel', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = Dataset('shared-channel-panel', label: 'PVT')
+      ..timeSeries = TimeSeriesData(
+        channelSamples: const <List<double>>[
+          <double>[1, 2, 3],
+          <double>[4, 5, 6],
+        ],
+        sampleRate: 100,
+        channelLabels: const <String>['Fz', 'Cz'],
+      );
+    final Map<String, dynamic> params = <String, dynamic>{
+      'selectedDatasetIds': <String>[dataset.id],
+      'channelEditsByDataset': <String, dynamic>{
+        dataset.id: <String, dynamic>{
+          'sourceChannelLabels': <String>['Fz', 'Cz'],
+          'edits': <String, dynamic>{
+            '0': <String, dynamic>{
+              'sourceLabel': 'Fz',
+              'rename': 'Frontal',
+              'remove': false,
+            },
+          },
+        },
+      },
+    };
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 1180,
+            height: 700,
+            child: StatefulBuilder(
+              builder: (BuildContext context, StateSetter setState) {
+                return EditChannelsNodeType().buildBody(
+                  params,
+                  datasets: <String, Dataset>{dataset.id: dataset},
+                  setState: setState,
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(ChannelEditPanel), findsOneWidget);
+    expect(find.text('Channel positions'), findsOneWidget);
+    expect(find.text('Configured changes'), findsOneWidget);
+    expect(find.text('Renamed: Fz -> Frontal'), findsOneWidget);
+    expect(find.text('Edit channels'), findsOneWidget);
+    expect(find.text('Re-reference'), findsOneWidget);
+    expect(find.text('Coordinates'), findsOneWidget);
+    expect(find.byType(TextField), findsWidgets);
+  });
+
   testWidgets('channel identity headers sort every channel table', (
     WidgetTester tester,
   ) async {

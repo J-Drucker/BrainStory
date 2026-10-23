@@ -185,20 +185,6 @@ class _ChannelMarkerEditConfigEditorState
     final int? fileEndMicros = series == null || series.sampleRate <= 0
         ? null
         : ((series.sampleCount / series.sampleRate) * 1000000).round();
-    final List<String> currentLabels = series == null
-        ? const <String>[]
-        : series.channelLabels.length == series.channelCount
-        ? series.channelLabels
-        : List<String>.generate(
-            series.channelCount,
-            (int index) => index < series.channelLabels.length
-                ? series.channelLabels[index]
-                : 'Ch ${index + 1}',
-          );
-    final List<String> labels = EditChannelsNodeType.channelLabelsForEditor(
-      _channelConfig,
-      currentLabels,
-    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -214,34 +200,17 @@ class _ChannelMarkerEditConfigEditorState
           child: IndexedStack(
             index: _tabController.index,
             children: <Widget>[
-              if (series == null)
-                const Center(child: Text('No time-domain channels.'))
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[
-                    if (widget.channelHeaderAction != null) ...<Widget>[
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: widget.channelHeaderAction!,
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Expanded(
-                      child: ChannelEditConfigEditor(
-                        channelLabels: labels,
-                        config: _channelConfig,
-                        initialVisibleChannelIndices:
-                            widget.initialVisibleChannelIndices,
-                        currentCoordinates: series.channelCoordinates,
-                        onChanged: (Map<String, dynamic> config) {
-                          _channelConfig = config;
-                          widget.onChannelConfigChanged(config);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+              ChannelEditPanel(
+                dataset: widget.dataset,
+                config: _channelConfig,
+                initialVisibleChannelIndices:
+                    widget.initialVisibleChannelIndices,
+                channelHeaderAction: widget.channelHeaderAction,
+                onChanged: (Map<String, dynamic> config) {
+                  _channelConfig = config;
+                  widget.onChannelConfigChanged(config);
+                },
+              ),
               MarkerLabelEditConfigEditor(
                 markers: widget.markers,
                 fileEndMicros: fileEndMicros,

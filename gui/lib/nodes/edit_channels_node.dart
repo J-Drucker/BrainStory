@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import '../ui/channel_positions_dialog.dart';
 import 'channel_coordinates_node.dart';
 import 'node_type.dart';
 
@@ -68,30 +69,26 @@ class EditChannelsNodeType extends NodeType {
       );
     }
 
-    final TimeSeriesData timeSeries = visibleDataset.timeSeries!;
     params.putIfAbsent('channelEditSourceDatasetId', () => visibleDataset.id);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          visibleDataset.label,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 10),
-        ChannelEditConfigEditor(
-          channelLabels: channelLabelsForEditor(
-            configForDataset(params, visibleDataset.id),
-            _channelLabelsForSeries(timeSeries),
+    return SizedBox(
+      height: 640,
+      child: ChannelEditPanel(
+        dataset: visibleDataset,
+        config: configForDataset(params, visibleDataset.id),
+        channelHeaderAction: Builder(
+          builder: (BuildContext context) => OutlinedButton.icon(
+            onPressed: () =>
+                showChannelPositionsDialog(context, dataset: visibleDataset),
+            icon: const Icon(Icons.public, size: 18),
+            label: const Text('Channel positions'),
           ),
-          config: configForDataset(params, visibleDataset.id),
-          currentCoordinates: timeSeries.channelCoordinates,
-          onChanged: (Map<String, dynamic> config) {
-            setState(() {
-              setConfigForDataset(params, visibleDataset.id, config);
-            });
-          },
         ),
-      ],
+        onChanged: (Map<String, dynamic> config) {
+          setState(() {
+            setConfigForDataset(params, visibleDataset.id, config);
+          });
+        },
+      ),
     );
   }
 
@@ -1054,6 +1051,53 @@ class EditChannelsNodeType extends NodeType {
         channel[sampleIndex] -= mean;
       }
     }
+  }
+}
+
+class ChannelEditPanel extends StatelessWidget {
+  const ChannelEditPanel({
+    super.key,
+    required this.dataset,
+    required this.config,
+    required this.onChanged,
+    this.initialVisibleChannelIndices,
+    this.channelHeaderAction,
+  });
+
+  final Dataset dataset;
+  final Map<String, dynamic> config;
+  final ValueChanged<Map<String, dynamic>> onChanged;
+  final List<int>? initialVisibleChannelIndices;
+  final Widget? channelHeaderAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final TimeSeriesData? series = dataset.timeSeries;
+    if (series == null) {
+      return const Center(child: Text('No time-domain channels.'));
+    }
+    final List<String> labels = EditChannelsNodeType.channelLabelsForEditor(
+      config,
+      EditChannelsNodeType._channelLabelsForSeries(series),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (channelHeaderAction != null) ...<Widget>[
+          Align(alignment: Alignment.centerRight, child: channelHeaderAction!),
+          const SizedBox(height: 8),
+        ],
+        Expanded(
+          child: ChannelEditConfigEditor(
+            channelLabels: labels,
+            config: config,
+            initialVisibleChannelIndices: initialVisibleChannelIndices,
+            currentCoordinates: series.channelCoordinates,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
   }
 }
 
