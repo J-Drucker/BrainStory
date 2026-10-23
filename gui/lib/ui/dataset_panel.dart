@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../nodes/import_node.dart';
 import 'canvas_logic.dart';
@@ -62,7 +63,7 @@ class DatasetPanel extends StatelessWidget {
               }
             },
             icon: const Icon(Icons.add),
-            label: const Text('Add files'),
+            label: Text(kIsWeb ? 'Add folder' : 'Add files'),
           ),
 
           const SizedBox(height: 12),

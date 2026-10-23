@@ -38,6 +38,7 @@ import '../nodes/visualization_node.dart';
 import '../platform/node_snapshot_store.dart';
 import '../platform/node_snapshot_codec.dart';
 import '../platform/node_artifact_export.dart';
+import '../platform/browser_folder_picker.dart';
 import '../platform/browser_source_files.dart';
 import '../platform/project_file_save.dart';
 import '../platform/recent_project_path.dart';
@@ -1397,6 +1398,10 @@ class CanvasLogic {
   }
 
   Future<void> pickFiles() async {
+    if (kIsWeb) {
+      await _pickBrowserSourceFolder();
+      return;
+    }
     final List<XFile> files = await openFiles(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(
@@ -1475,6 +1480,66 @@ class CanvasLogic {
       _markAllNodes(dataset.id, DatasetState.notReady);
       _refreshDatasetAvailability(dataset.id);
     }
+  }
+
+  Future<void> _pickBrowserSourceFolder() async {
+    final Map<String, Uint8List>? selected = await pickBrowserSourceFolder();
+    if (selected == null || selected.isEmpty) return;
+
+    final List<MapEntry<String, Uint8List>> primaryFiles = selected.entries
+        .where((MapEntry<String, Uint8List> entry) {
+          final String lower = entry.key.toLowerCase();
+          return !<String>['.fdt', '.eeg', '.vmrk'].any(lower.endsWith);
+        })
+        .toList(growable: false);
+    if (primaryFiles.isEmpty) return;
+
+    _recordUndo('import folder');
+    final String browserRoot = registerBrowserSourceFiles(selected);
+    final Map<String, int> basenameCounts = <String, int>{};
+    for (final MapEntry<String, Uint8List> entry in primaryFiles) {
+      final String basename = _browserSourceBasename(entry.key).toLowerCase();
+      basenameCounts[basename] = (basenameCounts[basename] ?? 0) + 1;
+    }
+
+    for (final MapEntry<String, Uint8List> entry in primaryFiles) {
+      final String relativePath = entry.key.replaceAll('\\', '/');
+      final String virtualPath = '$browserRoot/$relativePath';
+      final String sourceName = _browserSourceBasename(relativePath);
+      final String label = basenameCounts[sourceName.toLowerCase()] == 1
+          ? sourceName
+          : _browserSourceDisplayPath(relativePath);
+      final Dataset dataset = datasets.putIfAbsent(
+        virtualPath,
+        () => Dataset(
+          DateTime.now().microsecondsSinceEpoch.toString(),
+          label: label,
+          path: virtualPath,
+          sourceBytes: entry.value,
+        ),
+      );
+      dataset.label = label;
+      dataset.path = virtualPath;
+      dataset.sourceBytes = entry.value;
+      dataset.ram['source.filename'] = sourceName;
+      _markAllNodes(dataset.id, DatasetState.notReady);
+      _refreshDatasetAvailability(dataset.id);
+    }
+  }
+
+  String _browserSourceBasename(String path) {
+    final String normalized = path.replaceAll('\\', '/');
+    final int separator = normalized.lastIndexOf('/');
+    return separator < 0 ? normalized : normalized.substring(separator + 1);
+  }
+
+  String _browserSourceDisplayPath(String path) {
+    final List<String> parts = path
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((String part) => part.isNotEmpty)
+        .toList(growable: false);
+    return parts.length > 1 ? parts.skip(1).join('/') : path;
   }
 
   Future<void> removeDataset(String datasetId) async {

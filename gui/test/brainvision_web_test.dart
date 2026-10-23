@@ -69,4 +69,59 @@ Mk10=Response,R  1,1,1,0
     ]);
     expect(parsed.markers.last.channelMask, <int>[0, 1]);
   });
+
+  test('web BrainVision batch keeps same-named companions isolated', () async {
+    const String header = '''
+Brain Vision Data Exchange Header File Version 1.0
+[Common Infos]
+DataFile=recording.eeg
+DataFormat=BINARY
+DataOrientation=MULTIPLEXED
+NumberOfChannels=1
+SamplingInterval=1000
+
+[Binary Infos]
+BinaryFormat=INT_16
+
+[Channel Infos]
+Ch1=Cz,,
+''';
+    Uint8List samples(List<int> values) {
+      final ByteData data = ByteData(values.length * 2);
+      for (final (int index, int value) in values.indexed) {
+        data.setInt16(index * 2, value, Endian.little);
+      }
+      return data.buffer.asUint8List();
+    }
+
+    final Uint8List headerBytes = Uint8List.fromList(utf8.encode(header));
+    final String root = registerBrowserSourceFiles(<String, Uint8List>{
+      'batch/alpha/recording.vhdr': headerBytes,
+      'batch/alpha/recording.eeg': samples(<int>[1, 2]),
+      'batch/beta/recording.vhdr': headerBytes,
+      'batch/beta/recording.eeg': samples(<int>[10, 20]),
+    });
+
+    final ParsedSignalData alpha = await loadDatasetSignal(
+      '$root/batch/alpha/recording.vhdr',
+      fallbackSampleRate: 256,
+      fileBytes: headerBytes,
+    );
+    final ParsedSignalData beta = await loadDatasetSignal(
+      '$root/batch/beta/recording.vhdr',
+      fallbackSampleRate: 256,
+      fileBytes: headerBytes,
+    );
+
+    expect(alpha.samples, <double>[1, 2]);
+    expect(beta.samples, <double>[10, 20]);
+    await expectLater(
+      loadDatasetSignal(
+        '$root/batch/missing/recording.vhdr',
+        fallbackSampleRate: 256,
+        fileBytes: headerBytes,
+      ),
+      throwsFormatException,
+    );
+  });
 }

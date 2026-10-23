@@ -7,7 +7,7 @@ Future<Uint8List> readBytesFromPath(String path) async {
   final Uint8List? bytes = findBrowserSourceFile(path);
   if (bytes == null) {
     throw FormatException(
-      'Select the recording and all its companion files together using Add files. '
+      'Choose the folder containing the recording and its companion files. '
       'Missing: ${path.split('/').last}',
     );
   }

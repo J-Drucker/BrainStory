@@ -26,14 +26,21 @@ Uint8List? findBrowserSourceFile(String path) {
   final String? selectionRoot = _browserSelectionRoot(normalizedPath);
   if (selectionRoot == null) return null;
   final String requestedName = _browserBasename(normalizedPath).toLowerCase();
+  final List<Uint8List> matches = <Uint8List>[];
   for (final MapEntry<String, Uint8List> entry in browserSourceFiles.entries) {
     final String candidatePath = _normalizeBrowserPath(entry.key);
     if (candidatePath.startsWith(selectionRoot) &&
         _browserBasename(candidatePath).toLowerCase() == requestedName) {
-      return entry.value;
+      matches.add(entry.value);
     }
   }
-  return null;
+  if (matches.length > 1) {
+    throw FormatException(
+      'Multiple files named ${_browserBasename(normalizedPath)} were selected. '
+      'The BrainVision header must point to the correct relative path.',
+    );
+  }
+  return matches.isEmpty ? null : matches.single;
 }
 
 String _normalizeBrowserPath(String path) {
