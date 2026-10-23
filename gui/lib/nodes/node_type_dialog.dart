@@ -61,9 +61,9 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
   void initState() {
     super.initState();
     _tabController = TabController(
-      length: 3,
+      length: 2,
       vsync: this,
-      initialIndex: widget.initialTabIndex.clamp(0, 2),
+      initialIndex: widget.initialTabIndex == 0 ? 0 : 1,
     );
     localParams = Map<String, dynamic>.from(widget.params);
     final Set<String> selectedDatasetIds = Set<String>.from(
@@ -196,13 +196,32 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
           diskSavedDatasetIds: const <String>{},
         );
 
+    if (widget.startInExportMode) {
+      return _NodePersistenceTab(
+        datasets: datasetEntries,
+        selectedDatasetIds: selectedDatasetIds,
+        statusSnapshot: statusSnapshot,
+        params: localParams,
+        storagePolicy: NodeStoragePolicyPresentation.fromWireValue(
+          localParams['storagePolicy']?.toString(),
+        ),
+        datasetActions: widget.datasetActions,
+        onRefresh: _refreshDatasetStatuses,
+        onStoragePolicyChanged: (NodeStoragePolicy policy) {
+          setState(() {
+            localParams['storagePolicy'] = policy.wireValue;
+          });
+        },
+        startInExportMode: true,
+      );
+    }
+
     return Column(
       children: <Widget>[
         TabBar(
           controller: _tabController,
           tabs: const <Widget>[
             Tab(text: 'Parameters'),
-            Tab(text: 'Persistence'),
             Tab(text: 'Algorithm'),
           ],
         ),
@@ -248,23 +267,6 @@ class _NodeConfigDialogState extends State<_NodeConfigDialog>
                     ),
                   ],
                 ),
-              ),
-              _NodePersistenceTab(
-                datasets: datasetEntries,
-                selectedDatasetIds: selectedDatasetIds,
-                statusSnapshot: statusSnapshot,
-                params: localParams,
-                storagePolicy: NodeStoragePolicyPresentation.fromWireValue(
-                  localParams['storagePolicy']?.toString(),
-                ),
-                datasetActions: widget.datasetActions,
-                onRefresh: _refreshDatasetStatuses,
-                onStoragePolicyChanged: (NodeStoragePolicy policy) {
-                  setState(() {
-                    localParams['storagePolicy'] = policy.wireValue;
-                  });
-                },
-                startInExportMode: widget.startInExportMode,
               ),
               _NodeAlgorithmTab(review: widget.algorithmReview),
             ],

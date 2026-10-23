@@ -509,6 +509,11 @@ class _MemoryRowWidget extends StatelessWidget {
   final Future<void> Function()? onSaveToDisk;
   final Future<void> Function()? onPurgeDisk;
 
+  static final ButtonStyle _actionStyle = OutlinedButton.styleFrom(
+    visualDensity: VisualDensity.compact,
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -521,7 +526,7 @@ class _MemoryRowWidget extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 5),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -542,7 +547,7 @@ class _MemoryRowWidget extends StatelessWidget {
                 },
               ),
             ),
-            const SizedBox(width: 24),
+            const SizedBox(width: 12),
             Expanded(
               flex: 3,
               child: _MemoryStatusColumn(
@@ -553,12 +558,14 @@ class _MemoryRowWidget extends StatelessWidget {
                     : const Color(0xFF8C98A4),
                 actions: <Widget>[
                   OutlinedButton(
+                    style: _actionStyle,
                     onPressed: onLoadFromDisk == null
                         ? null
                         : () => onLoadFromDisk!(),
                     child: const Text('Load from disk'),
                   ),
                   OutlinedButton(
+                    style: _actionStyle,
                     onPressed: onReleaseRam == null
                         ? null
                         : () => onReleaseRam!(),
@@ -567,7 +574,7 @@ class _MemoryRowWidget extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 24),
+            const SizedBox(width: 12),
             Expanded(
               flex: 3,
               child: _MemoryStatusColumn(
@@ -579,12 +586,14 @@ class _MemoryRowWidget extends StatelessWidget {
                 actions: supportsDisk
                     ? <Widget>[
                         OutlinedButton(
+                          style: _actionStyle,
                           onPressed: onSaveToDisk == null
                               ? null
                               : () => onSaveToDisk!(),
                           child: const Text('Save to disk'),
                         ),
                         OutlinedButton(
+                          style: _actionStyle,
                           onPressed: onPurgeDisk == null
                               ? null
                               : () => onPurgeDisk!(),
@@ -594,7 +603,7 @@ class _MemoryRowWidget extends StatelessWidget {
                     : const <Widget>[],
               ),
             ),
-            const SizedBox(width: 24),
+            const SizedBox(width: 12),
             Expanded(
               flex: 2,
               child: _MemoryStatusColumn(
@@ -646,8 +655,8 @@ class _MemoryStatusColumn extends StatelessWidget {
           ),
         ),
         if (actions.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 8),
-          Wrap(spacing: 8, runSpacing: 8, children: actions),
+          const SizedBox(height: 5),
+          Wrap(spacing: 6, runSpacing: 5, children: actions),
         ],
       ],
     );
@@ -3155,19 +3164,14 @@ class CanvasLogic {
         }
         return;
       case 'memory':
-        _openNodeEditor(
-          context: context,
-          node: node,
-          update: update,
-          initialTabIndex: 1,
-        );
+        await showMemoryManagerDialog(context, update: update);
         return;
       case 'algorithm':
         _openNodeEditor(
           context: context,
           node: node,
           update: update,
-          initialTabIndex: 2,
+          initialTabIndex: 1,
         );
         return;
       case 'export':
@@ -3175,7 +3179,6 @@ class CanvasLogic {
           context: context,
           node: node,
           update: update,
-          initialTabIndex: 1,
           startInExportMode: true,
         );
         return;
@@ -9512,7 +9515,7 @@ class CanvasLogic {
         ? 'No node outputs are available yet.'
         : 'No datasets are available for this node yet.';
     final String helperText = node == null
-        ? 'See what each node is holding in RAM or on disk, and move cached outputs around without opening each node one-by-one.'
+        ? 'Manage every node output held in RAM or saved on disk.'
         : 'Manage RAM and disk cache for this node only. Disabled buttons mean that dataset has nothing to load, save, or purge right now.';
 
     await showDialog<void>(
@@ -9533,8 +9536,8 @@ class CanvasLogic {
               backgroundColor: Colors.grey.shade900,
               title: Text(title, style: const TextStyle(color: Colors.white)),
               content: SizedBox(
-                width: node == null ? 980 : 820,
-                height: 560,
+                width: node == null ? 1040 : 820,
+                height: math.min(620, MediaQuery.sizeOf(context).height * 0.72),
                 child: FutureBuilder<List<_MemoryRowSummary>>(
                   future: rowsFuture,
                   builder:
@@ -9565,12 +9568,12 @@ class CanvasLogic {
                               helperText,
                               style: const TextStyle(color: Colors.white70),
                             ),
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 8),
                             Expanded(
                               child: ListView.separated(
                                 itemCount: rows.length,
                                 separatorBuilder: (_, __) => Divider(
-                                  height: 18,
+                                  height: 10,
                                   color: Colors.white.withValues(alpha: 0.10),
                                 ),
                                 itemBuilder: (BuildContext context, int index) {

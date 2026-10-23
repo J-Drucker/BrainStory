@@ -2103,7 +2103,6 @@ void main() {
       'unavailable-dialog-dataset',
       label: 'Hidden sibling dataset',
     );
-    int saveToDiskCalls = 0;
     Future<String> action(Map<String, dynamic> _, Set<String> __) async => 'ok';
     final NodeDatasetActions datasetActions = NodeDatasetActions(
       supportsDisk: true,
@@ -2159,11 +2158,7 @@ void main() {
       clearResults: action,
       loadFromDisk: action,
       purgeActiveMemory: action,
-      saveToDisk: (Map<String, dynamic> _, Set<String> datasetIds) async {
-        saveToDiskCalls++;
-        expect(datasetIds, <String>{'dialog-dataset'});
-        return 'saved';
-      },
+      saveToDisk: action,
       purgeFromDisk: action,
     );
 
@@ -2208,31 +2203,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Save & Run'), findsOneWidget);
     expect(find.text('Parameters'), findsOneWidget);
-    expect(find.text('Persistence'), findsOneWidget);
+    expect(find.text('Persistence'), findsNothing);
+    expect(find.text('Algorithm'), findsOneWidget);
     expect(find.text('PVT'), findsOneWidget);
     expect(find.text('Hidden sibling dataset'), findsNothing);
 
-    await tester.tap(find.text('Persistence'));
+    await tester.tap(find.text('Algorithm'));
     await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey<String>('node-persistence-tab-content')),
+      find.text(
+        'No reviewed algorithm description has been attached to this node yet.',
+      ),
       findsOneWidget,
     );
-    expect(find.text('Connected node'), findsOneWidget);
-    expect(find.text('Time series'), findsNWidgets(2));
-    expect(find.text('Ready'), findsOneWidget);
-    expect(find.text('Done'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Persistence actions'));
-    await tester.pumpAndSettle();
-    expect(find.text('Load into memory'), findsOneWidget);
-    expect(find.text('Save to disk'), findsOneWidget);
-    expect(find.text('Release from memory'), findsOneWidget);
-    expect(find.text('Remove disk copy'), findsOneWidget);
-    expect(find.text('Recompute'), findsOneWidget);
-    await tester.tap(find.text('Save to disk'));
-    await tester.pumpAndSettle();
-    expect(saveToDiskCalls, 1);
 
     await tester.tap(find.text('Parameters'));
     await tester.pumpAndSettle();
