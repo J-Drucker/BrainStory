@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'browser_source_files.dart';
 
 Future<Uint8List> readBytesFromPath(String path) async {
-  final Uint8List? bytes = browserSourceFiles[path];
+  final Uint8List? bytes = findBrowserSourceFile(path);
   if (bytes == null) {
     throw FormatException(
       'Select the recording and all its companion files together using Add files. '

@@ -43,7 +43,8 @@ class ImportNodeType extends NodeType {
       'imports use BrainStory\'s bundled native LIBEEP reader and preserve '
       'markers and impedance measurements. For BrainVision imports, select '
       'the .vhdr file and BrainStory will use the sibling .eeg and .vmrk '
-      'automatically. For EEGLAB imports, select either file from the pair; '
+      'automatically. In the web app, select all three BrainVision files '
+      'together. For EEGLAB imports, select either file from the pair; '
       'BrainStory will normalize to the .set metadata file and use the sibling '
       '.fdt automatically. BrainStory infers timing when possible and falls '
       'back to its internal default when necessary. Multi-channel text tables '
@@ -368,7 +369,11 @@ Future<ParsedSignalData> loadDatasetSignal(
         : await readTextFromPath(vmrkPath);
     final List<TimeMarker> markers = vmrkText.trim().isEmpty
         ? const <TimeMarker>[]
-        : parseBrainVisionMarkerText(vmrkText, sampleRate: header.sampleRate);
+        : parseBrainVisionMarkerText(
+            vmrkText,
+            sampleRate: header.sampleRate,
+            channelCount: header.channelCount,
+          );
     return parseBrainVisionEegBytes(
       eegBytes,
       metadata: header,
@@ -537,13 +542,16 @@ ParsedBrainVisionHeader parseBrainVisionHeaderText(
 List<TimeMarker> parseBrainVisionMarkerText(
   String text, {
   required double sampleRate,
+  int? channelCount,
 }) {
   final Map<String, Map<String, String>> sections = _parseIniSections(text);
   final Map<String, String> markerSection =
       sections['Marker Infos'] ?? const <String, String>{};
-  final List<String> keys = markerSection.keys.toList(growable: false)..sort();
-  final List<TimeMarker> markers = <TimeMarker>[];
-  for (final String key in keys) {
+  final List<String> keys = markerSection.keys.toList(growable: false)
+    ..sort(_compareBrainVisionMarkerKeys);
+  final List<({int sequence, TimeMarker marker})> parsed =
+      <({int sequence, TimeMarker marker})>[];
+  for (final (int sequence, String key) in keys.indexed) {
     if (!key.toLowerCase().startsWith('mk')) {
       continue;
     }
@@ -555,8 +563,9 @@ List<TimeMarker> parseBrainVisionMarkerText(
     if (parts.length < 3) {
       continue;
     }
-    final String kind = parts[0].trim();
-    final String label = parts[1].trim().isEmpty ? kind : parts[1].trim();
+    final String kind = _decodeBrainVisionText(parts[0].trim());
+    final String decodedLabel = _decodeBrainVisionText(parts[1].trim());
+    final String label = decodedLabel.isEmpty ? kind : decodedLabel;
     final int position = int.tryParse(parts[2].trim()) ?? 0;
     final int points = parts.length >= 4
         ? (int.tryParse(parts[3].trim()) ?? 0)
@@ -565,18 +574,47 @@ List<TimeMarker> parseBrainVisionMarkerText(
       continue;
     }
     final String markerType = _brainVisionMarkerType(kind, label);
-    markers.add(
-      TimeMarker(
+    final int channel = parts.length >= 5
+        ? (int.tryParse(parts[4].trim()) ?? 0)
+        : 0;
+    final List<int> channelMask =
+        channelCount != null &&
+            channelCount > 0 &&
+            channel > 0 &&
+            channel <= channelCount
+        ? List<int>.generate(
+            channelCount,
+            (int index) => index == channel - 1 ? 1 : 0,
+            growable: false,
+          )
+        : const <int>[];
+    parsed.add((
+      sequence: sequence,
+      marker: TimeMarker(
         onsetMicros: (((position - 1) / sampleRate) * 1000000.0).round(),
         durationMicros: markerType == MarkerType.event
             ? 0
             : ((math.max(0, points) / sampleRate) * 1000000.0).round(),
         label: label,
         markerType: markerType,
+        channelMask: channelMask,
+        attributes: <String, dynamic>{
+          'brainstory.importSource': 'brainvision_vmrk',
+          'brainvision.markerKey': key,
+          'brainvision.markerType': kind,
+          if (parts.length >= 6 && parts[5].trim().isNotEmpty)
+            'brainvision.date': parts[5].trim(),
+        },
       ),
-    );
+    ));
   }
-  return markers;
+  parsed.sort((a, b) {
+    final int onset = a.marker.onsetMicros.compareTo(b.marker.onsetMicros);
+    return onset != 0 ? onset : a.sequence.compareTo(b.sequence);
+  });
+  return parsed
+      .map((({int sequence, TimeMarker marker}) value) => value.marker)
+      .toList(growable: false);
 }
 
 ParsedSignalData parseBrainVisionEegBytes(
@@ -923,6 +961,27 @@ List<String> _splitBrainVisionCsv(String line) {
   return parts;
 }
 
+int _compareBrainVisionMarkerKeys(String a, String b) {
+  int? number(String value) {
+    final Match? match = RegExp(
+      r'^(?:mk)?(\d+)$',
+      caseSensitive: false,
+    ).firstMatch(value.trim());
+    return match == null ? null : int.tryParse(match.group(1)!);
+  }
+
+  final int? aNumber = number(a);
+  final int? bNumber = number(b);
+  if (aNumber != null && bNumber != null) {
+    return aNumber.compareTo(bNumber);
+  }
+  if (aNumber != null) return -1;
+  if (bNumber != null) return 1;
+  return a.compareTo(b);
+}
+
+String _decodeBrainVisionText(String value) => value.replaceAll(r'\1', ',');
+
 String _brainVisionMarkerType(String kind, String label) {
   final String lowerKind = kind.toLowerCase();
   final String lowerLabel = label.toLowerCase();
@@ -1170,6 +1229,13 @@ String _resolveSiblingPath({
     preferredSeparator: separator,
   );
   if (_isAbsolutePathLike(normalizedSibling)) {
+    if (normalizedBase.startsWith('/selected/')) {
+      final int separatorIndex = normalizedBase.lastIndexOf(separator);
+      final String baseDirectory = separatorIndex < 0
+          ? ''
+          : normalizedBase.substring(0, separatorIndex + 1);
+      return '$baseDirectory${_lastPathSegment(normalizedSibling)}';
+    }
     return normalizedSibling;
   }
   final int separatorIndex = normalizedBase.lastIndexOf(separator);

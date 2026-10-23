@@ -13,7 +13,15 @@ void main() {
       'recording.vmrk': Uint8List.fromList('markers'.codeUnits),
     });
     expect(await readBytesFromPath('$root/recording.eeg'), <int>[1, 2, 3]);
+    expect(await readBytesFromPath('$root/header/path/RECORDING.EEG'), <int>[
+      1,
+      2,
+      3,
+    ]);
     expect(await readTextFromPath('$root/recording.vmrk'), 'markers');
-    await expectLater(readBytesFromPath('$root/missing.eeg'), throwsFormatException);
+    await expectLater(
+      readBytesFromPath('$root/missing.eeg'),
+      throwsFormatException,
+    );
   });
 }
