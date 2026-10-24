@@ -41,6 +41,7 @@ import '../platform/node_artifact_export.dart';
 import '../platform/browser_folder_picker.dart';
 import '../platform/browser_source_files.dart';
 import '../platform/project_file_save.dart';
+import '../platform/project_json_decoder.dart';
 import '../platform/recent_project_path.dart';
 import 'connection_painter.dart';
 import 'node_card.dart';
@@ -2436,8 +2437,8 @@ class CanvasLogic {
   }) async {
     onProgress?.call('Reading project structure...');
     await Future<void>.delayed(Duration.zero);
-    final Map<String, dynamic> jsonMap = Map<String, dynamic>.from(
-      jsonDecode(jsonPayload) as Map,
+    final Map<String, dynamic> jsonMap = await decodeBrainStoryProjectJson(
+      jsonPayload,
     );
     onProgress?.call('Restoring datasets and nodes...');
     await Future<void>.delayed(Duration.zero);
@@ -2812,14 +2813,17 @@ class CanvasLogic {
       final String nodeId = entry['nodeId']?.toString() ?? '';
       final String datasetId = entry['datasetId']?.toString() ?? '';
       final dynamic rawSnapshot = entry['snapshot'];
-      if (nodeId.isEmpty || datasetId.isEmpty || rawSnapshot is! Map) continue;
+      final String? snapshotJson = entry['snapshotJson']?.toString();
+      if (nodeId.isEmpty ||
+          datasetId.isEmpty ||
+          (rawSnapshot is! Map && snapshotJson == null)) {
+        continue;
+      }
       embeddedArtifactKeys.add(_projectArtifactKey(nodeId, datasetId));
       _embeddedProjectSnapshotJson.putIfAbsent(
         nodeId,
         () => <String, String>{},
-      )[datasetId] = jsonEncode(
-        rawSnapshot,
-      );
+      )[datasetId] = snapshotJson ?? jsonEncode(rawSnapshot);
     }
     _projectEmbeddedArtifactKeys
       ..clear()

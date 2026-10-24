@@ -30,10 +30,22 @@ Future<void> writeRecentBrainStoryPath(String? path) async {
 }
 
 File _recentProjectFile() {
+  final String? home = Platform.environment['HOME'];
+  if (Platform.isMacOS && home != null && home.trim().isNotEmpty) {
+    return File(
+      '$home/Library/Application Support/BrainStory/recent_project.txt',
+    );
+  }
+  if (Platform.isLinux && home != null && home.trim().isNotEmpty) {
+    return File('$home/.local/share/BrainStory/recent_project.txt');
+  }
   final String appData =
       Platform.environment['APPDATA'] ??
       Platform.environment['LOCALAPPDATA'] ??
       Platform.environment['USERPROFILE'] ??
       Directory.current.path;
-  return File('$appData\\BrainStory\\recent_project.txt');
+  return File(
+    '$appData${Platform.pathSeparator}BrainStory'
+    '${Platform.pathSeparator}recent_project.txt',
+  );
 }
