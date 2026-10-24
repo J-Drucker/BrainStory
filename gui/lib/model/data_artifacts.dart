@@ -1315,6 +1315,8 @@ class GaussianMixtureData {
     required this.normalizationMean,
     required this.normalizationScale,
     this.assessmentVariables = const <String>[],
+    this.assessmentValues = const <String, List<String>>{},
+    this.candidateModels = const <GaussianMixtureData>[],
     this.projection,
     this.source = '',
   });
@@ -1334,6 +1336,8 @@ class GaussianMixtureData {
   final List<double> normalizationMean;
   final List<double> normalizationScale;
   final List<String> assessmentVariables;
+  final Map<String, List<String>> assessmentValues;
+  final List<GaussianMixtureData> candidateModels;
   final GaussianMixtureProjectionData? projection;
   final String source;
 
@@ -1356,6 +1360,11 @@ class GaussianMixtureData {
     'normalizationMean': normalizationMean,
     'normalizationScale': normalizationScale,
     'assessmentVariables': assessmentVariables,
+    'assessmentValues': assessmentValues,
+    if (candidateModels.isNotEmpty)
+      'candidateModels': candidateModels
+          .map((GaussianMixtureData model) => model.toJson())
+          .toList(growable: false),
     if (projection != null) 'projection': projection!.toJson(),
     'source': source,
   };
@@ -1393,6 +1402,24 @@ class GaussianMixtureData {
       assessmentVariables:
           (json['assessmentVariables'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
+              .toList(growable: false),
+      assessmentValues:
+          (json['assessmentValues'] as Map? ?? const <dynamic, dynamic>{}).map(
+            (dynamic key, dynamic value) => MapEntry<String, List<String>>(
+              key.toString(),
+              (value as List<dynamic>? ?? const <dynamic>[])
+                  .map((dynamic item) => item.toString())
+                  .toList(growable: false),
+            ),
+          ),
+      candidateModels:
+          (json['candidateModels'] as List<dynamic>? ?? const <dynamic>[])
+              .whereType<Map>()
+              .map(
+                (Map value) => GaussianMixtureData.fromJson(
+                  Map<String, dynamic>.from(value),
+                ),
+              )
               .toList(growable: false),
       projection: json['projection'] is Map
           ? GaussianMixtureProjectionData.fromJson(

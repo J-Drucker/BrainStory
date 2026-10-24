@@ -34,8 +34,29 @@ class _UnsupervisedClusteringViewerState
   bool _playing = false;
   double _manualSlicePosition = 0.5;
   bool _secondaryDragging = false;
+  int? _selectedComponentCount;
+  String? _selectedAssessmentVariable;
 
-  GaussianMixtureData? get _model => widget.dataset.gaussianMixture;
+  GaussianMixtureData? get _rootModel => widget.dataset.gaussianMixture;
+  List<GaussianMixtureData> get _models {
+    final GaussianMixtureData? root = _rootModel;
+    if (root == null) return const <GaussianMixtureData>[];
+    return <GaussianMixtureData>[root, ...root.candidateModels]..sort(
+      (GaussianMixtureData left, GaussianMixtureData right) =>
+          left.componentCount.compareTo(right.componentCount),
+    );
+  }
+
+  GaussianMixtureData? get _model {
+    final List<GaussianMixtureData> models = _models;
+    if (models.isEmpty) return null;
+    return models.firstWhere(
+      (GaussianMixtureData model) =>
+          model.componentCount == _selectedComponentCount,
+      orElse: () => _rootModel!,
+    );
+  }
+
   GaussianMixtureProjectionData? get _projection => _model?.projection;
 
   @override
@@ -78,6 +99,7 @@ class _UnsupervisedClusteringViewerState
             model: model,
             projection: projection,
             canSliceFourth: canSliceFourth,
+            models: _models,
           ),
           if (_useFourthComponent && canSliceFourth)
             _buildSliceControls(
@@ -144,6 +166,7 @@ class _UnsupervisedClusteringViewerState
                           : null,
                       fourthRange: fourthRange,
                       hoverPosition: _hoverPosition,
+                      assessmentVariable: _selectedAssessmentVariable,
                     ),
                     child: const SizedBox.expand(),
                   ),
@@ -160,6 +183,7 @@ class _UnsupervisedClusteringViewerState
     required GaussianMixtureData model,
     required GaussianMixtureProjectionData projection,
     required bool canSliceFourth,
+    required List<GaussianMixtureData> models,
   }) {
     final String explained = projection.explainedVarianceRatios
         .take(3)
@@ -167,66 +191,117 @@ class _UnsupervisedClusteringViewerState
         .join(' / ');
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  '${model.componentCount} Gaussian components',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  'PC1 / PC2 / PC3 variance: $explained',
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-              ],
+          Text(
+            '${model.componentCount} Gaussian components',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          Tooltip(
-            message: 'Show observations',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Icon(Icons.scatter_plot, size: 18, color: Colors.white70),
-                Switch(
-                  key: const ValueKey<String>('clustering-observations-toggle'),
-                  value: _showObservations,
-                  onChanged: (bool value) {
-                    setState(() => _showObservations = value);
+          Text(
+            'PC1 / PC2 / PC3 variance: $explained  ·  '
+            'AIC ${model.aic.toStringAsFixed(1)}  ·  '
+            'BIC ${model.bic.toStringAsFixed(1)}',
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: <Widget>[
+              if (models.length > 1)
+                DropdownButton<int>(
+                  key: const ValueKey<String>('clustering-k-selector'),
+                  value: model.componentCount,
+                  underline: const SizedBox.shrink(),
+                  items: <DropdownMenuItem<int>>[
+                    for (final GaussianMixtureData candidate in models)
+                      DropdownMenuItem<int>(
+                        value: candidate.componentCount,
+                        child: Text(
+                          'k = ${candidate.componentCount}  ·  '
+                          'BIC ${candidate.bic.toStringAsFixed(1)}',
+                        ),
+                      ),
+                  ],
+                  onChanged: (int? value) {
+                    if (value == null) return;
+                    setState(() => _selectedComponentCount = value);
                   },
                 ),
-              ],
-            ),
-          ),
-          if (canSliceFourth)
-            Tooltip(
-              message: 'Use PC4 slice',
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const Text('4D', style: TextStyle(color: Colors.white70)),
-                  Switch(
-                    key: const ValueKey<String>('clustering-pc4-toggle'),
-                    value: _useFourthComponent,
-                    onChanged: (bool value) {
-                      setState(() {
-                        _useFourthComponent = value;
-                        if (!value) _stopPlayback();
-                      });
-                    },
-                  ),
-                ],
+              if (model.assessmentVariables.isNotEmpty)
+                DropdownButton<String?>(
+                  key: const ValueKey<String>('clustering-label-selector'),
+                  value: _selectedAssessmentVariable,
+                  hint: const Text('Labels hidden'),
+                  underline: const SizedBox.shrink(),
+                  items: <DropdownMenuItem<String?>>[
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Labels hidden'),
+                    ),
+                    for (final String variable in model.assessmentVariables)
+                      DropdownMenuItem<String?>(
+                        value: variable,
+                        child: Text('Label: $variable'),
+                      ),
+                  ],
+                  onChanged: (String? value) {
+                    setState(() => _selectedAssessmentVariable = value);
+                  },
+                ),
+              Tooltip(
+                message: 'Show observations',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(
+                      Icons.scatter_plot,
+                      size: 18,
+                      color: Colors.white70,
+                    ),
+                    Switch(
+                      key: const ValueKey<String>(
+                        'clustering-observations-toggle',
+                      ),
+                      value: _showObservations,
+                      onChanged: (bool value) {
+                        setState(() => _showObservations = value);
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-          IconButton(
-            tooltip: 'Reset view',
-            onPressed: _resetView,
-            icon: const Icon(Icons.center_focus_strong),
+              if (canSliceFourth)
+                Tooltip(
+                  message: 'Use PC4 slice',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Text('4D', style: TextStyle(color: Colors.white70)),
+                      Switch(
+                        key: const ValueKey<String>('clustering-pc4-toggle'),
+                        value: _useFourthComponent,
+                        onChanged: (bool value) {
+                          setState(() {
+                            _useFourthComponent = value;
+                            if (!value) _stopPlayback();
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              IconButton(
+                tooltip: 'Reset view',
+                onPressed: _resetView,
+                icon: const Icon(Icons.center_focus_strong),
+              ),
+            ],
           ),
         ],
       ),
@@ -318,6 +393,7 @@ class _ClusteringPainter extends CustomPainter {
     required this.fourthValue,
     required this.fourthRange,
     required this.hoverPosition,
+    required this.assessmentVariable,
   });
 
   final GaussianMixtureData model;
@@ -330,6 +406,7 @@ class _ClusteringPainter extends CustomPainter {
   final double? fourthValue;
   final _Range fourthRange;
   final Offset? hoverPosition;
+  final String? assessmentVariable;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -351,6 +428,7 @@ class _ClusteringPainter extends CustomPainter {
         ? _drawObservations(canvas, transform)
         : const <_ProjectedObservation>[];
     _drawLegend(canvas, size);
+    _drawAssessmentLegend(canvas, size);
     _drawHover(canvas, size, points);
   }
 
@@ -526,6 +604,11 @@ class _ClusteringPainter extends CustomPainter {
               cluster < model.probabilities[index].length
           ? model.probabilities[index][cluster]
           : 0;
+      final String? assessmentValue =
+          assessmentVariable == null ||
+              index >= (model.assessmentValues[assessmentVariable]?.length ?? 0)
+          ? null
+          : model.assessmentValues[assessmentVariable]![index];
       points.add(
         _ProjectedObservation(
           index: index,
@@ -533,6 +616,7 @@ class _ClusteringPainter extends CustomPainter {
           probability: probability,
           point: point,
           visibility: visibility,
+          assessmentValue: assessmentValue,
         ),
       );
     }
@@ -545,16 +629,116 @@ class _ClusteringPainter extends CustomPainter {
         observation.cluster,
         model.componentCount,
       );
-      canvas.drawCircle(
+      _drawObservationGlyph(
+        canvas,
         observation.point.offset,
-        1.7,
-        Paint()
-          ..color = color.withValues(
-            alpha: observation.visibility.clamp(0.08, 1),
-          ),
+        color.withValues(alpha: observation.visibility.clamp(0.08, 1)),
+        observation.assessmentValue,
       );
     }
     return points;
+  }
+
+  void _drawObservationGlyph(
+    Canvas canvas,
+    Offset center,
+    Color color,
+    String? assessmentValue,
+  ) {
+    final Paint paint = Paint()..color = color;
+    if (assessmentValue == null) {
+      canvas.drawCircle(center, 1.7, paint);
+      return;
+    }
+    final int shape =
+        assessmentValue.codeUnits.fold<int>(
+          0,
+          (int sum, int code) => sum + code,
+        ) %
+        4;
+    switch (shape) {
+      case 0:
+        canvas.drawCircle(center, 2.2, paint);
+        return;
+      case 1:
+        canvas.drawRect(
+          Rect.fromCenter(center: center, width: 4.2, height: 4.2),
+          paint,
+        );
+        return;
+      case 2:
+        canvas.drawPath(
+          Path()
+            ..moveTo(center.dx, center.dy - 2.7)
+            ..lineTo(center.dx + 2.5, center.dy + 2.1)
+            ..lineTo(center.dx - 2.5, center.dy + 2.1)
+            ..close(),
+          paint,
+        );
+        return;
+      default:
+        canvas.drawPath(
+          Path()
+            ..moveTo(center.dx, center.dy - 2.8)
+            ..lineTo(center.dx + 2.8, center.dy)
+            ..lineTo(center.dx, center.dy + 2.8)
+            ..lineTo(center.dx - 2.8, center.dy)
+            ..close(),
+          paint,
+        );
+        return;
+    }
+  }
+
+  void _drawAssessmentLegend(Canvas canvas, Size size) {
+    final String? variable = assessmentVariable;
+    if (variable == null) return;
+    final List<String> values =
+        (model.assessmentValues[variable] ?? const <String>[])
+            .where((String value) => value.isNotEmpty)
+            .toSet()
+            .take(8)
+            .toList(growable: false);
+    if (values.isEmpty) return;
+    const double lineHeight = 18;
+    final double boxWidth = math.min(180, size.width * 0.3);
+    final Rect box = Rect.fromLTWH(
+      size.width - boxWidth - 12,
+      12,
+      boxWidth,
+      28 + values.length * lineHeight,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box, const Radius.circular(4)),
+      Paint()..color = const Color(0xC8141519),
+    );
+    final TextPainter title = TextPainter(
+      text: TextSpan(
+        text: variable,
+        style: const TextStyle(color: Colors.white70, fontSize: 11),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: boxWidth - 20);
+    title.paint(canvas, box.topLeft + const Offset(10, 7));
+    for (int index = 0; index < values.length; index++) {
+      final double y = box.top + 28 + index * lineHeight + lineHeight / 2;
+      _drawObservationGlyph(
+        canvas,
+        Offset(box.left + 13, y),
+        Colors.white,
+        values[index],
+      );
+      final TextPainter label = TextPainter(
+        text: TextSpan(
+          text: values[index],
+          style: const TextStyle(color: Colors.white70, fontSize: 10),
+        ),
+        maxLines: 1,
+        ellipsis: '…',
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: boxWidth - 34);
+      label.paint(canvas, Offset(box.left + 24, y - label.height / 2));
+    }
   }
 
   void _drawLegend(Canvas canvas, Size size) {
@@ -601,7 +785,9 @@ class _ClusteringPainter extends CustomPainter {
     final TextPainter text = TextPainter(
       text: TextSpan(
         text:
-            'Observation ${nearest.index + 1}\nCluster ${nearest.cluster + 1}  ${(nearest.probability * 100).toStringAsFixed(1)}%',
+            'Observation ${nearest.index + 1}\n'
+            'Cluster ${nearest.cluster + 1}  ${(nearest.probability * 100).toStringAsFixed(1)}%'
+            '${nearest.assessmentValue == null ? '' : '\n$assessmentVariable: ${nearest.assessmentValue}'}',
         style: const TextStyle(color: Colors.white, fontSize: 11, height: 1.3),
       ),
       textDirection: TextDirection.ltr,
@@ -677,7 +863,8 @@ class _ClusteringPainter extends CustomPainter {
       oldDelegate.pan != pan ||
       oldDelegate.showObservations != showObservations ||
       oldDelegate.fourthValue != fourthValue ||
-      oldDelegate.hoverPosition != hoverPosition;
+      oldDelegate.hoverPosition != hoverPosition ||
+      oldDelegate.assessmentVariable != assessmentVariable;
 }
 
 class _SceneTransform {
@@ -826,6 +1013,7 @@ class _ProjectedObservation {
     required this.probability,
     required this.point,
     required this.visibility,
+    required this.assessmentValue,
   });
 
   final int index;
@@ -833,6 +1021,7 @@ class _ProjectedObservation {
   final double probability;
   final _ScreenPoint point;
   final double visibility;
+  final String? assessmentValue;
 }
 
 class _ScreenPoint {

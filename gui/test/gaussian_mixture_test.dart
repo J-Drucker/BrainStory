@@ -239,6 +239,9 @@ void main() {
     await GaussianMixtureNodeType().run(dataset, <String, dynamic>{
       ...GaussianMixtureNodeType().defaultParams,
       'componentCount': 2,
+      'sweepComponents': true,
+      'minimumComponentCount': 1,
+      'maximumComponentCount': 3,
     });
 
     expect(dataset.gaussianMixture?.featureColumns, <String>[
@@ -250,6 +253,18 @@ void main() {
     expect(dataset.featureTable?.rows.first['label'], 'low');
     expect(dataset.featureTable?.rows.first, contains('gmm_cluster'));
     expect(dataset.gaussianMixture?.projection?.observations, hasLength(4));
+    expect(
+      dataset.gaussianMixture?.candidateModels.map(
+        (GaussianMixtureData model) => model.componentCount,
+      ),
+      <int>[1, 3],
+    );
+    expect(dataset.gaussianMixture?.assessmentValues['label'], <String>[
+      'low',
+      'low',
+      'high',
+      'high',
+    ]);
     expect(
       dataset.gaussianMixture?.projection?.explainedVarianceRatios,
       isNotEmpty,
@@ -314,6 +329,57 @@ void main() {
       standardized: true,
       normalizationMean: <double>[0, 0, 0, 0],
       normalizationScale: <double>[1, 1, 1, 1],
+      assessmentVariables: <String>['label'],
+      assessmentValues: <String, List<String>>{
+        'label': <String>['control', 'case'],
+      },
+      candidateModels: <GaussianMixtureData>[
+        GaussianMixtureData(
+          featureColumns: <String>['a', 'b', 'c', 'd'],
+          assignments: <int>[0, 0],
+          probabilities: <List<double>>[
+            <double>[1],
+            <double>[1],
+          ],
+          weights: <double>[1],
+          means: <List<double>>[
+            <double>[0, 0, 0, 0],
+          ],
+          variances: <List<double>>[
+            <double>[1, 1, 1, 1],
+          ],
+          converged: true,
+          iterationCount: 2,
+          logLikelihood: -3,
+          aic: 12,
+          bic: 13,
+          standardized: true,
+          normalizationMean: <double>[0, 0, 0, 0],
+          normalizationScale: <double>[1, 1, 1, 1],
+          assessmentVariables: <String>['label'],
+          assessmentValues: <String, List<String>>{
+            'label': <String>['control', 'case'],
+          },
+          projection: GaussianMixtureProjectionData(
+            observations: <List<double>>[
+              <double>[-1, -1, 0, -0.5],
+              <double>[1, 1, 0, 0.5],
+            ],
+            componentMeans: <List<double>>[
+              <double>[0, 0, 0, 0],
+            ],
+            componentCovariances: <List<List<double>>>[
+              <List<double>>[
+                <double>[1, 0, 0, 0],
+                <double>[0, 1, 0, 0],
+                <double>[0, 0, 1, 0],
+                <double>[0, 0, 0, 1],
+              ],
+            ],
+            explainedVarianceRatios: <double>[0.5, 0.3, 0.15, 0.05],
+          ),
+        ),
+      ],
       projection: GaussianMixtureProjectionData(
         observations: <List<double>>[
           <double>[-1, -1, 0, -0.5],
@@ -362,6 +428,27 @@ void main() {
       find.byKey(const ValueKey<String>('clustering-pc4-slider')),
       findsNothing,
     );
+    expect(
+      find.byKey(const ValueKey<String>('clustering-k-selector')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('clustering-label-selector')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('clustering-k-selector')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('k = 1').last);
+    await tester.pumpAndSettle();
+    expect(find.text('1 Gaussian components'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey<String>('clustering-label-selector')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Label: label').last);
+    await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey<String>('clustering-pc4-toggle')),
     );

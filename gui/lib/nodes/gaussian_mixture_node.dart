@@ -18,6 +18,9 @@ class GaussianMixtureNodeType extends NodeType {
   @override
   Map<String, dynamic> get defaultParams => <String, dynamic>{
     'componentCount': 3,
+    'sweepComponents': false,
+    'minimumComponentCount': 2,
+    'maximumComponentCount': 6,
     'observationSource': 'raw_segments',
     'featureColumns': '',
     'assessmentVariables': 'label',
@@ -96,6 +99,35 @@ class GaussianMixtureNodeType extends NodeType {
             _numberField(params, 'seed', 'Random seed'),
           ],
         ),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          value: params['sweepComponents'] == true,
+          title: const Text('Compare a range of component counts'),
+          subtitle: const Text(
+            'Fits and retains every k in the requested inclusive range.',
+          ),
+          onChanged: (bool? value) {
+            setState(() => params['sweepComponents'] = value == true);
+          },
+        ),
+        if (params['sweepComponents'] == true)
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: <Widget>[
+              _numberField(
+                params,
+                'minimumComponentCount',
+                'Minimum components',
+              ),
+              _numberField(
+                params,
+                'maximumComponentCount',
+                'Maximum components',
+              ),
+            ],
+          ),
         const SizedBox(height: 12),
         NodeParamTextField(
           params: params,
@@ -221,10 +253,31 @@ class GaussianMixtureNodeType extends NodeType {
         .toList(growable: false);
     final int componentCount =
         ((params['componentCount'] as num?)?.toInt() ?? 3).clamp(1, 32);
-    if (rows.length < componentCount) {
+    final bool sweepComponents = params['sweepComponents'] == true;
+    final int minimumComponentCount = sweepComponents
+        ? ((params['minimumComponentCount'] as num?)?.toInt() ?? 2).clamp(1, 32)
+        : componentCount;
+    final int maximumComponentCount = sweepComponents
+        ? ((params['maximumComponentCount'] as num?)?.toInt() ?? 6).clamp(1, 32)
+        : componentCount;
+    if (minimumComponentCount > maximumComponentCount) {
+      throw ArgumentError(
+        'Minimum components cannot exceed maximum components.',
+      );
+    }
+    final List<int> componentCounts = <int>{
+      for (
+        int count = minimumComponentCount;
+        count <= maximumComponentCount;
+        count++
+      )
+        count,
+      componentCount,
+    }.toList()..sort();
+    if (rows.length < componentCounts.last) {
       throw StateError(
         'Gaussian Mixture needs at least one row per component '
-        '(${rows.length} rows, $componentCount components).',
+        '(${rows.length} rows, ${componentCounts.last} components).',
       );
     }
     final int maxIterations =
@@ -241,22 +294,33 @@ class GaussianMixtureNodeType extends NodeType {
     }
     final bool standardize = params['standardize'] != false;
     final int seed = (params['seed'] as num?)?.toInt() ?? 42;
-    await context?.setProgress('Fitting $componentCount Gaussian components');
-    final NativeGaussianMixtureResult? result =
-        await computeGaussianMixtureBackground(
-          rows,
-          componentCount: componentCount,
-          tolerance: tolerance,
-          maxIterations: maxIterations,
-          regularization: regularization,
-          standardize: standardize,
-          seed: seed,
-        );
-    if (result == null) {
-      throw UnsupportedError(
-        'The BrainStory Gaussian mixture engine is unavailable.',
+    final Map<int, NativeGaussianMixtureResult> results =
+        <int, NativeGaussianMixtureResult>{};
+    for (int index = 0; index < componentCounts.length; index++) {
+      final int count = componentCounts[index];
+      await context?.setProgress(
+        componentCounts.length == 1
+            ? 'Fitting $count Gaussian components'
+            : 'Fitting k=$count (${index + 1} of ${componentCounts.length})',
       );
+      final NativeGaussianMixtureResult? result =
+          await computeGaussianMixtureBackground(
+            rows,
+            componentCount: count,
+            tolerance: tolerance,
+            maxIterations: maxIterations,
+            regularization: regularization,
+            standardize: standardize,
+            seed: seed,
+          );
+      if (result == null) {
+        throw UnsupportedError(
+          'The BrainStory Gaussian mixture engine is unavailable.',
+        );
+      }
+      results[count] = result;
     }
+    final NativeGaussianMixtureResult result = results[componentCount]!;
 
     final List<String> outputColumns =
         table.columns
@@ -288,29 +352,48 @@ class GaussianMixtureNodeType extends NodeType {
       rows: outputRows,
       source: table.source,
     );
-    dataset.gaussianMixture = GaussianMixtureData(
+    final Map<String, List<String>> assessmentValues = <String, List<String>>{
+      for (final String variable in assessmentVariables)
+        variable: table.rows
+            .map((Map<String, String> row) => row[variable] ?? '')
+            .toList(growable: false),
+    };
+    GaussianMixtureData buildModel(
+      NativeGaussianMixtureResult fit, {
+      List<GaussianMixtureData> candidates = const <GaussianMixtureData>[],
+    }) => GaussianMixtureData(
       featureColumns: featureColumns,
-      assignments: result.assignments,
-      probabilities: result.probabilities,
-      weights: result.weights,
-      means: result.means,
-      variances: result.variances,
-      converged: result.converged,
-      iterationCount: result.iterationCount,
-      logLikelihood: result.logLikelihood,
-      aic: result.aic,
-      bic: result.bic,
+      assignments: fit.assignments,
+      probabilities: fit.probabilities,
+      weights: fit.weights,
+      means: fit.means,
+      variances: fit.variances,
+      converged: fit.converged,
+      iterationCount: fit.iterationCount,
+      logLikelihood: fit.logLikelihood,
+      aic: fit.aic,
+      bic: fit.bic,
       standardized: standardize,
-      normalizationMean: result.normalizationMean,
-      normalizationScale: result.normalizationScale,
+      normalizationMean: fit.normalizationMean,
+      normalizationScale: fit.normalizationScale,
       source: table.source,
       assessmentVariables: assessmentVariables,
+      assessmentValues: assessmentValues,
+      candidateModels: candidates,
       projection: GaussianMixtureProjectionData(
-        observations: result.projection.observations,
-        componentMeans: result.projection.componentMeans,
-        componentCovariances: result.projection.componentCovariances,
-        explainedVarianceRatios: result.projection.explainedVarianceRatios,
+        observations: fit.projection.observations,
+        componentMeans: fit.projection.componentMeans,
+        componentCovariances: fit.projection.componentCovariances,
+        explainedVarianceRatios: fit.projection.explainedVarianceRatios,
       ),
+    );
+    dataset.gaussianMixture = buildModel(
+      result,
+      candidates: <GaussianMixtureData>[
+        for (final MapEntry<int, NativeGaussianMixtureResult> entry
+            in results.entries)
+          if (entry.key != componentCount) buildModel(entry.value),
+      ],
     );
     await context?.setProgress(
       result.converged
