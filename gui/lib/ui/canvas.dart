@@ -14,19 +14,6 @@ class _BrainStoryCanvasState extends State<BrainStoryCanvas> {
   late final CanvasLogic logic = CanvasLogic();
 
   @override
-  void initState() {
-    super.initState();
-    _restoreLastBrainStory();
-  }
-
-  Future<void> _restoreLastBrainStory() async {
-    final bool restored = await logic.restoreLastBrainStory();
-    if (restored && mounted) {
-      setState(() {});
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     return CanvasView(logic: logic);
   }
