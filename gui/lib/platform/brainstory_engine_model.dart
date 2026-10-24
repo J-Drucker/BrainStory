@@ -160,6 +160,7 @@ class NativeGaussianMixtureResult {
     required this.bic,
     required this.normalizationMean,
     required this.normalizationScale,
+    required this.projection,
   });
 
   final List<int> assignments;
@@ -174,6 +175,7 @@ class NativeGaussianMixtureResult {
   final double bic;
   final List<double> normalizationMean;
   final List<double> normalizationScale;
+  final NativeGaussianMixtureProjection projection;
 
   factory NativeGaussianMixtureResult.fromJson(Map<String, dynamic> json) {
     List<double> vector(dynamic value) =>
@@ -200,6 +202,46 @@ class NativeGaussianMixtureResult {
       bic: (json['bic'] as num?)?.toDouble() ?? 0.0,
       normalizationMean: vector(json['normalizationMean']),
       normalizationScale: vector(json['normalizationScale']),
+      projection: NativeGaussianMixtureProjection.fromJson(
+        Map<String, dynamic>.from(
+          json['projection'] as Map? ?? const <String, dynamic>{},
+        ),
+      ),
+    );
+  }
+}
+
+class NativeGaussianMixtureProjection {
+  const NativeGaussianMixtureProjection({
+    required this.observations,
+    required this.componentMeans,
+    required this.componentCovariances,
+    required this.explainedVarianceRatios,
+  });
+
+  final List<List<double>> observations;
+  final List<List<double>> componentMeans;
+  final List<List<List<double>>> componentCovariances;
+  final List<double> explainedVarianceRatios;
+
+  factory NativeGaussianMixtureProjection.fromJson(Map<String, dynamic> json) {
+    List<double> vector(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic item) => (item as num).toDouble())
+            .toList(growable: false);
+    List<List<double>> matrix(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map(vector)
+            .toList(growable: false);
+
+    return NativeGaussianMixtureProjection(
+      observations: matrix(json['observations']),
+      componentMeans: matrix(json['componentMeans']),
+      componentCovariances:
+          (json['componentCovariances'] as List<dynamic>? ?? const <dynamic>[])
+              .map(matrix)
+              .toList(growable: false),
+      explainedVarianceRatios: vector(json['explainedVarianceRatios']),
     );
   }
 }

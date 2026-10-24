@@ -17,6 +17,7 @@ import '../nodes/bandpass_node.dart';
 import '../nodes/code_node.dart';
 import '../nodes/code_contract.dart';
 import '../nodes/bridge_detector_node.dart';
+import '../nodes/gaussian_mixture_node.dart';
 import '../nodes/channel_coordinates_node.dart';
 import '../nodes/edit_channels_and_markers_node.dart';
 import '../nodes/edit_channels_node.dart';
@@ -5277,6 +5278,11 @@ class CanvasLogic {
       return 'impedances';
     }
     for (final Dataset dataset in datasets) {
+      if (dataset.gaussianMixture != null) {
+        return 'unsupervised_clustering';
+      }
+    }
+    for (final Dataset dataset in datasets) {
       if (_isIcaVisualizationDataset(dataset)) {
         return 'ica';
       }
@@ -5328,6 +5334,9 @@ class CanvasLogic {
     if (node.type is BridgeDetectorNodeType) {
       return 'bridge';
     }
+    if (node.type is GaussianMixtureNodeType) {
+      return 'unsupervised_clustering';
+    }
     if (node.type is ICANodeType) {
       return 'ica';
     }
@@ -5345,6 +5354,11 @@ class CanvasLogic {
         (NodeModel parent) => parent.type is BridgeDetectorNodeType,
       )) {
         return 'bridge';
+      }
+      if (parents.any(
+        (NodeModel parent) => parent.type is GaussianMixtureNodeType,
+      )) {
+        return 'unsupervised_clustering';
       }
       if (parents.any((NodeModel parent) => parent.type is ICANodeType)) {
         return 'ica';

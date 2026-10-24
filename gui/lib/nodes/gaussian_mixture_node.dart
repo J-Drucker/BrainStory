@@ -305,6 +305,12 @@ class GaussianMixtureNodeType extends NodeType {
       normalizationScale: result.normalizationScale,
       source: table.source,
       assessmentVariables: assessmentVariables,
+      projection: GaussianMixtureProjectionData(
+        observations: result.projection.observations,
+        componentMeans: result.projection.componentMeans,
+        componentCovariances: result.projection.componentCovariances,
+        explainedVarianceRatios: result.projection.explainedVarianceRatios,
+      ),
     );
     await context?.setProgress(
       result.converged

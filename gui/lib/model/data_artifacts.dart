@@ -1315,6 +1315,7 @@ class GaussianMixtureData {
     required this.normalizationMean,
     required this.normalizationScale,
     this.assessmentVariables = const <String>[],
+    this.projection,
     this.source = '',
   });
 
@@ -1333,6 +1334,7 @@ class GaussianMixtureData {
   final List<double> normalizationMean;
   final List<double> normalizationScale;
   final List<String> assessmentVariables;
+  final GaussianMixtureProjectionData? projection;
   final String source;
 
   int get componentCount => weights.length;
@@ -1354,6 +1356,7 @@ class GaussianMixtureData {
     'normalizationMean': normalizationMean,
     'normalizationScale': normalizationScale,
     'assessmentVariables': assessmentVariables,
+    if (projection != null) 'projection': projection!.toJson(),
     'source': source,
   };
 
@@ -1391,7 +1394,56 @@ class GaussianMixtureData {
           (json['assessmentVariables'] as List<dynamic>? ?? const <dynamic>[])
               .map((dynamic value) => value.toString())
               .toList(growable: false),
+      projection: json['projection'] is Map
+          ? GaussianMixtureProjectionData.fromJson(
+              Map<String, dynamic>.from(json['projection'] as Map),
+            )
+          : null,
       source: json['source']?.toString() ?? '',
+    );
+  }
+}
+
+class GaussianMixtureProjectionData {
+  const GaussianMixtureProjectionData({
+    required this.observations,
+    required this.componentMeans,
+    required this.componentCovariances,
+    required this.explainedVarianceRatios,
+  });
+
+  final List<List<double>> observations;
+  final List<List<double>> componentMeans;
+  final List<List<List<double>>> componentCovariances;
+  final List<double> explainedVarianceRatios;
+
+  int get dimensionCount => explainedVarianceRatios.length;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'observations': observations,
+    'componentMeans': componentMeans,
+    'componentCovariances': componentCovariances,
+    'explainedVarianceRatios': explainedVarianceRatios,
+  };
+
+  static GaussianMixtureProjectionData fromJson(Map<String, dynamic> json) {
+    List<double> vector(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map((dynamic item) => (item as num).toDouble())
+            .toList(growable: false);
+    List<List<double>> matrix(dynamic value) =>
+        (value as List<dynamic>? ?? const <dynamic>[])
+            .map(vector)
+            .toList(growable: false);
+
+    return GaussianMixtureProjectionData(
+      observations: matrix(json['observations']),
+      componentMeans: matrix(json['componentMeans']),
+      componentCovariances:
+          (json['componentCovariances'] as List<dynamic>? ?? const <dynamic>[])
+              .map(matrix)
+              .toList(growable: false),
+      explainedVarianceRatios: vector(json['explainedVarianceRatios']),
     );
   }
 }

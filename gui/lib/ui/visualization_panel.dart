@@ -19,6 +19,7 @@ import 'channel_positions_dialog.dart';
 import 'ica_viewer.dart';
 import 'impedance_layout.dart';
 import 'raw_signal_browser.dart';
+import 'unsupervised_clustering_viewer.dart';
 
 class VisualizationPanel extends StatelessWidget {
   const VisualizationPanel({
@@ -174,6 +175,7 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
       'bridge',
       'time_frequency',
       'impedances',
+      'unsupervised_clustering',
     }.contains(logic.visualizationViewForNode(node));
     _syncSelectedDatasets(sourceRefs);
     final bool comparisonNode = logic.isVisualizationNode(node);
@@ -334,7 +336,8 @@ class _VisualizationSurfaceState extends State<VisualizationSurface> {
                             view == 'hypnogram' ||
                             view == 'bridge' ||
                             view == 'time_frequency' ||
-                            view == 'impedances') &&
+                            view == 'impedances' ||
+                            view == 'unsupervised_clustering') &&
                         selectedSourceRefs.length > 1;
                     return Column(
                       children: <Widget>[
@@ -526,6 +529,14 @@ class _VisualizationChart extends StatelessWidget {
         datasets: datasets,
         activeDatasetId: activeDatasetId,
       );
+    }
+
+    if (view == 'unsupervised_clustering') {
+      final Dataset activeDataset = datasets.firstWhere(
+        (Dataset dataset) => dataset.id == activeDatasetId,
+        orElse: () => datasets.first,
+      );
+      return UnsupervisedClusteringViewer(dataset: activeDataset);
     }
 
     if (view == 'psd') {

@@ -5,6 +5,8 @@ import 'package:brainstory_gui/nodes/gaussian_mixture_node.dart';
 import 'package:brainstory_gui/nodes/node_registry.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/platform/brainstory_engine.dart';
+import 'package:brainstory_gui/ui/unsupervised_clustering_viewer.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -95,6 +97,24 @@ void main() {
       standardized: true,
       normalizationMean: <double>[2.5],
       normalizationScale: <double>[1.5],
+      projection: GaussianMixtureProjectionData(
+        observations: <List<double>>[
+          <double>[0.25],
+        ],
+        componentMeans: <List<double>>[
+          <double>[-1],
+          <double>[1],
+        ],
+        componentCovariances: <List<List<double>>>[
+          <List<double>>[
+            <double>[0.2],
+          ],
+          <List<double>>[
+            <double>[0.3],
+          ],
+        ],
+        explainedVarianceRatios: <double>[1],
+      ),
     );
 
     final DatasetArtifactSnapshot snapshot = DatasetArtifactSnapshot.fromJson(
@@ -110,6 +130,9 @@ void main() {
       0.01,
     ]);
     expect(restored.gaussianMixture!.converged, isTrue);
+    expect(restored.gaussianMixture!.projection!.observations.single, <double>[
+      0.25,
+    ]);
   });
 
   test('Gaussian mixture rejects too few feature rows before execution', () {
@@ -226,6 +249,11 @@ void main() {
     expect(dataset.featureTable?.rows, hasLength(4));
     expect(dataset.featureTable?.rows.first['label'], 'low');
     expect(dataset.featureTable?.rows.first, contains('gmm_cluster'));
+    expect(dataset.gaussianMixture?.projection?.observations, hasLength(4));
+    expect(
+      dataset.gaussianMixture?.projection?.explainedVarianceRatios,
+      isNotEmpty,
+    );
   });
 
   test('Gaussian mixture assessment variables survive snapshots', () {
@@ -256,5 +284,94 @@ void main() {
       model.toJson(),
     );
     expect(restored.assessmentVariables, <String>['label', 'kind']);
+  });
+
+  testWidgets('clustering viewer exposes observations and PC4 playback', (
+    WidgetTester tester,
+  ) async {
+    final Dataset dataset = Dataset('dataset-viewer', label: 'Clusters');
+    dataset.gaussianMixture = const GaussianMixtureData(
+      featureColumns: <String>['a', 'b', 'c', 'd'],
+      assignments: <int>[0, 1],
+      probabilities: <List<double>>[
+        <double>[0.95, 0.05],
+        <double>[0.1, 0.9],
+      ],
+      weights: <double>[0.5, 0.5],
+      means: <List<double>>[
+        <double>[-1, -1, 0, -0.5],
+        <double>[1, 1, 0, 0.5],
+      ],
+      variances: <List<double>>[
+        <double>[0.2, 0.3, 0.4, 0.5],
+        <double>[0.3, 0.2, 0.4, 0.5],
+      ],
+      converged: true,
+      iterationCount: 4,
+      logLikelihood: -2,
+      aic: 10,
+      bic: 11,
+      standardized: true,
+      normalizationMean: <double>[0, 0, 0, 0],
+      normalizationScale: <double>[1, 1, 1, 1],
+      projection: GaussianMixtureProjectionData(
+        observations: <List<double>>[
+          <double>[-1, -1, 0, -0.5],
+          <double>[1, 1, 0, 0.5],
+        ],
+        componentMeans: <List<double>>[
+          <double>[-1, -1, 0, -0.5],
+          <double>[1, 1, 0, 0.5],
+        ],
+        componentCovariances: <List<List<double>>>[
+          <List<double>>[
+            <double>[0.2, 0, 0, 0],
+            <double>[0, 0.3, 0, 0],
+            <double>[0, 0, 0.4, 0],
+            <double>[0, 0, 0, 0.5],
+          ],
+          <List<double>>[
+            <double>[0.3, 0, 0, 0],
+            <double>[0, 0.2, 0, 0],
+            <double>[0, 0, 0.4, 0],
+            <double>[0, 0, 0, 0.5],
+          ],
+        ],
+        explainedVarianceRatios: <double>[0.5, 0.3, 0.15, 0.05],
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 900,
+            height: 700,
+            child: UnsupervisedClusteringViewer(dataset: dataset),
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('unsupervised-clustering-3d')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('clustering-pc4-slider')),
+      findsNothing,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('clustering-pc4-toggle')),
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('clustering-pc4-slider')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('clustering-pc4-play')));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.takeException(), isNull);
   });
 }

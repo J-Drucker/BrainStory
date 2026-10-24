@@ -16,6 +16,16 @@ pub struct GaussianMixtureResult {
     pub bic: f64,
     pub normalization_mean: Vec<f64>,
     pub normalization_scale: Vec<f64>,
+    pub projection: GaussianMixtureProjection,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GaussianMixtureProjection {
+    pub observations: Vec<Vec<f64>>,
+    pub component_means: Vec<Vec<f64>>,
+    pub component_covariances: Vec<Vec<Vec<f64>>>,
+    pub explained_variance_ratios: Vec<f64>,
 }
 
 pub fn fit_gaussian_mixture(
@@ -146,6 +156,7 @@ pub fn fit_gaussian_mixture(
         })
         .collect();
     let parameter_count = (component_count - 1) + (2 * component_count * feature_count);
+    let projection = principal_component_projection(&normalized, &means, &variances, 4);
     let means_original = means
         .iter()
         .map(|component| {
@@ -178,7 +189,156 @@ pub fn fit_gaussian_mixture(
         bic: (parameter_count as f64) * (row_count as f64).ln() - 2.0 * log_likelihood,
         normalization_mean,
         normalization_scale,
+        projection,
     })
+}
+
+fn principal_component_projection(
+    rows: &[Vec<f64>],
+    component_means: &[Vec<f64>],
+    component_variances: &[Vec<f64>],
+    maximum_dimensions: usize,
+) -> GaussianMixtureProjection {
+    let feature_count = rows.first().map_or(0, Vec::len);
+    let dimension_count = maximum_dimensions
+        .min(feature_count)
+        .min(rows.len().saturating_sub(1).max(1));
+    let center: Vec<f64> = (0..feature_count)
+        .map(|feature| rows.iter().map(|row| row[feature]).sum::<f64>() / rows.len().max(1) as f64)
+        .collect();
+    let centered_rows: Vec<Vec<f64>> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .zip(center.iter())
+                .map(|(value, center)| value - center)
+                .collect()
+        })
+        .collect();
+    let total_variance = centered_rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|value| value * value)
+        .sum::<f64>()
+        / rows.len().max(1) as f64;
+    let mut axes: Vec<Vec<f64>> = Vec::with_capacity(dimension_count);
+    let mut explained_variance_ratios = Vec::with_capacity(dimension_count);
+
+    for dimension in 0..dimension_count {
+        let mut axis: Vec<f64> = (0..feature_count)
+            .map(|feature| {
+                let phase = ((feature + 1) * (dimension + 2)) as f64;
+                phase.sin() + (phase * 0.618_033_988_75).cos()
+            })
+            .collect();
+        orthonormalize(&mut axis, &axes);
+        if normalize(&mut axis) <= 1.0e-12 {
+            break;
+        }
+
+        for _ in 0..100 {
+            let scores: Vec<f64> = centered_rows.iter().map(|row| dot(row, &axis)).collect();
+            let mut next = vec![0.0; feature_count];
+            for (row, score) in centered_rows.iter().zip(scores.iter()) {
+                for feature in 0..feature_count {
+                    next[feature] += row[feature] * score;
+                }
+            }
+            orthonormalize(&mut next, &axes);
+            if normalize(&mut next) <= 1.0e-12 {
+                break;
+            }
+            let alignment = dot(&axis, &next).abs();
+            axis = next;
+            if alignment >= 1.0 - 1.0e-10 {
+                break;
+            }
+        }
+
+        let variance = centered_rows
+            .iter()
+            .map(|row| dot(row, &axis).powi(2))
+            .sum::<f64>()
+            / rows.len().max(1) as f64;
+        if !variance.is_finite() || variance <= 1.0e-12 {
+            break;
+        }
+        axes.push(axis);
+        explained_variance_ratios.push(if total_variance > 0.0 {
+            variance / total_variance
+        } else {
+            0.0
+        });
+    }
+
+    let observations = centered_rows
+        .iter()
+        .map(|row| axes.iter().map(|axis| dot(row, axis)).collect())
+        .collect();
+    let projected_means = component_means
+        .iter()
+        .map(|mean| {
+            let centered_mean: Vec<f64> = mean
+                .iter()
+                .zip(center.iter())
+                .map(|(value, center)| value - center)
+                .collect();
+            axes.iter().map(|axis| dot(&centered_mean, axis)).collect()
+        })
+        .collect();
+    let component_covariances = component_variances
+        .iter()
+        .map(|variances| {
+            axes.iter()
+                .map(|left| {
+                    axes.iter()
+                        .map(|right| {
+                            variances
+                                .iter()
+                                .zip(left.iter().zip(right.iter()))
+                                .map(|(variance, (left_value, right_value))| {
+                                    variance * left_value * right_value
+                                })
+                                .sum()
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+
+    GaussianMixtureProjection {
+        observations,
+        component_means: projected_means,
+        component_covariances,
+        explained_variance_ratios,
+    }
+}
+
+fn dot(left: &[f64], right: &[f64]) -> f64 {
+    left.iter()
+        .zip(right.iter())
+        .map(|(left, right)| left * right)
+        .sum()
+}
+
+fn orthonormalize(vector: &mut [f64], basis: &[Vec<f64>]) {
+    for axis in basis {
+        let projection = dot(vector, axis);
+        for (value, axis_value) in vector.iter_mut().zip(axis.iter()) {
+            *value -= projection * axis_value;
+        }
+    }
+}
+
+fn normalize(vector: &mut [f64]) -> f64 {
+    let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
+    if norm > 0.0 {
+        for value in vector {
+            *value /= norm;
+        }
+    }
+    norm
 }
 
 fn expectation(
@@ -358,6 +518,11 @@ mod tests {
         assert!(result.converged);
         assert_eq!(result.probabilities.len(), rows.len());
         assert_ne!(result.assignments[0], result.assignments[39]);
+        assert_eq!(result.projection.observations.len(), rows.len());
+        assert_eq!(result.projection.observations[0].len(), 2);
+        assert_eq!(result.projection.component_means.len(), 2);
+        assert_eq!(result.projection.component_covariances[0].len(), 2);
+        assert!(result.projection.explained_variance_ratios[0] > 0.99);
         assert!(result.probabilities.iter().all(|row| {
             (row.iter().sum::<f64>() - 1.0).abs() < 1.0e-9
                 && row.iter().copied().fold(0.0, f64::max) > 0.99
