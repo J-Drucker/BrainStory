@@ -271,6 +271,88 @@ void main() {
     );
   });
 
+  test('Gaussian mixture accepts multi-channel PSD segments', () async {
+    final Dataset dataset = Dataset('dataset-psd', label: 'PSD segments');
+    dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
+      sampleRate: 100,
+      channelLabels: <String>['Fz', 'Pz'],
+      segments: <SignalSegmentData>[
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0],
+            <double>[0],
+          ],
+          startSeconds: 0,
+          stopSeconds: 1,
+          label: 'frequent',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0],
+            <double>[0],
+          ],
+          startSeconds: 1,
+          stopSeconds: 2,
+          label: 'frequent',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0],
+            <double>[0],
+          ],
+          startSeconds: 2,
+          stopSeconds: 3,
+          label: 'rare',
+        ),
+        SignalSegmentData(
+          channelSamples: <List<double>>[
+            <double>[0],
+            <double>[0],
+          ],
+          startSeconds: 3,
+          stopSeconds: 4,
+          label: 'rare',
+        ),
+      ],
+    );
+    dataset.spectrum = const FrequencySpectrumData(
+      frequencies: <double>[5, 10],
+      power: <double>[1, 1],
+      channelLabels: <String>['Fz', 'Pz'],
+      channelSegmentPowers: <List<List<double>>>[
+        <List<double>>[
+          <double>[1, 1.1],
+          <double>[1.1, 1],
+          <double>[8, 8.1],
+          <double>[8.1, 8],
+        ],
+        <List<double>>[
+          <double>[2, 2.1],
+          <double>[2.1, 2],
+          <double>[9, 9.1],
+          <double>[9.1, 9],
+        ],
+      ],
+      segmentCount: 4,
+    );
+
+    await GaussianMixtureNodeType().run(dataset, <String, dynamic>{
+      ...GaussianMixtureNodeType().defaultParams,
+      'observationSource': 'psd_segments',
+      'componentCount': 2,
+    });
+
+    expect(dataset.gaussianMixture!.featureColumns, hasLength(4));
+    expect(dataset.gaussianMixture!.featureColumns.first, startsWith('psd_Fz'));
+    expect(dataset.gaussianMixture!.assignments, hasLength(4));
+    expect(dataset.gaussianMixture!.assessmentValues['label'], <String>[
+      'frequent',
+      'frequent',
+      'rare',
+      'rare',
+    ]);
+  });
+
   test('Gaussian mixture assessment variables survive snapshots', () {
     const GaussianMixtureData model = GaussianMixtureData(
       featureColumns: <String>['value_1'],
@@ -449,9 +531,18 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Label: label').last);
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey<String>('clustering-pc4-toggle')),
+    expect(
+      tester
+          .widget<Radio<int>>(
+            find.byKey(const ValueKey<String>('clustering-3d')),
+          )
+          .value,
+      3,
     );
+    await tester.tap(find.byKey(const ValueKey<String>('clustering-2d')));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byKey(const ValueKey<String>('clustering-4d')));
     await tester.pump();
     expect(
       find.byKey(const ValueKey<String>('clustering-pc4-slider')),

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
@@ -34,6 +36,7 @@ class GaussianMixtureNodeType extends NodeType {
   @override
   List<PortSpec> get inputs => const <PortSpec>[
     PortSpec(name: 'segments', type: PortType.metadata),
+    PortSpec(name: 'psd (optional)', type: PortType.signal),
     PortSpec(name: 'feature_table (optional)', type: PortType.metadata),
   ];
 
@@ -74,6 +77,10 @@ class GaussianMixtureNodeType extends NodeType {
             NodeDropdownOption<String>(
               value: 'feature_table',
               label: 'Upstream feature table',
+            ),
+            NodeDropdownOption<String>(
+              value: 'psd_segments',
+              label: 'PSD segments',
             ),
           ],
         ),
@@ -197,9 +204,11 @@ class GaussianMixtureNodeType extends NodeType {
   ) async {
     final String observationSource =
         params['observationSource']?.toString() ?? 'raw_segments';
-    final FeatureTableData table = observationSource == 'feature_table'
-        ? _featureTableObservations(dataset)
-        : _rawSegmentObservations(dataset);
+    final FeatureTableData table = switch (observationSource) {
+      'feature_table' => _featureTableObservations(dataset),
+      'psd_segments' => _psdSegmentObservations(dataset),
+      _ => _rawSegmentObservations(dataset),
+    };
     final List<String> assessmentVariables = _requestedColumns(
       params['assessmentVariables'],
     );
@@ -215,9 +224,12 @@ class GaussianMixtureNodeType extends NodeType {
     final List<String> requestedColumns = observationSource == 'feature_table'
         ? _requestedColumns(params['featureColumns'])
         : const <String>[];
-    final List<String> featureColumns = observationSource == 'raw_segments'
+    final List<String> featureColumns = observationSource != 'feature_table'
         ? table.columns
-              .where((String column) => column.startsWith('value_'))
+              .where(
+                (String column) =>
+                    column.startsWith('value_') || column.startsWith('psd_'),
+              )
               .toList(growable: false)
         : requestedColumns.isEmpty
         ? _automaticNumericColumns(table)
@@ -468,6 +480,82 @@ class GaussianMixtureNodeType extends NodeType {
         };
       }, growable: false),
       source: '${segmented.source} -> raw segments',
+    );
+  }
+
+  FeatureTableData _psdSegmentObservations(Dataset dataset) {
+    final FrequencySpectrumData? spectrum = dataset.spectrum;
+    if (spectrum == null || spectrum.frequencies.isEmpty) {
+      throw StateError('Gaussian Mixture requires upstream PSD data.');
+    }
+    final int binCount = spectrum.frequencies.length;
+    final List<List<List<double>>> channelSegments = spectrum
+        .channelSegmentPowers
+        .where(
+          (List<List<double>> channel) =>
+              channel.isNotEmpty &&
+              channel.every((List<double> values) => values.length == binCount),
+        )
+        .toList(growable: false);
+    final int segmentCount = channelSegments.isNotEmpty
+        ? channelSegments
+              .map((List<List<double>> channel) => channel.length)
+              .reduce(math.min)
+        : spectrum.segmentPowers.length;
+    if (segmentCount < 2) {
+      throw StateError(
+        'Gaussian Mixture needs segment-level PSD output with at least two segments. Configure PSD output as segments.',
+      );
+    }
+    final List<List<double>> observations = List<List<double>>.generate(
+      segmentCount,
+      (int segment) => channelSegments.isNotEmpty
+          ? <double>[
+              for (final List<List<double>> channel in channelSegments)
+                ...channel[segment],
+            ]
+          : spectrum.segmentPowers[segment],
+      growable: false,
+    );
+    if (observations.any(
+      (List<double> values) => values.length != observations.first.length,
+    )) {
+      throw StateError('PSD segments do not have matching dimensions.');
+    }
+    final List<String> valueColumns = <String>[
+      if (channelSegments.isNotEmpty)
+        for (int channel = 0; channel < channelSegments.length; channel++)
+          for (int bin = 0; bin < binCount; bin++)
+            'psd_${channel < spectrum.channelLabels.length ? spectrum.channelLabels[channel] : 'ch${channel + 1}'}_${spectrum.frequencies[bin].toStringAsFixed(3)}hz'
+      else
+        for (int bin = 0; bin < binCount; bin++)
+          'psd_${spectrum.frequencies[bin].toStringAsFixed(3)}hz',
+    ];
+    final List<SignalSegmentData> sourceSegments =
+        dataset.segmentedTimeSeries?.materializedSegments() ??
+        const <SignalSegmentData>[];
+    return FeatureTableData(
+      columns: <String>[
+        'label',
+        'kind',
+        'start_seconds',
+        'stop_seconds',
+        ...valueColumns,
+      ],
+      rows: List<Map<String, String>>.generate(segmentCount, (int index) {
+        final SignalSegmentData? segment = index < sourceSegments.length
+            ? sourceSegments[index]
+            : null;
+        return <String, String>{
+          'label': segment?.label ?? '',
+          'kind': segment?.kind ?? '',
+          'start_seconds': segment?.startSeconds.toString() ?? '',
+          'stop_seconds': segment?.stopSeconds.toString() ?? '',
+          for (int value = 0; value < valueColumns.length; value++)
+            valueColumns[value]: observations[index][value].toString(),
+        };
+      }, growable: false),
+      source: spectrum.source,
     );
   }
 

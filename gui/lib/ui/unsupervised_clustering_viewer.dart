@@ -30,7 +30,7 @@ class _UnsupervisedClusteringViewerState
   Offset _pan = Offset.zero;
   Offset? _hoverPosition;
   bool _showObservations = true;
-  bool _useFourthComponent = false;
+  int _dimensions = 3;
   bool _playing = false;
   double _manualSlicePosition = 0.5;
   bool _secondaryDragging = false;
@@ -101,7 +101,7 @@ class _UnsupervisedClusteringViewerState
             canSliceFourth: canSliceFourth,
             models: _models,
           ),
-          if (_useFourthComponent && canSliceFourth)
+          if (_dimensions == 4 && canSliceFourth)
             _buildSliceControls(
               fourthRange: fourthRange,
               slicePosition: slicePosition,
@@ -144,6 +144,8 @@ class _UnsupervisedClusteringViewerState
                       if (details.pointerCount > 1) {
                         _zoom = (_zoom * details.scale).clamp(0.35, 8.0);
                         _pan += details.focalPointDelta;
+                      } else if (_dimensions == 2) {
+                        _pan += details.focalPointDelta;
                       } else {
                         _yaw += details.focalPointDelta.dx * 0.008;
                         _pitch = (_pitch + details.focalPointDelta.dy * 0.008)
@@ -161,7 +163,8 @@ class _UnsupervisedClusteringViewerState
                       zoom: _zoom,
                       pan: _pan,
                       showObservations: _showObservations,
-                      fourthValue: _useFourthComponent && canSliceFourth
+                      dimensions: _dimensions,
+                      fourthValue: _dimensions == 4 && canSliceFourth
                           ? fourthValue
                           : null,
                       fourthRange: fourthRange,
@@ -276,26 +279,44 @@ class _UnsupervisedClusteringViewerState
                   ],
                 ),
               ),
-              if (canSliceFourth)
-                Tooltip(
-                  message: 'Use PC4 slice',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      const Text('4D', style: TextStyle(color: Colors.white70)),
-                      Switch(
-                        key: const ValueKey<String>('clustering-pc4-toggle'),
-                        value: _useFourthComponent,
-                        onChanged: (bool value) {
-                          setState(() {
-                            _useFourthComponent = value;
-                            if (!value) _stopPlayback();
-                          });
-                        },
+              RadioGroup<int>(
+                groupValue: _dimensions,
+                onChanged: (int? value) {
+                  if (value == null || (value == 4 && !canSliceFourth)) return;
+                  setState(() {
+                    _dimensions = value;
+                    if (value != 4) _stopPlayback();
+                  });
+                },
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    for (final int dimension in const <int>[
+                      2,
+                      3,
+                      4,
+                    ]) ...<Widget>[
+                      Radio<int>(
+                        key: ValueKey<String>('clustering-${dimension}d'),
+                        value: dimension,
+                        enabled: dimension != 4 || canSliceFourth,
+                        visualDensity: const VisualDensity(
+                          horizontal: -4,
+                          vertical: -4,
+                        ),
+                      ),
+                      Text(
+                        '${dimension}D',
+                        style: TextStyle(
+                          color: dimension != 4 || canSliceFourth
+                              ? Colors.white70
+                              : Colors.white24,
+                        ),
                       ),
                     ],
-                  ),
+                  ],
                 ),
+              ),
               IconButton(
                 tooltip: 'Reset view',
                 onPressed: _resetView,
@@ -390,6 +411,7 @@ class _ClusteringPainter extends CustomPainter {
     required this.zoom,
     required this.pan,
     required this.showObservations,
+    required this.dimensions,
     required this.fourthValue,
     required this.fourthRange,
     required this.hoverPosition,
@@ -403,6 +425,7 @@ class _ClusteringPainter extends CustomPainter {
   final double zoom;
   final Offset pan;
   final bool showObservations;
+  final int dimensions;
   final double? fourthValue;
   final _Range fourthRange;
   final Offset? hoverPosition;
@@ -421,9 +444,14 @@ class _ClusteringPainter extends CustomPainter {
       pitch: pitch,
       zoom: zoom,
       pan: pan,
+      dimensions: dimensions,
     );
     _drawAxes(canvas, transform);
-    _drawGaussians(canvas, transform, slices);
+    if (dimensions == 2) {
+      _drawGaussians2d(canvas, transform, slices);
+    } else {
+      _drawGaussians(canvas, transform, slices);
+    }
     final List<_ProjectedObservation> points = showObservations
         ? _drawObservations(canvas, transform)
         : const <_ProjectedObservation>[];
@@ -501,12 +529,30 @@ class _ClusteringPainter extends CustomPainter {
     ];
     const List<String> labels = <String>['PC1', 'PC2', 'PC3'];
     final Paint axisPaint = Paint()
-      ..color = Colors.white24
-      ..strokeWidth = 1;
-    final _ScreenPoint origin = transform.project(const _Vec3(0, 0, 0));
+      ..color = Colors.white54
+      ..strokeWidth = 2;
+    final Offset origin = Offset(62, transform.size.height - 58);
     for (int index = 0; index < axes.length; index++) {
-      final _ScreenPoint end = transform.project(axes[index]);
-      canvas.drawLine(origin.offset, end.offset, axisPaint);
+      if (dimensions == 2 && index == 2) continue;
+      final _Vec3 direction = transform.rotatedDirection(axes[index]);
+      final Offset end = origin + Offset(direction.x, -direction.y) * 44;
+      canvas.drawLine(origin, end, axisPaint);
+      final Offset unit = (end - origin) / math.max((end - origin).distance, 1);
+      final Offset normal = Offset(-unit.dy, unit.dx);
+      canvas.drawPath(
+        Path()
+          ..moveTo(end.dx, end.dy)
+          ..lineTo(
+            end.dx - unit.dx * 8 + normal.dx * 4,
+            end.dy - unit.dy * 8 + normal.dy * 4,
+          )
+          ..lineTo(
+            end.dx - unit.dx * 8 - normal.dx * 4,
+            end.dy - unit.dy * 8 - normal.dy * 4,
+          )
+          ..close(),
+        axisPaint,
+      );
       final TextPainter label = TextPainter(
         text: TextSpan(
           text: labels[index],
@@ -514,7 +560,44 @@ class _ClusteringPainter extends CustomPainter {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      label.paint(canvas, end.offset + const Offset(4, -6));
+      label.paint(canvas, end + const Offset(5, -7));
+    }
+  }
+
+  void _drawGaussians2d(
+    Canvas canvas,
+    _SceneTransform transform,
+    List<_GaussianSlice> slices,
+  ) {
+    for (final _GaussianSlice slice in slices) {
+      if (slice.visibility < 0.015 || slice.radiusScale <= 0.01) continue;
+      final _ScreenPoint center = transform.project(slice.mean);
+      final double a = slice.covariance[0][0];
+      final double b = slice.covariance[0][1];
+      final double d = slice.covariance[1][1];
+      final double trace = a + d;
+      final double root = math.sqrt(math.max(0, (a - d) * (a - d) + 4 * b * b));
+      final double major = math.sqrt(math.max(1.0e-9, (trace + root) / 2));
+      final double minor = math.sqrt(math.max(1.0e-9, (trace - root) / 2));
+      final double angle = 0.5 * math.atan2(2 * b, a - d);
+      final double scale = transform.scenePixelsPerUnit * 2 * slice.radiusScale;
+      canvas.save();
+      canvas.translate(center.offset.dx, center.offset.dy);
+      canvas.rotate(-angle);
+      for (int layer = 12; layer >= 1; layer--) {
+        final double fraction = layer / 12;
+        final double alpha =
+            (0.035 + (1 - fraction) * 0.075) * slice.visibility;
+        canvas.drawOval(
+          Rect.fromCenter(
+            center: Offset.zero,
+            width: major * scale * 2 * fraction,
+            height: minor * scale * 2 * fraction,
+          ),
+          Paint()..color = slice.color.withValues(alpha: alpha.clamp(0, 0.2)),
+        );
+      }
+      canvas.restore();
     }
   }
 
@@ -555,7 +638,12 @@ class _ClusteringPainter extends CustomPainter {
         ..lineTo(triangle.b.offset.dx, triangle.b.offset.dy)
         ..lineTo(triangle.c.offset.dx, triangle.c.offset.dy)
         ..close();
-      final double alpha = (0.055 * triangle.slice.visibility).clamp(0, 0.09);
+      final double depthShade = ((triangle.depth + 1.5) / 3).clamp(0.0, 1.0);
+      final double alpha =
+          ((0.16 + depthShade * 0.22) * triangle.slice.visibility).clamp(
+            0,
+            0.42,
+          );
       canvas.drawPath(
         path,
         Paint()
@@ -566,7 +654,7 @@ class _ClusteringPainter extends CustomPainter {
         path,
         Paint()
           ..color = triangle.slice.color.withValues(
-            alpha: (0.12 * triangle.slice.visibility).clamp(0, 0.18),
+            alpha: (0.24 * triangle.slice.visibility).clamp(0, 0.32),
           )
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.45,
@@ -625,69 +713,32 @@ class _ClusteringPainter extends CustomPainter {
           a.point.depth.compareTo(b.point.depth),
     );
     for (final _ProjectedObservation observation in points) {
-      final Color color = _clusterPointColor(
-        observation.cluster,
-        model.componentCount,
-      );
-      _drawObservationGlyph(
-        canvas,
+      final Color color = observation.assessmentValue == null
+          ? Colors.white
+          : _assessmentColor(observation.assessmentValue!);
+      canvas.drawCircle(
         observation.point.offset,
-        color.withValues(alpha: observation.visibility.clamp(0.08, 1)),
-        observation.assessmentValue,
+        dimensions == 2 ? 2.4 : 1.9,
+        Paint()
+          ..color = color.withValues(
+            alpha: observation.visibility.clamp(0.12, 1),
+          ),
       );
     }
     return points;
   }
 
-  void _drawObservationGlyph(
-    Canvas canvas,
-    Offset center,
-    Color color,
-    String? assessmentValue,
-  ) {
-    final Paint paint = Paint()..color = color;
-    if (assessmentValue == null) {
-      canvas.drawCircle(center, 1.7, paint);
-      return;
-    }
-    final int shape =
-        assessmentValue.codeUnits.fold<int>(
-          0,
-          (int sum, int code) => sum + code,
-        ) %
-        4;
-    switch (shape) {
-      case 0:
-        canvas.drawCircle(center, 2.2, paint);
-        return;
-      case 1:
-        canvas.drawRect(
-          Rect.fromCenter(center: center, width: 4.2, height: 4.2),
-          paint,
-        );
-        return;
-      case 2:
-        canvas.drawPath(
-          Path()
-            ..moveTo(center.dx, center.dy - 2.7)
-            ..lineTo(center.dx + 2.5, center.dy + 2.1)
-            ..lineTo(center.dx - 2.5, center.dy + 2.1)
-            ..close(),
-          paint,
-        );
-        return;
-      default:
-        canvas.drawPath(
-          Path()
-            ..moveTo(center.dx, center.dy - 2.8)
-            ..lineTo(center.dx + 2.8, center.dy)
-            ..lineTo(center.dx, center.dy + 2.8)
-            ..lineTo(center.dx - 2.8, center.dy)
-            ..close(),
-          paint,
-        );
-        return;
-    }
+  Color _assessmentColor(String value) {
+    final String? variable = assessmentVariable;
+    if (variable == null) return Colors.white;
+    final List<String> values =
+        (model.assessmentValues[variable] ?? const <String>[])
+            .where((String item) => item.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort();
+    final int index = math.max(0, values.indexOf(value));
+    return _clusterPointColor(index, values.length);
   }
 
   void _drawAssessmentLegend(Canvas canvas, Size size) {
@@ -722,11 +773,10 @@ class _ClusteringPainter extends CustomPainter {
     title.paint(canvas, box.topLeft + const Offset(10, 7));
     for (int index = 0; index < values.length; index++) {
       final double y = box.top + 28 + index * lineHeight + lineHeight / 2;
-      _drawObservationGlyph(
-        canvas,
+      canvas.drawCircle(
         Offset(box.left + 13, y),
-        Colors.white,
-        values[index],
+        3.5,
+        Paint()..color = _assessmentColor(values[index]),
       );
       final TextPainter label = TextPainter(
         text: TextSpan(
@@ -862,6 +912,7 @@ class _ClusteringPainter extends CustomPainter {
       oldDelegate.zoom != zoom ||
       oldDelegate.pan != pan ||
       oldDelegate.showObservations != showObservations ||
+      oldDelegate.dimensions != dimensions ||
       oldDelegate.fourthValue != fourthValue ||
       oldDelegate.hoverPosition != hoverPosition ||
       oldDelegate.assessmentVariable != assessmentVariable;
@@ -876,6 +927,7 @@ class _SceneTransform {
     required this.pitch,
     required this.zoom,
     required this.pan,
+    required this.dimensions,
   });
 
   factory _SceneTransform.fromData({
@@ -886,6 +938,7 @@ class _SceneTransform {
     required double pitch,
     required double zoom,
     required Offset pan,
+    required int dimensions,
   }) {
     final List<_Vec3> values = <_Vec3>[
       for (final List<double> row in observations)
@@ -936,6 +989,7 @@ class _SceneTransform {
       pitch: pitch,
       zoom: zoom,
       pan: pan,
+      dimensions: dimensions,
     );
   }
 
@@ -946,6 +1000,10 @@ class _SceneTransform {
   final double pitch;
   final double zoom;
   final Offset pan;
+  final int dimensions;
+
+  double get scenePixelsPerUnit =>
+      math.min(size.width, size.height) * 0.38 * zoom * dataScale;
 
   static double _axisExtent(_GaussianSlice slice, int axis) {
     if (axis >= slice.covariance.length ||
@@ -959,6 +1017,30 @@ class _SceneTransform {
 
   _ScreenPoint project(_Vec3 source) {
     final _Vec3 value = (source - center) * dataScale;
+    if (dimensions == 2) {
+      final double sceneSize = math.min(size.width, size.height) * 0.38 * zoom;
+      return _ScreenPoint(
+        Offset(
+          size.width / 2 + pan.dx + value.x * sceneSize,
+          size.height / 2 + pan.dy - value.y * sceneSize,
+        ),
+        0,
+      );
+    }
+    final _Vec3 rotated = rotatedDirection(value);
+    final double perspective = 4 / (4 - rotated.z.clamp(-2.5, 2.5));
+    final double sceneSize = math.min(size.width, size.height) * 0.38 * zoom;
+    return _ScreenPoint(
+      Offset(
+        size.width / 2 + pan.dx + rotated.x * sceneSize * perspective,
+        size.height / 2 + pan.dy - rotated.y * sceneSize * perspective,
+      ),
+      rotated.z,
+    );
+  }
+
+  _Vec3 rotatedDirection(_Vec3 value) {
+    if (dimensions == 2) return _Vec3(value.x, value.y, 0);
     final double cosYaw = math.cos(yaw);
     final double sinYaw = math.sin(yaw);
     final double x1 = cosYaw * value.x + sinYaw * value.z;
@@ -967,15 +1049,7 @@ class _SceneTransform {
     final double sinPitch = math.sin(pitch);
     final double y2 = cosPitch * value.y - sinPitch * z1;
     final double z2 = sinPitch * value.y + cosPitch * z1;
-    final double perspective = 4 / (4 - z2.clamp(-2.5, 2.5));
-    final double sceneSize = math.min(size.width, size.height) * 0.38 * zoom;
-    return _ScreenPoint(
-      Offset(
-        size.width / 2 + pan.dx + x1 * sceneSize * perspective,
-        size.height / 2 + pan.dy - y2 * sceneSize * perspective,
-      ),
-      z2,
-    );
+    return _Vec3(x1, y2, z2);
   }
 }
 
