@@ -3661,6 +3661,17 @@ class CanvasLogic {
         if (!context.mounted) {
           return;
         }
+        if (!await promptClearCompletedResultsBeforeRun(
+          context: context,
+          node: node,
+          datasetIds: nodeDatasetIds,
+          update: update,
+        )) {
+          return;
+        }
+        if (!context.mounted) {
+          return;
+        }
         String? finalDetail;
         try {
           finalDetail = await runQueued(
@@ -3688,6 +3699,17 @@ class CanvasLogic {
         return;
       case 'run_start':
         if (await promptLoadFromDiskInsteadOfRun(
+          context: context,
+          node: node,
+          datasetIds: nodeDatasetIds,
+          update: update,
+        )) {
+          return;
+        }
+        if (!context.mounted) {
+          return;
+        }
+        if (!await promptClearCompletedResultsBeforeRun(
           context: context,
           node: node,
           datasetIds: nodeDatasetIds,
@@ -4395,6 +4417,14 @@ class CanvasLogic {
         },
         onSaveAndRun: (Map<String, dynamic> params) async {
           _applyNodeParams(node: node, params: params, update: update);
+          if (!await promptClearCompletedResultsBeforeRun(
+            context: context,
+            node: node,
+            datasetIds: _datasetsForNode(node),
+            update: update,
+          )) {
+            return;
+          }
           String? finalDetail;
           try {
             finalDetail = await runQueued(
@@ -7584,10 +7614,10 @@ class CanvasLogic {
             update: update,
           ),
       runThisNode: (Map<String, dynamic> params, Set<String> datasetIds) =>
-          _runNodeDatasetAction(
-            runLabel: 'Running ${node.title}',
-            action: () => runThisStep(node.id, datasetIds: datasetIds),
+          _clearAndRunNodeDatasetAction(
             node: node,
+            params: params,
+            datasetIds: datasetIds,
             update: update,
           ),
       clearResults: (Map<String, dynamic> params, Set<String> datasetIds) =>
@@ -8702,6 +8732,26 @@ class CanvasLogic {
     }
   }
 
+  Future<String> _clearAndRunNodeDatasetAction({
+    required NodeModel node,
+    required Map<String, dynamic> params,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    await _clearNodeResults(
+      node: node,
+      params: params,
+      datasetIds: datasetIds,
+      update: update,
+    );
+    return _runNodeDatasetAction(
+      runLabel: 'Re-running ${node.title}',
+      action: () => runThisStep(node.id, datasetIds: datasetIds),
+      node: node,
+      update: update,
+    );
+  }
+
   Future<List<_MemoryRowSummary>> _memoryRows({String? nodeId}) async {
     final List<_MemoryRowSummary> rows = <_MemoryRowSummary>[];
     for (final NodeModel node in nodes) {
@@ -9386,6 +9436,65 @@ class CanvasLogic {
     if (context.mounted) {
       _showStatusSnackBar(context, message);
     }
+    return true;
+  }
+
+  Future<bool> promptClearCompletedResultsBeforeRun({
+    required BuildContext context,
+    required NodeModel node,
+    required Set<String> datasetIds,
+    required VoidCallback update,
+  }) async {
+    final Set<String> completedDatasetIds = datasetIds.where((String id) {
+      return _datasetsForNode(node).contains(id) &&
+          node.datasetStates[id] == DatasetState.done;
+    }).toSet();
+    if (completedDatasetIds.isEmpty) {
+      return true;
+    }
+    final Set<String> runnableDatasetIds = datasetIds
+        .where(
+          (String id) =>
+              _datasetsForNode(node).contains(id) &&
+              node.datasetStates[id] != DatasetState.done,
+        )
+        .toSet();
+    if (runnableDatasetIds.isNotEmpty) {
+      return true;
+    }
+    if (!context.mounted) {
+      return false;
+    }
+
+    final bool? clearAndRerun = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Results are already current'),
+        content: Text(
+          '${node.title} has already run and its inputs have not changed. '
+          'Clear its existing results and run it again?',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Clear results and re-run'),
+          ),
+        ],
+      ),
+    );
+    if (clearAndRerun != true) {
+      return false;
+    }
+    await _clearNodeResults(
+      node: node,
+      params: node.params,
+      datasetIds: completedDatasetIds,
+      update: update,
+    );
     return true;
   }
 
