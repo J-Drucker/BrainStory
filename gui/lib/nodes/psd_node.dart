@@ -21,7 +21,6 @@ class PSDNodeType extends NodeType {
   Map<String, dynamic> get defaultParams => {
     'fLow': 1.0,
     'fHigh': 40.0,
-    'outputMode': 'averaged', // 'segments' or 'averaged'
     'useParentSegments': false,
     'parentSegmentsNodeId': '',
     'windowing': 'hamming',
@@ -48,7 +47,6 @@ class PSDNodeType extends NodeType {
   }) {
     params.putIfAbsent('fLow', () => 1.0);
     params.putIfAbsent('fHigh', () => 40.0);
-    params.putIfAbsent('outputMode', () => 'averaged');
     params.putIfAbsent('useParentSegments', () => false);
     params.putIfAbsent('parentSegmentsNodeId', () => '');
     params.putIfAbsent('windowing', () => 'hamming');
@@ -133,28 +131,6 @@ class PSDNodeType extends NodeType {
                     keyboardType: TextInputType.number,
                     parser: (String value, dynamic previous) =>
                         double.tryParse(value) ?? previous,
-                  ),
-                ],
-              ),
-              const SizedBox(width: 16),
-              optionColumn(
-                title: 'Output',
-                width: 132,
-                children: <Widget>[
-                  RadioGroup<String>(
-                    groupValue: params['outputMode']?.toString() ?? 'averaged',
-                    onChanged: (String? value) {
-                      if (value == null) return;
-                      setState(() {
-                        params['outputMode'] = value;
-                      });
-                    },
-                    child: Column(
-                      children: <Widget>[
-                        compactRadio(label: 'As segments', value: 'segments'),
-                        compactRadio(label: 'Averaged', value: 'averaged'),
-                      ],
-                    ),
                   ),
                 ],
               ),
@@ -270,11 +246,6 @@ class PSDNodeType extends NodeType {
 
     final fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
     final fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
-    final mode = (params['outputMode'] ?? 'averaged').toString();
-    final bool deferAverageToDownstream =
-        params['deferAverageToDownstream'] == true;
-    final bool averageInThisNode =
-        mode != 'segments' && !deferAverageToDownstream;
     final SpectrumResult spectrum;
     final String source;
     spectrum = computeSegmentedSpectrum(
@@ -282,7 +253,7 @@ class PSDNodeType extends NodeType {
       fLow: fLow,
       fHigh: fHigh,
       averageWithinSegment: true,
-      averageAcrossSegments: averageInThisNode,
+      averageAcrossSegments: true,
     );
     source = segmented.source;
 
@@ -296,7 +267,7 @@ class PSDNodeType extends NodeType {
         fLow: fLow,
         fHigh: fHigh,
         averageWithinSegment: true,
-        averageAcrossSegments: averageInThisNode,
+        averageAcrossSegments: true,
         channelIndex: channelIndex,
       ),
       growable: false,

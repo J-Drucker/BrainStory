@@ -21,6 +21,7 @@ import 'matrix_transform_nodes.dart';
 import 'add_remove_markers_node.dart';
 import 'amplitude_features_node.dart';
 import 'segmentation_node.dart';
+import 'segment_average_node.dart';
 import 'sleep_staging_node.dart';
 import 'spectral_features_node.dart';
 import 'time_frequency_node.dart';
@@ -108,6 +109,11 @@ class NodeRegistry {
       create: () => AmplitudeFeaturesNodeType(),
     ),
     NodeRegistryEntry(group: NodeGroup.transform, create: () => PSDNodeType()),
+    NodeRegistryEntry(
+      group: NodeGroup.transform,
+      create: () => SegmentAverageNodeType(),
+      visible: false,
+    ),
     NodeRegistryEntry(
       group: NodeGroup.transform,
       create: () => TimeFrequencyNodeType(),

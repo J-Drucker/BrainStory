@@ -32,6 +32,7 @@ import '../nodes/matrix_transform_nodes.dart';
 import '../nodes/psd_average_node.dart';
 import '../nodes/psd_node.dart';
 import '../nodes/realign_node.dart';
+import '../nodes/segment_average_node.dart';
 import '../nodes/segmentation_node.dart';
 import '../nodes/sleep_staging_node.dart';
 import '../nodes/time_frequency_node.dart';
@@ -2015,9 +2016,7 @@ class CanvasLogic {
       case 'PSD':
         final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
         final double fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
-        final String outputMode = (params['outputMode'] ?? 'averaged')
-            .toString();
-        return 'Power spectral density was estimated from $fLow to $fHigh Hz using ${outputMode == 'segments' ? 'segment-wise output' : 'averaged output'}.';
+        return 'Power spectral density was estimated from $fLow to $fHigh Hz. Segment-level and average spectra were retained for inspection.';
       case 'FOOOF':
         final double fLow = (params['fLow'] as num?)?.toDouble() ?? 1.0;
         final double fHigh = (params['fHigh'] as num?)?.toDouble() ?? 40.0;
@@ -4635,9 +4634,6 @@ class CanvasLogic {
     final Set<String> forcedDependencyIds = _psdUsesParentSegments(psdNode)
         ? const <String>{}
         : _ensurePsdSegmentationParent(psdNode);
-    _ensurePsdAverageChild(psdNode);
-    psdNode.params['deferAverageToDownstream'] =
-        (psdNode.params['outputMode'] ?? 'averaged').toString() == 'averaged';
     return forcedDependencyIds;
   }
 
@@ -4768,74 +4764,6 @@ class CanvasLogic {
     return ((psdNode.params['windowOverlapPercent'] as num?)?.toDouble() ?? 0.0)
         .clamp(0.0, 95.0)
         .toDouble();
-  }
-
-  bool _ensurePsdAverageChild(NodeModel psdNode) {
-    final String outputMode = (psdNode.params['outputMode'] ?? 'averaged')
-        .toString();
-    if (outputMode != 'averaged') {
-      return false;
-    }
-    final List<NodeModel> children = _immediateChildren(psdNode.id);
-    if (children.any((NodeModel child) => child.type is PSDAverageNodeType)) {
-      return false;
-    }
-
-    final NodeModel averageNode = _buildNode(
-      type: PSDAverageNodeType(),
-      position: _nearestAvailablePosition(
-        Offset(
-          psdNode.position.dx,
-          psdNode.position.dy + _cardHeight + _spawnGap,
-        ),
-      ),
-      params: <String, dynamic>{
-        ...PSDAverageNodeType().defaultParams,
-        '_runtimeGeneratedByNodeId': psdNode.id,
-        if (psdNode.params['selectedDatasetIds'] != null)
-          'selectedDatasetIds': List<dynamic>.from(
-            psdNode.params['selectedDatasetIds'] as List<dynamic>,
-          ),
-      },
-    );
-    nodes.add(averageNode);
-
-    final List<Map<String, dynamic>> downstreamConnections = connections
-        .where(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == psdNode.id,
-        )
-        .map((Map<String, dynamic> connection) {
-          return Map<String, dynamic>.from(connection);
-        })
-        .toList(growable: false);
-    connections.removeWhere(
-      (Map<String, dynamic> connection) => connection['fromNode'] == psdNode.id,
-    );
-    _addAllMatchingConnections(psdNode, averageNode);
-    for (final Map<String, dynamic> connection in downstreamConnections) {
-      final NodeModel? downstream = _findNode(
-        connection['toNode']?.toString() ?? '',
-      );
-      if (downstream == null || downstream.id == averageNode.id) {
-        continue;
-      }
-      final _PortConnection? portConnection = _firstMatchingPortConnection(
-        averageNode,
-        downstream,
-      );
-      if (portConnection == null) {
-        continue;
-      }
-      connections.add(<String, dynamic>{
-        'fromNode': averageNode.id,
-        'fromPort': portConnection.fromPortIndex,
-        'toNode': downstream.id,
-        'toPort': portConnection.toPortIndex,
-      });
-    }
-    _seedNodeDatasetStates(averageNode);
-    return true;
   }
 
   Set<String> _ensureEqualWindowMarkerParent(NodeModel segmentationNode) {
@@ -7543,6 +7471,31 @@ class CanvasLogic {
     return viewerNode;
   }
 
+  String createAverageNodeFromViewer({
+    required String viewerNodeId,
+    required Dataset dataset,
+    required bool spectrum,
+  }) {
+    final NodeModel? sourceNode = _viewerEditSourceNodeForDataset(
+      viewerNodeId,
+      dataset,
+    );
+    if (sourceNode == null) {
+      return 'The viewer output could not be matched to a source node.';
+    }
+    final NodeType type = spectrum
+        ? PSDAverageNodeType()
+        : SegmentAverageNodeType();
+    final NodeModel averageNode = _spawnViewerEditNode(
+      sourceNode: sourceNode,
+      type: type,
+      datasetId: dataset.id,
+      params: const <String, dynamic>{},
+    );
+    selectedNodeId = averageNode.id;
+    return 'Created ${averageNode.title}.';
+  }
+
   NodeModel _spawnViewerEditNode({
     required NodeModel sourceNode,
     required NodeType type,
@@ -10112,6 +10065,9 @@ class CanvasLogic {
     }
     if (normalizedTitle == 'Average Spectra') {
       return PSDAverageNodeType();
+    }
+    if (normalizedTitle == 'Average Segments') {
+      return SegmentAverageNodeType();
     }
     return null;
   }

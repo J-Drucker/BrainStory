@@ -28,6 +28,7 @@ import 'package:brainstory_gui/nodes/matrix_transform_nodes.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/nodes/node_registry.dart';
 import 'package:brainstory_gui/nodes/psd_average_node.dart';
+import 'package:brainstory_gui/nodes/segment_average_node.dart';
 import 'package:brainstory_gui/nodes/psd_node.dart';
 import 'package:brainstory_gui/nodes/recode_markers_node.dart';
 import 'package:brainstory_gui/nodes/realign_node.dart';
@@ -4696,7 +4697,7 @@ time,Fz,Cz
   });
 
   test(
-    'running averaged PSD expands visible marker, segmentation, and average nodes',
+    'running PSD expands visible marker and segmentation dependencies',
     () async {
       final CanvasLogic logic = CanvasLogic();
       final Dataset dataset = Dataset('dataset-1', label: 'Example');
@@ -4718,8 +4719,6 @@ time,Fz,Cz
         'toPort': 0,
       });
 
-      psdNode.params['outputMode'] = 'averaged';
-
       await logic.runFromStart(psdNode.id, datasetIds: <String>{dataset.id});
 
       final NodeModel markerNode = logic.nodes.firstWhere(
@@ -4730,11 +4729,6 @@ time,Fz,Cz
       final NodeModel segmentationNode = logic.nodes.firstWhere(
         (NodeModel node) => node.type is SegmentationNodeType,
       );
-      final NodeModel averageNode = logic.nodes.firstWhere(
-        (NodeModel node) => node.type is PSDAverageNodeType,
-      );
-
-      expect(psdNode.params['deferAverageToDownstream'], isTrue);
       expect(
         logic.connections.any(
           (Map<String, dynamic> connection) =>
@@ -4759,31 +4753,76 @@ time,Fz,Cz
         ),
         isTrue,
       );
-      expect(
-        logic.connections.any(
-          (Map<String, dynamic> connection) =>
-              connection['fromNode'] == psdNode.id &&
-              connection['toNode'] == averageNode.id,
-        ),
-        isTrue,
-      );
       expect(logic.nodeGroups, hasLength(1));
       expect(logic.nodeGroups.single.label, 'PSD setup');
       expect(logic.nodeGroups.single.nodeIds, <String>{
         psdNode.id,
         markerNode.id,
         segmentationNode.id,
-        averageNode.id,
       });
-      expect(averageNode.datasetStates[dataset.id], isNot(DatasetState.done));
+      expect(
+        logic.nodes.where((NodeModel node) => node.type is PSDAverageNodeType),
+        isEmpty,
+      );
 
       logic.ungroupNodes(logic.nodeGroups.single.id);
       expect(logic.nodeGroups, isEmpty);
       await logic.runFromStart(psdNode.id, datasetIds: <String>{dataset.id});
-      expect(averageNode.datasetStates[dataset.id], isNot(DatasetState.done));
       expect(logic.nodeGroups, isEmpty);
     },
   );
+
+  test('viewer average actions create explicit downstream nodes', () {
+    final CanvasLogic logic = CanvasLogic();
+    final Dataset dataset = Dataset('dataset-1', label: 'Example');
+    logic.datasets[dataset.id] = dataset;
+    logic.addNode(SegmentationNodeType());
+    logic.addNode(PSDNodeType());
+    final NodeModel segmentationNode = logic.nodes[0];
+    final NodeModel psdNode = logic.nodes[1];
+    segmentationNode.datasetStates[dataset.id] = DatasetState.done;
+    psdNode.datasetStates[dataset.id] = DatasetState.done;
+
+    expect(
+      logic.createAverageNodeFromViewer(
+        viewerNodeId: segmentationNode.id,
+        dataset: dataset,
+        spectrum: false,
+      ),
+      'Created Average Segments.',
+    );
+    expect(
+      logic.createAverageNodeFromViewer(
+        viewerNodeId: psdNode.id,
+        dataset: dataset,
+        spectrum: true,
+      ),
+      'Created Average Spectra.',
+    );
+
+    final NodeModel segmentAverage = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is SegmentAverageNodeType,
+    );
+    final NodeModel spectrumAverage = logic.nodes.firstWhere(
+      (NodeModel node) => node.type is PSDAverageNodeType,
+    );
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == segmentationNode.id &&
+            connection['toNode'] == segmentAverage.id,
+      ),
+      isTrue,
+    );
+    expect(
+      logic.connections.any(
+        (Map<String, dynamic> connection) =>
+            connection['fromNode'] == psdNode.id &&
+            connection['toNode'] == spectrumAverage.id,
+      ),
+      isTrue,
+    );
+  });
 
   test(
     'PSD can use selected parent segments instead of creating windows',
@@ -4947,6 +4986,57 @@ time,Fz,Cz
     expect(dataset.spectrum!.power, <double>[2, 4]);
     expect(dataset.spectrum!.segmentCount, 2);
   });
+
+  test(
+    'Average Segments creates one channel-wise mean per condition',
+    () async {
+      final Dataset dataset = Dataset('segment-average', label: 'Average');
+      dataset.segmentedTimeSeries = const SegmentedTimeSeriesData(
+        sampleRate: 2,
+        channelLabels: <String>['Fz', 'Cz'],
+        segments: <SignalSegmentData>[
+          SignalSegmentData(
+            channelSamples: <List<double>>[
+              <double>[1, 3],
+              <double>[10, 20],
+            ],
+            startSeconds: 0,
+            stopSeconds: 1,
+            label: 'rare',
+          ),
+          SignalSegmentData(
+            channelSamples: <List<double>>[
+              <double>[3, 5],
+              <double>[30, 40],
+            ],
+            startSeconds: 0,
+            stopSeconds: 1,
+            label: 'rare',
+          ),
+          SignalSegmentData(
+            channelSamples: <List<double>>[
+              <double>[8, 12],
+              <double>[50, 70],
+            ],
+            startSeconds: 0,
+            stopSeconds: 1,
+            label: 'frequent',
+          ),
+        ],
+      );
+
+      await SegmentAverageNodeType().run(dataset, const <String, dynamic>{});
+
+      final SegmentedTimeSeriesData averaged = dataset.segmentedTimeSeries!;
+      expect(averaged.segments, hasLength(2));
+      final SignalSegmentData rare = averaged.segments.firstWhere(
+        (SignalSegmentData segment) => segment.label == 'rare',
+      );
+      expect(rare.kind, 'average');
+      expect(rare.channelSamples[0], <double>[2, 4]);
+      expect(rare.channelSamples[1], <double>[20, 30]);
+    },
+  );
 
   test(
     'Edit Channels node can rename, delete, and build derived channels',

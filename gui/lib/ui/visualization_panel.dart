@@ -544,6 +544,8 @@ class _VisualizationChart extends StatelessWidget {
         datasets: datasets,
         params: params,
         onChanged: onChanged,
+        onSaveAverage: () =>
+            _saveAverageNode(context, dataset: datasets.first, spectrum: true),
       );
     }
     if (view == 'impedances') {
@@ -610,6 +612,8 @@ class _VisualizationChart extends StatelessWidget {
       return _SegmentedChart(
         dataset: activeDataset,
         params: params,
+        onSaveAverage: () =>
+            _saveAverageNode(context, dataset: activeDataset, spectrum: false),
         onPersistChannelEdits:
             (Map<String, dynamic> config, bool runAfterSave) async {
               final String message = await logic.persistViewerEdits(
@@ -687,6 +691,22 @@ class _VisualizationChart extends StatelessWidget {
       },
       onChanged: onChanged,
     );
+  }
+
+  void _saveAverageNode(
+    BuildContext context, {
+    required Dataset dataset,
+    required bool spectrum,
+  }) {
+    final String message = logic.createAverageNodeFromViewer(
+      viewerNodeId: nodeId,
+      dataset: dataset,
+      spectrum: spectrum,
+    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+    onDataChanged();
   }
 }
 
@@ -904,12 +924,14 @@ class _SegmentedChart extends StatefulWidget {
     required this.dataset,
     required this.params,
     required this.onPersistChannelEdits,
+    required this.onSaveAverage,
   });
 
   final Dataset dataset;
   final Map<String, dynamic> params;
   final Future<void> Function(Map<String, dynamic> config, bool runAfterSave)
   onPersistChannelEdits;
+  final VoidCallback onSaveAverage;
 
   @override
   State<_SegmentedChart> createState() => _SegmentedChartState();
@@ -1539,6 +1561,14 @@ class _SegmentedChartState extends State<_SegmentedChart> {
                               });
                             },
                           ),
+                        ),
+                        OutlinedButton.icon(
+                          key: const ValueKey<String>(
+                            'segmentation-save-average',
+                          ),
+                          onPressed: widget.onSaveAverage,
+                          icon: const Icon(Icons.add_chart, size: 17),
+                          label: const Text('Save average as new node'),
                         ),
                         const _SegmentControlStripDivider(),
                         _SegmentViewerScaleControls(
@@ -3011,17 +3041,12 @@ String _formatImpedanceTime(int micros) {
   return 't = ${seconds.toStringAsFixed(seconds.abs() >= 100 ? 1 : 3)} s';
 }
 
-Map<String, List<double>> _psdConditionPowers(
+Map<String, List<List<double>>> _psdConditionSegmentPowers(
   Dataset dataset,
   FrequencySpectrumData spectrum,
   int channelIndex,
 ) {
-  final List<double> channelPower = channelIndex < spectrum.channelPowers.length
-      ? spectrum.channelPowers[channelIndex]
-      : channelIndex == 0
-      ? spectrum.power
-      : const <double>[];
-  final List<List<double>> channelSegmentPowers =
+  final List<List<double>> segmentPowers =
       channelIndex < spectrum.channelSegmentPowers.length
       ? spectrum.channelSegmentPowers[channelIndex]
       : channelIndex == 0
@@ -3029,11 +3054,18 @@ Map<String, List<double>> _psdConditionPowers(
       : const <List<double>>[];
   final List<SignalSegmentData> segments =
       dataset.segmentedTimeSeries?.segments ?? const <SignalSegmentData>[];
-  if (channelSegmentPowers.isEmpty ||
-      segments.length != channelSegmentPowers.length) {
-    return <String, List<double>>{'All segments': channelPower};
+  if (segmentPowers.isEmpty || segments.length != segmentPowers.length) {
+    final List<double> fallback = channelIndex < spectrum.channelPowers.length
+        ? spectrum.channelPowers[channelIndex]
+        : channelIndex == 0
+        ? spectrum.power
+        : const <double>[];
+    return fallback.isEmpty
+        ? const <String, List<List<double>>>{}
+        : <String, List<List<double>>>{
+            'All segments': <List<double>>[fallback],
+          };
   }
-
   final Map<String, List<List<double>>> grouped =
       <String, List<List<double>>>{};
   for (int index = 0; index < segments.length; index++) {
@@ -3042,23 +3074,132 @@ Map<String, List<double>> _psdConditionPowers(
           _normalizedSegmentLabel(segments[index]),
           () => <List<double>>[],
         )
-        .add(channelSegmentPowers[index]);
+        .add(segmentPowers[index]);
   }
-  return grouped.map((String label, List<List<double>> powers) {
-    final int binCount = powers
-        .map((List<double> values) => values.length)
-        .fold<int>(powers.first.length, math.min);
-    final List<double> mean = List<double>.filled(binCount, 0.0);
-    for (final List<double> values in powers) {
-      for (int index = 0; index < binCount; index++) {
-        mean[index] += values[index];
-      }
-    }
-    for (int index = 0; index < binCount; index++) {
-      mean[index] /= powers.length;
-    }
-    return MapEntry<String, List<double>>(label, mean);
+  return grouped;
+}
+
+class _PsdTraceRecord {
+  const _PsdTraceRecord({
+    required this.condition,
+    required this.channelIndex,
+    required this.segmentIndex,
+    required this.datasetIndex,
+    required this.series,
   });
+
+  final String condition;
+  final int channelIndex;
+  final int segmentIndex;
+  final int datasetIndex;
+  final _SeriesData series;
+}
+
+List<_PsdPanelData> _buildPsdDimensionPanels(
+  List<_PsdTraceRecord> records, {
+  required String conditionMode,
+  required String channelMode,
+  required String segmentMode,
+  required List<String> channelLabels,
+  required bool logY,
+}) {
+  final Set<String> averaged = <String>{
+    if (conditionMode == 'average') 'condition',
+    if (channelMode == 'average') 'channel',
+    if (segmentMode == 'average') 'segment',
+  };
+  final Set<String> separated = <String>{
+    if (conditionMode == 'separate') 'condition',
+    if (channelMode == 'separate') 'channel',
+    if (segmentMode == 'separate') 'segment',
+  };
+
+  String dimensionValue(_PsdTraceRecord record, String dimension) =>
+      switch (dimension) {
+        'condition' => record.condition,
+        'channel' => record.channelIndex.toString(),
+        'segment' => record.segmentIndex.toString(),
+        _ => record.datasetIndex.toString(),
+      };
+
+  String displayDimension(_PsdTraceRecord record, String dimension) =>
+      switch (dimension) {
+        'condition' => record.condition,
+        'channel' =>
+          record.channelIndex < channelLabels.length
+              ? channelLabels[record.channelIndex]
+              : 'Channel ${record.channelIndex + 1}',
+        'segment' => 'Segment ${record.segmentIndex + 1}',
+        _ => record.series.label.split(' · ').first,
+      };
+
+  String keyFor(_PsdTraceRecord record, Iterable<String> dimensions) =>
+      dimensions
+          .map((String dimension) => dimensionValue(record, dimension))
+          .join('|');
+
+  final Map<String, List<_PsdTraceRecord>> panelGroups =
+      <String, List<_PsdTraceRecord>>{};
+  for (final _PsdTraceRecord record in records) {
+    panelGroups
+        .putIfAbsent(keyFor(record, separated), () => <_PsdTraceRecord>[])
+        .add(record);
+  }
+
+  final List<_PsdPanelData> panels = <_PsdPanelData>[];
+  for (final List<_PsdTraceRecord> panelRecords in panelGroups.values) {
+    final Map<String, List<_PsdTraceRecord>> traceGroups =
+        <String, List<_PsdTraceRecord>>{};
+    for (final _PsdTraceRecord record in panelRecords) {
+      final List<String> identityDimensions = <String>[
+        'dataset',
+        if (!averaged.contains('condition')) 'condition',
+        if (!averaged.contains('channel')) 'channel',
+        if (!averaged.contains('segment')) 'segment',
+      ];
+      traceGroups
+          .putIfAbsent(
+            keyFor(record, identityDimensions),
+            () => <_PsdTraceRecord>[],
+          )
+          .add(record);
+    }
+    final List<_SeriesData> series = traceGroups.values
+        .map((records) {
+          final _PsdTraceRecord first = records.first;
+          final List<String> labelParts = <String>[
+            first.series.label.split(' · ').first,
+            if (!averaged.contains('condition')) first.condition,
+            if (!averaged.contains('channel'))
+              displayDimension(first, 'channel'),
+            if (!averaged.contains('segment'))
+              displayDimension(first, 'segment'),
+          ];
+          if (records.length == 1) {
+            return _SeriesData(
+              label: labelParts.join(' · '),
+              color: first.series.color,
+              points: first.series.points,
+              subtitle: first.series.subtitle,
+            );
+          }
+          return _averagePsdSeries(
+            records.map((_PsdTraceRecord record) => record.series).toList(),
+            label: labelParts.join(' · '),
+            color: first.series.color,
+            logY: logY,
+          );
+        })
+        .toList(growable: false);
+    final _PsdTraceRecord first = panelRecords.first;
+    final String title = separated.isEmpty
+        ? 'PSD'
+        : separated
+              .map((String dimension) => displayDimension(first, dimension))
+              .join(' · ');
+    panels.add(_PsdPanelData(title: title, series: series));
+  }
+  return panels;
 }
 
 class _PsdPanelData {
@@ -3097,157 +3238,18 @@ _SeriesData _averagePsdSeries(
   );
 }
 
-List<_SeriesData> _averagePsdChannels(
-  Map<int, List<_SeriesData>> channels, {
-  required String condition,
-  required bool logY,
-}) {
-  final int datasetCount = channels.values.fold<int>(
-    0,
-    (int count, List<_SeriesData> series) => math.max(count, series.length),
-  );
-  final List<_SeriesData> averages = <_SeriesData>[];
-  for (int datasetIndex = 0; datasetIndex < datasetCount; datasetIndex++) {
-    final List<_SeriesData> inputs = channels.values
-        .where((List<_SeriesData> values) => datasetIndex < values.length)
-        .map((List<_SeriesData> values) => values[datasetIndex])
-        .toList(growable: false);
-    if (inputs.isEmpty) continue;
-    final String firstLabel = inputs.first.label;
-    final int separator = firstLabel.indexOf(' · ');
-    averages.add(
-      _averagePsdSeries(
-        inputs,
-        label: separator < 0
-            ? '$condition average'
-            : firstLabel.substring(0, separator),
-        color: inputs.first.color,
-        logY: logY,
-      ),
-    );
-  }
-  return averages;
-}
-
-List<_PsdPanelData> _buildPsdPanels(
-  Map<String, Map<int, List<_SeriesData>>> source, {
-  required String conditionMode,
-  required String channelMode,
-  required List<String> channelLabels,
-  required bool logY,
-}) {
-  final List<_PsdPanelData> panels = <_PsdPanelData>[];
-  if (conditionMode == 'separate') {
-    for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
-        in source.entries) {
-      if (channelMode == 'stack') {
-        for (final MapEntry<int, List<_SeriesData>> channel
-            in condition.value.entries) {
-          panels.add(
-            _PsdPanelData(
-              title:
-                  '${condition.key} · ${channel.key < channelLabels.length ? channelLabels[channel.key] : 'Channel ${channel.key + 1}'}',
-              series: channel.value,
-            ),
-          );
-        }
-      } else if (channelMode == 'average') {
-        final List<_SeriesData> averages = _averagePsdChannels(
-          condition.value,
-          condition: condition.key,
-          logY: logY,
-        );
-        if (averages.isNotEmpty) {
-          panels.add(_PsdPanelData(title: condition.key, series: averages));
-        }
-      } else {
-        panels.add(
-          _PsdPanelData(
-            title: condition.key,
-            series: condition.value.values
-                .expand((List<_SeriesData> values) => values)
-                .toList(growable: false),
-          ),
-        );
-      }
-    }
-    return panels;
-  }
-
-  if (channelMode == 'stack') {
-    final Set<int> channelIndices = source.values
-        .expand((Map<int, List<_SeriesData>> channels) => channels.keys)
-        .toSet();
-    for (final int channelIndex in channelIndices) {
-      final List<_SeriesData> conditionSeries = <_SeriesData>[];
-      for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
-          in source.entries) {
-        final List<_SeriesData> values =
-            condition.value[channelIndex] ?? const <_SeriesData>[];
-        for (final _SeriesData value in values) {
-          conditionSeries.add(
-            _SeriesData(
-              label: values.length == 1
-                  ? condition.key
-                  : '${condition.key} · ${value.label.split(' · ').first}',
-              color: value.color,
-              points: value.points,
-              subtitle: value.subtitle,
-            ),
-          );
-        }
-      }
-      if (conditionSeries.isNotEmpty) {
-        panels.add(
-          _PsdPanelData(
-            title: channelIndex < channelLabels.length
-                ? channelLabels[channelIndex]
-                : 'Channel ${channelIndex + 1}',
-            series: conditionSeries,
-          ),
-        );
-      }
-    }
-  } else if (channelMode == 'average') {
-    final List<_SeriesData> conditionSeries = <_SeriesData>[];
-    for (final MapEntry<String, Map<int, List<_SeriesData>>> condition
-        in source.entries) {
-      final List<_SeriesData> averages = _averagePsdChannels(
-        condition.value,
-        condition: condition.key,
-        logY: logY,
-      );
-      conditionSeries.addAll(averages);
-    }
-    if (conditionSeries.isNotEmpty) {
-      panels.add(_PsdPanelData(title: 'Conditions', series: conditionSeries));
-    }
-  } else {
-    panels.add(
-      _PsdPanelData(
-        title: 'Conditions × channels',
-        series: source.values
-            .expand(
-              (Map<int, List<_SeriesData>> channels) =>
-                  channels.values.expand((List<_SeriesData> values) => values),
-            )
-            .toList(growable: false),
-      ),
-    );
-  }
-  return panels;
-}
-
 class _PsdChart extends StatelessWidget {
   const _PsdChart({
     required this.datasets,
     required this.params,
     required this.onChanged,
+    required this.onSaveAverage,
   });
 
   final List<Dataset> datasets;
   final Map<String, dynamic> params;
   final VoidCallback onChanged;
+  final VoidCallback onSaveAverage;
 
   @override
   Widget build(BuildContext context) {
@@ -3257,6 +3259,7 @@ class _PsdChart extends StatelessWidget {
     params.putIfAbsent('psd_view_log_y', () => true);
     params.putIfAbsent('psd_condition_mode', () => 'separate');
     params.putIfAbsent('psd_channel_mode', () => 'average');
+    params.putIfAbsent('psd_segment_mode', () => 'average');
 
     final int channelCount = datasets
         .map((Dataset dataset) {
@@ -3289,8 +3292,7 @@ class _PsdChart extends StatelessWidget {
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
-    final Map<String, Map<int, List<_SeriesData>>> seriesByConditionAndChannel =
-        <String, Map<int, List<_SeriesData>>>{};
+    final List<_PsdTraceRecord> traceRecords = <_PsdTraceRecord>[];
     final Map<String, Color> conditionColors = <String, Color>{};
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
@@ -3300,47 +3302,52 @@ class _PsdChart extends StatelessWidget {
         continue;
       }
       for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
-        final Map<String, List<double>> conditionPowers = _psdConditionPowers(
-          dataset,
-          spectrum,
-          channelIndex,
-        );
-        for (final MapEntry<String, List<double>> entry
+        final Map<String, List<List<double>>> conditionPowers =
+            _psdConditionSegmentPowers(dataset, spectrum, channelIndex);
+        for (final MapEntry<String, List<List<double>>> entry
             in conditionPowers.entries) {
-          final int count = math.min(freqs.length, entry.value.length);
-          final List<FlSpot> points = <FlSpot>[];
-          for (int i = 0; i < count; i++) {
-            final double sourcePower = entry.value[i];
-            final double plotPower = logY
-                ? math.log((sourcePower <= 0 ? 1.0e-12 : sourcePower)) /
-                      math.ln10
-                : sourcePower;
-            points.add(FlSpot(freqs[i], plotPower));
-          }
-          if (points.isEmpty) continue;
           final Color conditionColor = conditionColors.putIfAbsent(
             entry.key,
             () => _segmentLabelColor(entry.key, conditionColors.length),
           );
-          final String channelLabel = channelIndex < channelLabels.length
-              ? channelLabels[channelIndex]
-              : 'Channel ${channelIndex + 1}';
-          seriesByConditionAndChannel
-              .putIfAbsent(entry.key, () => <int, List<_SeriesData>>{})
-              .putIfAbsent(channelIndex, () => <_SeriesData>[])
-              .add(
-                _SeriesData(
-                  label: datasets.length == 1
-                      ? channelLabel
-                      : '${dataset.label} · $channelLabel',
+          for (
+            int segmentIndex = 0;
+            segmentIndex < entry.value.length;
+            segmentIndex++
+          ) {
+            final List<double> power = entry.value[segmentIndex];
+            final int count = math.min(freqs.length, power.length);
+            final List<FlSpot> points = List<FlSpot>.generate(count, (int i) {
+              final double sourcePower = power[i];
+              return FlSpot(
+                freqs[i],
+                logY
+                    ? math.log(sourcePower <= 0 ? 1.0e-12 : sourcePower) /
+                          math.ln10
+                    : sourcePower,
+              );
+            }, growable: false);
+            if (points.isEmpty) continue;
+            traceRecords.add(
+              _PsdTraceRecord(
+                condition: entry.key,
+                channelIndex: channelIndex,
+                segmentIndex: segmentIndex,
+                datasetIndex: datasetIndex,
+                series: _SeriesData(
+                  label: dataset.label,
                   color: psdConditionTraceColor(
                     conditionColor,
-                    (datasetIndex * channelCount) + channelIndex,
+                    (datasetIndex * channelCount * entry.value.length) +
+                        (channelIndex * entry.value.length) +
+                        segmentIndex,
                   ),
                   points: points,
                   subtitle: '$count bins',
                 ),
-              );
+              ),
+            );
+          }
         }
       }
     }
@@ -3350,12 +3357,19 @@ class _PsdChart extends StatelessWidget {
         ? 'butterfly'
         : storedConditionMode;
     params['psd_condition_mode'] = conditionMode;
-    final String channelMode = (params['psd_channel_mode'] ?? 'average')
+    final String storedChannelMode = (params['psd_channel_mode'] ?? 'average')
         .toString();
-    final List<_PsdPanelData> panels = _buildPsdPanels(
-      seriesByConditionAndChannel,
+    final String channelMode = storedChannelMode == 'stack'
+        ? 'separate'
+        : storedChannelMode;
+    params['psd_channel_mode'] = channelMode;
+    final String segmentMode = (params['psd_segment_mode'] ?? 'average')
+        .toString();
+    final List<_PsdPanelData> panels = _buildPsdDimensionPanels(
+      traceRecords,
       conditionMode: conditionMode,
       channelMode: channelMode,
+      segmentMode: segmentMode,
       channelLabels: channelLabels,
       logY: logY,
     );
@@ -3481,6 +3495,12 @@ class _PsdChart extends StatelessWidget {
         spacing: 8,
         runSpacing: 8,
         children: <Widget>[
+          OutlinedButton.icon(
+            key: const ValueKey<String>('psd-save-average'),
+            onPressed: onSaveAverage,
+            icon: const Icon(Icons.add_chart, size: 17),
+            label: const Text('Save average as new node'),
+          ),
           _PsdMenuChip<double>(
             label: 'Range',
             valueLabel: '${windowHz.toStringAsFixed(0)} Hz',
@@ -3525,37 +3545,34 @@ class _PsdChart extends StatelessWidget {
               onChanged();
             },
           ),
-          if (seriesByConditionAndChannel.length > 1)
-            SegmentedButton<String>(
-              segments: const <ButtonSegment<String>>[
-                ButtonSegment<String>(
-                  value: 'separate',
-                  label: Text('Separate'),
-                ),
-                ButtonSegment<String>(
-                  value: 'butterfly',
-                  label: Text('Butterfly'),
-                ),
-              ],
-              selected: <String>{conditionMode},
-              onSelectionChanged: (Set<String> selection) {
-                params['psd_condition_mode'] = selection.first;
+          if (conditionColors.length > 1)
+            _PsdDimensionModeControl(
+              label: 'Conditions',
+              value: conditionMode,
+              onChanged: (String value) {
+                params['psd_condition_mode'] = value;
                 onChanged();
               },
             ),
           if (channelCount > 1)
-            SegmentedButton<String>(
-              segments: const <ButtonSegment<String>>[
-                ButtonSegment<String>(value: 'stack', label: Text('Stack')),
-                ButtonSegment<String>(
-                  value: 'butterfly',
-                  label: Text('Butterfly'),
-                ),
-                ButtonSegment<String>(value: 'average', label: Text('Average')),
-              ],
-              selected: <String>{channelMode},
-              onSelectionChanged: (Set<String> selection) {
-                params['psd_channel_mode'] = selection.first;
+            _PsdDimensionModeControl(
+              label: 'Channels',
+              value: channelMode,
+              onChanged: (String value) {
+                params['psd_channel_mode'] = value;
+                onChanged();
+              },
+            ),
+          if (traceRecords
+                  .map((_PsdTraceRecord record) => record.segmentIndex)
+                  .toSet()
+                  .length >
+              1)
+            _PsdDimensionModeControl(
+              label: 'Segments',
+              value: segmentMode,
+              onChanged: (String value) {
+                params['psd_segment_mode'] = value;
                 onChanged();
               },
             ),
@@ -3623,6 +3640,44 @@ class _PsdChart extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+class _PsdDimensionModeControl extends StatelessWidget {
+  const _PsdDimensionModeControl({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 11),
+        ),
+        const SizedBox(height: 3),
+        SegmentedButton<String>(
+          segments: const <ButtonSegment<String>>[
+            ButtonSegment<String>(value: 'separate', label: Text('Separate')),
+            ButtonSegment<String>(value: 'butterfly', label: Text('Butterfly')),
+            ButtonSegment<String>(value: 'average', label: Text('Average')),
+          ],
+          selected: <String>{value},
+          onSelectionChanged: (Set<String> selection) {
+            if (selection.isNotEmpty) onChanged(selection.first);
+          },
+        ),
+      ],
     );
   }
 }
