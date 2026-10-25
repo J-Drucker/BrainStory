@@ -664,6 +664,7 @@ class _VisualizationChart extends StatelessWidget {
         viewerNodeId: nodeId,
         dataset: activeDataset,
       ),
+      saveToExistingNodeLabel: logic.viewerEditExistingSaveLabel(nodeId),
       onCloseAndRun: () async {
         final String message = await logic.runViewerEditChild(
           viewerNodeId: nodeId,

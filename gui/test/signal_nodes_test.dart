@@ -3649,6 +3649,80 @@ Mk2=Response,Response,4,1,0
     );
   });
 
+  test(
+    'editing an edit node uses parent data and can append to itself',
+    () async {
+      final CanvasLogic logic = CanvasLogic();
+      final Dataset dataset = Dataset('dataset-1', label: 'Example')
+        ..timeSeries = TimeSeriesData(
+          samples: const <double>[1, 2, 3],
+          sampleRate: 100,
+          channelLabels: const <String>['Cz'],
+        );
+      logic.datasets[dataset.id] = dataset;
+      logic.addNode(ImportNodeType());
+      final NodeModel source = logic.nodes.single;
+      source.datasetStates[dataset.id] = DatasetState.done;
+
+      await logic.persistViewerEdits(
+        viewerNodeId: source.id,
+        dataset: dataset,
+        markerEdits: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            'label': 'first',
+            'onsetMicros': 1000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+        ],
+      );
+      final NodeModel edit = logic.nodes.firstWhere(
+        (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+      );
+
+      final List<VisualizationSourceRef> refs = logic
+          .visualizationSourceRefsForNode(edit.id);
+      expect(refs, hasLength(1));
+      expect(refs.single.materializeFromNodeId, source.id);
+      expect(
+        logic.viewerEditExistingSaveLabel(edit.id),
+        'Append changes to this node',
+      );
+
+      final String message = await logic.persistViewerEdits(
+        viewerNodeId: edit.id,
+        dataset: dataset,
+        markerEdits: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            'label': 'first',
+            'onsetMicros': 1000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+          <String, dynamic>{
+            'datasetId': dataset.id,
+            'label': 'second',
+            'onsetMicros': 2000,
+            'durationMicros': 0,
+            'markerType': MarkerType.event,
+          },
+        ],
+        saveToExistingNode: true,
+      );
+
+      expect(message, 'Updated Edit Markers.');
+      expect(
+        logic.nodes.where(
+          (NodeModel node) => node.type is AddRemoveMarkersNodeType,
+        ),
+        hasLength(1),
+      );
+      expect(edit.params['markers'], hasLength(2));
+    },
+  );
+
   test('same-parent channel and marker edits combine when updated', () async {
     final CanvasLogic logic = CanvasLogic();
     final Dataset dataset = Dataset('dataset-1', label: 'Example')
@@ -3938,6 +4012,7 @@ Mk2=Response,Response,4,1,0
       viewerNodeId: detectionNode.id,
       dataset: second,
       interactiveArtifactParams: paramsFor(second, 'second-blink'),
+      saveToExistingNode: true,
     );
 
     expect(updateMessage, 'Updated Interactive Artifact Detection.');

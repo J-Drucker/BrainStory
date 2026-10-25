@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -43,6 +44,7 @@ class RawSignalBrowser extends StatefulWidget {
     this.onClose,
     this.onCloseAndRun,
     this.canSaveToExistingNode = false,
+    this.saveToExistingNodeLabel = 'Save to existing node',
   });
 
   final Dataset dataset;
@@ -52,6 +54,7 @@ class RawSignalBrowser extends StatefulWidget {
   final VoidCallback? onClose;
   final Future<void> Function()? onCloseAndRun;
   final bool canSaveToExistingNode;
+  final String saveToExistingNodeLabel;
 
   @override
   State<RawSignalBrowser> createState() => _RawSignalBrowserState();
@@ -94,6 +97,32 @@ class _ChannelDisplayRow {
   final String label;
   final List<double> samples;
   final bool removed;
+}
+
+class _ViewerDraftSnapshot {
+  const _ViewerDraftSnapshot({
+    required this.unsaved,
+    this.markers,
+    this.markerEditOperations,
+    this.markerOriginalMarkers,
+    this.channelEditConfig,
+    this.artifactExemplars,
+    this.artifactCandidates,
+    this.artifactTemplates,
+    this.persistedFingerprint,
+    this.savedChangesSummary,
+  });
+
+  final bool unsaved;
+  final List<Map<String, dynamic>>? markers;
+  final Map<String, dynamic>? markerEditOperations;
+  final List<Map<String, dynamic>>? markerOriginalMarkers;
+  final Map<String, dynamic>? channelEditConfig;
+  final List<Map<String, dynamic>>? artifactExemplars;
+  final List<Map<String, dynamic>>? artifactCandidates;
+  final List<Map<String, dynamic>>? artifactTemplates;
+  final String? persistedFingerprint;
+  final _SavedChangesSummary? savedChangesSummary;
 }
 
 class _RawSignalBrowserState extends State<RawSignalBrowser> {
@@ -146,6 +175,8 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
   _SavedChangesSummary? _savedChangesSummary;
   double _lastTraceViewportWidth = 180;
   bool _traceViewportSyncScheduled = false;
+  final Map<String, _ViewerDraftSnapshot> _draftsByViewIdentity =
+      <String, _ViewerDraftSnapshot>{};
 
   @override
   void initState() {
@@ -166,14 +197,47 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final String nextIdentity = _currentViewIdentity();
     _savedChangesSummary ??= _savedChangesSummaryFromParams();
     if (_viewIdentity != nextIdentity) {
+      _storeCurrentDraft();
       _viewIdentity = nextIdentity;
-      _draftMarkers = null;
-      _draftMarkerEditOperations = null;
-      _draftMarkerOriginalMarkers = null;
-      _draftChannelEditConfig = null;
-      _lastPersistedDraftFingerprint = null;
+      _restoreDraft(nextIdentity);
       _scheduleViewportReset();
     }
+  }
+
+  void _storeCurrentDraft() {
+    final String? identity = _viewIdentity;
+    if (identity == null) return;
+    if (!_hasDraftRecord && _savedChangesSummary == null) {
+      _draftsByViewIdentity.remove(identity);
+      return;
+    }
+    _draftsByViewIdentity[identity] = _ViewerDraftSnapshot(
+      unsaved: _hasUnsavedDraftChanges,
+      markers: _draftMarkers,
+      markerEditOperations: _draftMarkerEditOperations,
+      markerOriginalMarkers: _draftMarkerOriginalMarkers,
+      channelEditConfig: _draftChannelEditConfig,
+      artifactExemplars: _draftArtifactExemplars,
+      artifactCandidates: _draftArtifactCandidates,
+      artifactTemplates: _draftArtifactTemplates,
+      persistedFingerprint: _lastPersistedDraftFingerprint,
+      savedChangesSummary: _savedChangesSummary,
+    );
+  }
+
+  void _restoreDraft(String identity) {
+    final _ViewerDraftSnapshot? draft = _draftsByViewIdentity[identity];
+    _draftMarkers = draft?.markers;
+    _draftMarkerEditOperations = draft?.markerEditOperations;
+    _draftMarkerOriginalMarkers = draft?.markerOriginalMarkers;
+    _draftChannelEditConfig = draft?.channelEditConfig;
+    _draftArtifactExemplars = draft?.artifactExemplars;
+    _draftArtifactCandidates = draft?.artifactCandidates;
+    _draftArtifactTemplates = draft?.artifactTemplates;
+    _lastPersistedDraftFingerprint = draft?.persistedFingerprint;
+    _savedChangesSummary =
+        draft?.savedChangesSummary ?? _savedChangesSummaryFromParams();
+    _markerCacheKey = null;
   }
 
   @override
@@ -189,10 +253,12 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     final TimeSeriesData? baseTimeSeries = widget.dataset.timeSeries;
     final TimeSeriesData? timeSeries = baseTimeSeries;
     if (timeSeries == null || timeSeries.channels.isEmpty) {
-      return const _BrowserMessage(
-        title: 'No time-domain signal',
-        body:
-            'Run an Import or signal-processing path upstream of this visualization node first.',
+      return _guardViewerClose(
+        const _BrowserMessage(
+          title: 'No time-domain signal',
+          body:
+              'Run an Import or signal-processing path upstream of this visualization node first.',
+        ),
       );
     }
 
@@ -231,7 +297,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         ? _interactiveDisplayMarkers(timeSeries)
         : _currentMarkersForDataset();
 
-    return Focus(
+    final Widget browser = Focus(
       focusNode: _focusNode,
       autofocus: true,
       onKeyEvent: _handleKeyEvent,
@@ -716,6 +782,19 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
         ),
       ),
     );
+    return _guardViewerClose(browser);
+  }
+
+  Widget _guardViewerClose(Widget child) {
+    return PopScope<void>(
+      canPop: !_hasAnyUnsavedDraftChanges,
+      onPopInvokedWithResult: (bool didPop, void result) {
+        if (!didPop) {
+          unawaited(_close());
+        }
+      },
+      child: child,
+    );
   }
 
   Widget _buildControlBar({
@@ -1020,7 +1099,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
                   saveToExistingNode: true,
                 )
               : null,
-          child: const Text('Save to existing node'),
+          child: Text(widget.saveToExistingNodeLabel),
         ),
         ElevatedButton(
           onPressed: unsaved
@@ -1649,6 +1728,14 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
       ) !=
       null;
 
+  bool get _hasStoredUnsavedDraftChanges => _draftsByViewIdentity.entries.any(
+    (MapEntry<String, _ViewerDraftSnapshot> entry) =>
+        entry.key != _viewIdentity && entry.value.unsaved,
+  );
+
+  bool get _hasAnyUnsavedDraftChanges =>
+      _hasUnsavedDraftChanges || _hasStoredUnsavedDraftChanges;
+
   Map<String, dynamic> _effectiveChannelEditConfig() {
     return _draftChannelEditConfig ??
         EditChannelsNodeType.configForDataset(widget.params, widget.dataset.id);
@@ -2034,6 +2121,10 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   Future<void> _close() async {
     if (_hasUnsavedDraftChanges && !await _resolveUnsavedChanges()) return;
+    if (_hasStoredUnsavedDraftChanges &&
+        !await _resolveStoredUnsavedChanges()) {
+      return;
+    }
     widget.onClose?.call();
   }
 
@@ -2041,8 +2132,40 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
     if (_hasUnsavedDraftChanges && !await _resolveUnsavedChanges()) {
       return;
     }
+    if (_hasStoredUnsavedDraftChanges &&
+        !await _resolveStoredUnsavedChanges()) {
+      return;
+    }
     await widget.onCloseAndRun?.call();
     widget.onClose?.call();
+  }
+
+  Future<bool> _resolveStoredUnsavedChanges() async {
+    final bool? discard = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('Unsaved changes in another dataset'),
+        content: const Text(
+          'Return to each edited dataset to save its changes, or explicitly discard all remaining viewer changes.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Discard remaining changes'),
+          ),
+        ],
+      ),
+    );
+    if (discard != true) return false;
+    _draftsByViewIdentity.removeWhere(
+      (String key, _ViewerDraftSnapshot value) =>
+          key != _viewIdentity && value.unsaved,
+    );
+    return true;
   }
 
   Future<bool> _resolveUnsavedChanges() async {
@@ -2063,7 +2186,7 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
           if (widget.canSaveToExistingNode)
             OutlinedButton(
               onPressed: () => Navigator.pop(dialogContext, 'existing'),
-              child: const Text('Save to existing node'),
+              child: Text(widget.saveToExistingNodeLabel),
             ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, 'new'),
@@ -2085,6 +2208,9 @@ class _RawSignalBrowserState extends State<RawSignalBrowser> {
 
   void _discardDraftChanges() {
     setState(() {
+      if (_viewIdentity != null) {
+        _draftsByViewIdentity.remove(_viewIdentity);
+      }
       _draftMarkers = null;
       _draftMarkerEditOperations = null;
       _draftMarkerOriginalMarkers = null;

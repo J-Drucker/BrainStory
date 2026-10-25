@@ -3505,7 +3505,7 @@ class CanvasLogic {
           selectedNodeIds
             ..clear()
             ..add(node.id);
-          if (hasVisualizationOutput(node)) {
+          if (_isViewerEditNode(node) || hasVisualizationOutput(node)) {
             openVisualizationWindow(node);
             return;
           }
@@ -3775,6 +3775,10 @@ class CanvasLogic {
         );
         return;
       case 'edit':
+        if (_isViewerEditNode(node)) {
+          openVisualizationWindow(node);
+          return;
+        }
         _openNodeEditor(context: context, node: node, update: update);
         return;
       case 'combine':
@@ -5202,6 +5206,33 @@ class CanvasLogic {
     }
 
     final List<VisualizationSourceRef> refs = <VisualizationSourceRef>[];
+    if (_isViewerEditNode(node)) {
+      final List<NodeModel> parents = _immediateParents(node.id);
+      if (parents.length != 1) {
+        return const <VisualizationSourceRef>[];
+      }
+      final NodeModel parent = parents.single;
+      final List<Dataset> matchingDatasets =
+          datasets.values
+              .where(
+                (Dataset dataset) =>
+                    _datasetsForNode(node).contains(dataset.id),
+              )
+              .toList(growable: false)
+            ..sort((Dataset a, Dataset b) => a.label.compareTo(b.label));
+      for (final Dataset dataset in matchingDatasets) {
+        refs.add(
+          VisualizationSourceRef(
+            key: '${parent.id}|${dataset.id}',
+            datasetId: dataset.id,
+            datasetLabel: dataset.label,
+            materializeFromNodeId: parent.id,
+            sourceDescriptor: _nodeDescriptor(parent),
+          ),
+        );
+      }
+      return refs;
+    }
     if (node.type is ImpedancesNodeType) {
       final Set<String> datasetIds = _datasetsForNode(node);
       final List<Dataset> matchingDatasets =
@@ -6814,11 +6845,25 @@ class CanvasLogic {
     final Map<String, dynamic>? channelEditConfigValue = channelEditConfig;
 
     if (saveToExistingNode && (hasChannelEdits || hasMarkerEdits)) {
-      final NodeModel? existing = _existingViewerEditChild(
-        sourceNode,
-        needsChannels: hasChannelEdits,
-        needsMarkers: hasMarkerEdits,
-      );
+      final bool currentSupportsChannels =
+          viewerNode.type is EditChannelsNodeType ||
+          viewerNode.type is EditChannelsAndMarkersNodeType;
+      final bool currentSupportsMarkers =
+          viewerNode.type is AddRemoveMarkersNodeType ||
+          viewerNode.type is EditChannelsAndMarkersNodeType;
+      final bool editsCurrentNode =
+          (!hasChannelEdits || currentSupportsChannels) &&
+          (!hasMarkerEdits || currentSupportsMarkers) &&
+          _immediateParents(
+            viewerNode.id,
+          ).any((NodeModel parent) => parent.id == sourceNode.id);
+      final NodeModel? existing = editsCurrentNode
+          ? viewerNode
+          : _existingViewerEditChild(
+              sourceNode,
+              needsChannels: hasChannelEdits,
+              needsMarkers: hasMarkerEdits,
+            );
       if (existing == null) {
         throw StateError('No compatible child edit node is available.');
       }
@@ -6952,7 +6997,10 @@ class CanvasLogic {
       final Map<String, dynamic> currentDatasetParams =
           Map<String, dynamic>.from(interactiveArtifactParams);
       NodeModel? artifactNode =
-          anchorNode.type is InteractiveArtifactDetectionNodeType
+          saveToExistingNode &&
+              viewerNode.type is InteractiveArtifactDetectionNodeType
+          ? viewerNode
+          : anchorNode.type is InteractiveArtifactDetectionNodeType
           ? anchorNode
           : null;
       if (artifactNode == null && saveToExistingNode) {
@@ -7266,7 +7314,20 @@ class CanvasLogic {
       dataset,
     );
     if (source == null) return false;
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode != null && _isViewerEditNode(viewerNode)) {
+      return _immediateParents(
+        viewerNode.id,
+      ).any((NodeModel parent) => parent.id == source.id);
+    }
     return _immediateChildren(source.id).any(_isViewerEditNode);
+  }
+
+  String viewerEditExistingSaveLabel(String viewerNodeId) {
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    return viewerNode != null && _isViewerEditNode(viewerNode)
+        ? 'Append changes to this node'
+        : 'Save to existing node';
   }
 
   Future<String> runViewerEditChild({
@@ -7278,6 +7339,11 @@ class CanvasLogic {
       dataset,
     );
     if (source == null) return 'No source node is available.';
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode != null && _isViewerEditNode(viewerNode)) {
+      await runThisStep(viewerNode.id);
+      return 'Ran ${viewerNode.title}.';
+    }
     final List<NodeModel> editChildren = _immediateChildren(
       source.id,
     ).where(_isViewerEditNode).toList(growable: false);
@@ -7446,6 +7512,14 @@ class CanvasLogic {
     String viewerNodeId,
     Dataset dataset,
   ) {
+    final NodeModel? viewerNode = _findNode(viewerNodeId);
+    if (viewerNode != null && _isViewerEditNode(viewerNode)) {
+      final List<NodeModel> parents = _immediateParents(viewerNode.id);
+      if (parents.length == 1 &&
+          _datasetsForNode(viewerNode).contains(dataset.id)) {
+        return parents.single;
+      }
+    }
     final String? sourceKey = dataset.ram['viewer.sourceKey']?.toString();
     if (sourceKey != null && sourceKey.contains('|')) {
       final String sourceNodeId = sourceKey.split('|').first;
@@ -7454,7 +7528,6 @@ class CanvasLogic {
         return sourceNode;
       }
     }
-    final NodeModel? viewerNode = _findNode(viewerNodeId);
     if (viewerNode == null) {
       return null;
     }
