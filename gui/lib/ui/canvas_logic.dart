@@ -282,6 +282,69 @@ class _MemoryRowSummary {
   final int? diskModifiedUtcMicros;
 }
 
+enum _PersistenceSortColumn {
+  node,
+  dataset,
+  artifacts,
+  state,
+  ram,
+  disk,
+  project,
+  precision,
+  location,
+}
+
+void _sortPersistenceRows(
+  List<_MemoryRowSummary> rows,
+  _PersistenceSortColumn column,
+  bool ascending,
+) {
+  String location(_MemoryRowSummary row) =>
+      row.diskPath ?? row.projectPath ?? '';
+  int compare(_MemoryRowSummary a, _MemoryRowSummary b) {
+    final int primary = switch (column) {
+      _PersistenceSortColumn.node => a.nodeDescriptor.compareTo(
+        b.nodeDescriptor,
+      ),
+      _PersistenceSortColumn.dataset => a.datasetLabel.compareTo(
+        b.datasetLabel,
+      ),
+      _PersistenceSortColumn.artifacts =>
+        a.artifactLabels.join(', ').compareTo(b.artifactLabels.join(', ')),
+      _PersistenceSortColumn.state => a.processingLabel.compareTo(
+        b.processingLabel,
+      ),
+      _PersistenceSortColumn.ram =>
+        a.inRam == b.inRam
+            ? 0
+            : a.inRam
+            ? -1
+            : 1,
+      _PersistenceSortColumn.disk =>
+        a.onDisk == b.onDisk
+            ? (a.diskBytes ?? 0).compareTo(b.diskBytes ?? 0)
+            : a.onDisk
+            ? -1
+            : 1,
+      _PersistenceSortColumn.project => a.projectStatus.compareTo(
+        b.projectStatus,
+      ),
+      _PersistenceSortColumn.precision => a.precisionLabel.compareTo(
+        b.precisionLabel,
+      ),
+      _PersistenceSortColumn.location => location(a).compareTo(location(b)),
+    };
+    if (primary != 0) {
+      return ascending ? primary : -primary;
+    }
+    final int nodeCompare = a.nodeDescriptor.compareTo(b.nodeDescriptor);
+    if (nodeCompare != 0) return nodeCompare;
+    return a.datasetLabel.compareTo(b.datasetLabel);
+  }
+
+  rows.sort(compare);
+}
+
 class _DatasetUndoSnapshot {
   const _DatasetUndoSnapshot({
     required this.mapKey,
@@ -674,35 +737,36 @@ class _MemoryRowWidget extends StatelessWidget {
                   ),
           ),
           _PersistenceTableCell(
-            width: 180,
+            width: 300,
             child: Wrap(
-              spacing: 2,
+              spacing: 4,
+              runSpacing: 2,
               children: <Widget>[
-                IconButton(
-                  tooltip: 'Load from disk',
+                TextButton.icon(
                   onPressed: onLoadFromDisk == null
                       ? null
                       : () => onLoadFromDisk!(),
-                  icon: const Icon(Icons.download, size: 18),
+                  icon: const Icon(Icons.download, size: 16),
+                  label: const Text('Load RAM'),
                 ),
-                IconButton(
-                  tooltip: 'Release from RAM',
+                TextButton.icon(
                   onPressed: onReleaseRam == null
                       ? null
                       : () => onReleaseRam!(),
-                  icon: const Icon(Icons.memory, size: 18),
+                  icon: const Icon(Icons.memory, size: 16),
+                  label: const Text('Purge RAM'),
                 ),
-                IconButton(
-                  tooltip: 'Save to disk cache',
+                TextButton.icon(
                   onPressed: onSaveToDisk == null
                       ? null
                       : () => onSaveToDisk!(),
-                  icon: const Icon(Icons.save, size: 18),
+                  icon: const Icon(Icons.save, size: 16),
+                  label: const Text('Save disk'),
                 ),
-                IconButton(
-                  tooltip: 'Remove disk cache copy',
+                TextButton.icon(
                   onPressed: onPurgeDisk == null ? null : () => onPurgeDisk!(),
-                  icon: const Icon(Icons.delete_outline, size: 18),
+                  icon: const Icon(Icons.delete_outline, size: 16),
+                  label: const Text('Purge disk'),
                 ),
               ],
             ),
@@ -714,26 +778,44 @@ class _MemoryRowWidget extends StatelessWidget {
 }
 
 class _PersistenceTableHeader extends StatelessWidget {
-  const _PersistenceTableHeader();
+  const _PersistenceTableHeader({
+    required this.sortColumn,
+    required this.ascending,
+    required this.onSort,
+  });
+
+  final _PersistenceSortColumn sortColumn;
+  final bool ascending;
+  final ValueChanged<_PersistenceSortColumn> onSort;
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 38,
       child: Row(
         children: <Widget>[
-          _PersistenceTableHeading(width: 220, label: 'Node'),
-          _PersistenceTableHeading(width: 160, label: 'Dataset'),
-          _PersistenceTableHeading(width: 220, label: 'Artifacts'),
-          _PersistenceTableHeading(width: 100, label: 'State'),
-          _PersistenceTableHeading(width: 90, label: 'RAM'),
-          _PersistenceTableHeading(width: 140, label: 'Disk cache'),
-          _PersistenceTableHeading(width: 150, label: 'BST project'),
-          _PersistenceTableHeading(width: 110, label: 'Precision'),
-          _PersistenceTableHeading(width: 420, label: 'Saved locations'),
-          _PersistenceTableHeading(width: 180, label: 'Actions'),
+          _heading(220, 'Node', _PersistenceSortColumn.node),
+          _heading(160, 'Dataset', _PersistenceSortColumn.dataset),
+          _heading(220, 'Artifacts', _PersistenceSortColumn.artifacts),
+          _heading(100, 'State', _PersistenceSortColumn.state),
+          _heading(90, 'RAM', _PersistenceSortColumn.ram),
+          _heading(140, 'Disk cache', _PersistenceSortColumn.disk),
+          _heading(150, 'BST project', _PersistenceSortColumn.project),
+          _heading(110, 'Precision', _PersistenceSortColumn.precision),
+          _heading(420, 'Saved locations', _PersistenceSortColumn.location),
+          const _PersistenceTableHeading(width: 300, label: 'Actions'),
         ],
       ),
+    );
+  }
+
+  Widget _heading(double width, String label, _PersistenceSortColumn column) {
+    return _PersistenceTableHeading(
+      width: width,
+      label: label,
+      selected: sortColumn == column,
+      ascending: ascending,
+      onTap: () => onSort(column),
     );
   }
 }
@@ -796,14 +878,23 @@ class _PersistenceLocation extends StatelessWidget {
 }
 
 class _PersistenceTableHeading extends StatelessWidget {
-  const _PersistenceTableHeading({required this.width, required this.label});
+  const _PersistenceTableHeading({
+    required this.width,
+    required this.label,
+    this.selected = false,
+    this.ascending = true,
+    this.onTap,
+  });
 
   final double width;
   final String label;
+  final bool selected;
+  final bool ascending;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final Widget content = Container(
       width: width,
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -814,15 +905,29 @@ class _PersistenceTableHeading extends StatelessWidget {
           bottom: BorderSide(color: Colors.white.withValues(alpha: 0.14)),
         ),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white70,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        children: <Widget>[
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? const Color(0xFFD4B5FF) : Colors.white70,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          if (selected)
+            Icon(
+              ascending ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 13,
+              color: const Color(0xFFD4B5FF),
+            ),
+        ],
       ),
     );
+    return onTap == null ? content : InkWell(onTap: onTap, child: content);
   }
 }
 
@@ -8948,6 +9053,84 @@ class CanvasLogic {
         : 'Saved $savedCount cached output(s) for ${node.title} to $lastPath.';
   }
 
+  Future<String> _saveAllRamSnapshotsAndRelease({
+    required String? nodeId,
+    required VoidCallback update,
+  }) async {
+    if (!supportsNodeSnapshotDiskStore) {
+      return 'Disk cache is not available on this platform.';
+    }
+    if (_currentBrainStoryPath == null) {
+      return 'Save this project as a BST before saving artifacts to disk.';
+    }
+
+    int savedCount = 0;
+    int failedCount = 0;
+    final List<(NodeModel, String, DatasetArtifactSnapshot)> pending =
+        <(NodeModel, String, DatasetArtifactSnapshot)>[];
+    for (final NodeModel candidate in nodes) {
+      if (nodeId != null && candidate.id != nodeId) continue;
+      for (final MapEntry<String, DatasetArtifactSnapshot> entry
+          in (_nodeRamSnapshots[candidate.id] ??
+                  const <String, DatasetArtifactSnapshot>{})
+              .entries) {
+        if (!entry.value.isEmpty) {
+          pending.add((candidate, entry.key, entry.value));
+        }
+      }
+    }
+    if (pending.isEmpty) {
+      return 'No artifacts are currently loaded in RAM.';
+    }
+
+    for (final (
+          NodeModel owner,
+          String datasetId,
+          DatasetArtifactSnapshot snapshot,
+        )
+        in pending) {
+      try {
+        final Dataset? dataset = datasets.values
+            .where((Dataset value) => value.id == datasetId)
+            .firstOrNull;
+        await saveNodeSnapshotJson(
+          nodeId: owner.id,
+          datasetId: datasetId,
+          jsonPayload: await encodeNodeSnapshotJson(snapshot.toJson()),
+        );
+        if (dataset != null) {
+          _saveSnapshotMetadata(owner.id, dataset, snapshot: snapshot);
+        }
+        _nodeDiskSnapshotIds
+            .putIfAbsent(owner.id, () => <String>{})
+            .add(datasetId);
+        _nodeRamSnapshots[owner.id]?.remove(datasetId);
+        if (dataset != null) {
+          _releaseActiveDatasetArtifactsProducedBy(owner, dataset);
+          if (owner.datasetStates[datasetId] == DatasetState.done) {
+            owner.datasetStates[datasetId] = _unmaterializedStateForNodeDataset(
+              owner,
+              datasetId,
+            );
+            _markImmediateChildrenStale(owner.id, datasetId);
+          }
+        }
+        savedCount++;
+      } catch (_) {
+        failedCount++;
+      }
+    }
+    _nodeRamSnapshots.removeWhere(
+      (String _, Map<String, DatasetArtifactSnapshot> snapshots) =>
+          snapshots.isEmpty,
+    );
+    update();
+    if (failedCount == 0) {
+      return 'Saved $savedCount artifact output(s) to disk and purged them from RAM.';
+    }
+    return 'Saved and purged $savedCount artifact output(s). $failedCount could not be saved and remain in RAM.';
+  }
+
   Future<String> _loadNodeSnapshotsToRam({
     required NodeModel node,
     required Set<String> datasetIds,
@@ -10184,6 +10367,9 @@ class CanvasLogic {
       context: context,
       builder: (BuildContext context) {
         Future<List<_MemoryRowSummary>> rowsFuture = loadRows();
+        _PersistenceSortColumn sortColumn = _PersistenceSortColumn.node;
+        bool sortAscending = true;
+        bool bulkOperationRunning = false;
 
         Future<void> refresh(StateSetter setDialogState) async {
           setDialogState(() {
@@ -10196,10 +10382,49 @@ class CanvasLogic {
           builder: (BuildContext context, StateSetter setDialogState) {
             return AlertDialog(
               backgroundColor: Colors.grey.shade900,
-              title: Text(title, style: const TextStyle(color: Colors.white)),
+              insetPadding: EdgeInsets.zero,
+              titlePadding: const EdgeInsets.fromLTRB(20, 12, 12, 8),
+              contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              title: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed:
+                        !supportsNodeSnapshotDiskStore || bulkOperationRunning
+                        ? null
+                        : () async {
+                            setDialogState(() => bulkOperationRunning = true);
+                            final String message =
+                                await _saveAllRamSnapshotsAndRelease(
+                                  nodeId: node?.id,
+                                  update: update,
+                                );
+                            if (!context.mounted) return;
+                            setDialogState(() => bulkOperationRunning = false);
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(message)));
+                            await refresh(setDialogState);
+                          },
+                    icon: bulkOperationRunning
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_alt, size: 18),
+                    label: const Text('Save all RAM to disk and purge RAM'),
+                  ),
+                ],
+              ),
               content: SizedBox(
-                width: node == null ? 1040 : 820,
-                height: math.min(620, MediaQuery.sizeOf(context).height * 0.72),
+                width: MediaQuery.sizeOf(context).width,
+                height: math.max(240, MediaQuery.sizeOf(context).height - 112),
                 child: FutureBuilder<List<_MemoryRowSummary>>(
                   future: rowsFuture,
                   builder:
@@ -10213,7 +10438,10 @@ class CanvasLogic {
                           );
                         }
                         final List<_MemoryRowSummary> rows =
-                            snapshot.data ?? const <_MemoryRowSummary>[];
+                            List<_MemoryRowSummary>.from(
+                              snapshot.data ?? const <_MemoryRowSummary>[],
+                            );
+                        _sortPersistenceRows(rows, sortColumn, sortAscending);
                         if (rows.isEmpty) {
                           return Center(
                             child: Text(
@@ -10236,11 +10464,26 @@ class CanvasLogic {
                                 builder: (BuildContext context, BoxConstraints constraints) => SingleChildScrollView(
                                   scrollDirection: Axis.horizontal,
                                   child: SizedBox(
-                                    width: 1790,
+                                    width: 1910,
                                     height: constraints.maxHeight,
                                     child: Column(
                                       children: <Widget>[
-                                        const _PersistenceTableHeader(),
+                                        _PersistenceTableHeader(
+                                          sortColumn: sortColumn,
+                                          ascending: sortAscending,
+                                          onSort:
+                                              (_PersistenceSortColumn column) {
+                                                setDialogState(() {
+                                                  if (sortColumn == column) {
+                                                    sortAscending =
+                                                        !sortAscending;
+                                                  } else {
+                                                    sortColumn = column;
+                                                    sortAscending = true;
+                                                  }
+                                                });
+                                              },
+                                        ),
                                         Expanded(
                                           child: ListView.builder(
                                             itemCount: rows.length,
