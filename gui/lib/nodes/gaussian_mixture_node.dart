@@ -430,6 +430,31 @@ class GaussianMixtureNodeType extends NodeType {
       throw StateError('Gaussian Mixture requires segmented time-series data.');
     }
     final List<SignalSegmentData> segments = segmented.materializedSegments();
+    final SignalSegmentData expectedSegment = segments.first;
+    final int expectedChannelCount = expectedSegment.channelSamples.length;
+    final int expectedSampleCount = expectedSegment.channelSamples.isEmpty
+        ? 0
+        : expectedSegment.channelSamples.first.length;
+    for (int index = 0; index < segments.length; index++) {
+      final SignalSegmentData segment = segments[index];
+      final int channelCount = segment.channelSamples.length;
+      final int sampleCount = segment.channelSamples.isEmpty
+          ? 0
+          : segment.channelSamples.first.length;
+      if (channelCount != expectedChannelCount ||
+          sampleCount != expectedSampleCount) {
+        final String label = segment.label.trim().isEmpty
+            ? 'unlabeled'
+            : segment.label.trim();
+        throw StateError(
+          'Raw GMM epoch ${index + 1} ("$label") is '
+          '$channelCount channel(s) × $sampleCount sample(s); expected '
+          '$expectedChannelCount × $expectedSampleCount. Unequal numbers of '
+          'epochs per condition are allowed, but every epoch must have the '
+          'same shape. Pool, select channels, or resample upstream before fitting.',
+        );
+      }
+    }
     final List<List<double>> flattened = segments
         .map((SignalSegmentData segment) {
           if (segment.channelSamples.isEmpty) {
@@ -452,7 +477,9 @@ class GaussianMixtureNodeType extends NodeType {
     final int width = flattened.first.length;
     if (flattened.any((List<double> row) => row.length != width)) {
       throw StateError(
-        'Raw GMM segments must have identical channel and sample dimensions. Pool, select channels, or downsample upstream before fitting.',
+        'Raw GMM segments must have identical channel and sample dimensions. '
+        'Unequal numbers of epochs per condition are allowed. Pool, select '
+        'channels, or resample upstream before fitting.',
       );
     }
     final List<String> valueColumns = List<String>.generate(

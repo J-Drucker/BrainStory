@@ -209,7 +209,11 @@ void main() {
         isA<StateError>().having(
           (StateError error) => error.message.toString(),
           'message',
-          contains('Pool, select channels, or downsample upstream'),
+          allOf(
+            contains('Unequal numbers of epochs per condition are allowed'),
+            contains('1 channel(s) × 2 sample(s)'),
+            contains('expected 1 × 3'),
+          ),
         ),
       ),
     );

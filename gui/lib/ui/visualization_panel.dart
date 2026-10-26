@@ -3139,6 +3139,109 @@ List<_PsdPanelData> _buildPsdDimensionPanels(
           .map((String dimension) => dimensionValue(record, dimension))
           .join('|');
 
+  if (conditionMode == 'difference') {
+    final List<String> conditionOrder = <String>[];
+    for (final _PsdTraceRecord record in records) {
+      if (!conditionOrder.contains(record.condition)) {
+        conditionOrder.add(record.condition);
+      }
+    }
+    if (conditionOrder.length < 2) {
+      return const <_PsdPanelData>[];
+    }
+    final String minuend = conditionOrder[0];
+    final String subtrahend = conditionOrder[1];
+    final Map<String, List<_PsdTraceRecord>> differencePanels =
+        <String, List<_PsdTraceRecord>>{};
+    for (final _PsdTraceRecord record in records) {
+      differencePanels
+          .putIfAbsent(keyFor(record, separated), () => <_PsdTraceRecord>[])
+          .add(record);
+    }
+
+    final List<_PsdPanelData> panels = <_PsdPanelData>[];
+    for (final List<_PsdTraceRecord> panelRecords in differencePanels.values) {
+      final Map<String, List<_PsdTraceRecord>> traceGroups =
+          <String, List<_PsdTraceRecord>>{};
+      for (final _PsdTraceRecord record in panelRecords) {
+        final List<String> identityDimensions = <String>[
+          'dataset',
+          if (!averaged.contains('channel')) 'channel',
+          if (!averaged.contains('segment')) 'segment',
+        ];
+        traceGroups
+            .putIfAbsent(
+              keyFor(record, identityDimensions),
+              () => <_PsdTraceRecord>[],
+            )
+            .add(record);
+      }
+
+      final List<_SeriesData> differenceSeries = <_SeriesData>[];
+      int variantIndex = 0;
+      for (final List<_PsdTraceRecord> groupRecords in traceGroups.values) {
+        final List<_PsdTraceRecord> firstCondition = groupRecords
+            .where((_PsdTraceRecord record) => record.condition == minuend)
+            .toList(growable: false);
+        final List<_PsdTraceRecord> secondCondition = groupRecords
+            .where((_PsdTraceRecord record) => record.condition == subtrahend)
+            .toList(growable: false);
+        if (firstCondition.isEmpty || secondCondition.isEmpty) continue;
+
+        final _PsdTraceRecord first = groupRecords.first;
+        final _SeriesData firstAverage = _averagePsdSeries(
+          firstCondition
+              .map((_PsdTraceRecord record) => record.series)
+              .toList(growable: false),
+          label: minuend,
+          color: firstCondition.first.series.color,
+          logY: false,
+        );
+        final _SeriesData secondAverage = _averagePsdSeries(
+          secondCondition
+              .map((_PsdTraceRecord record) => record.series)
+              .toList(growable: false),
+          label: subtrahend,
+          color: secondCondition.first.series.color,
+          logY: false,
+        );
+        final int length = math.min(
+          firstAverage.points.length,
+          secondAverage.points.length,
+        );
+        final List<String> labelParts = <String>[
+          '$minuend − $subtrahend',
+          first.series.label.split(' · ').first,
+          if (!averaged.contains('channel')) displayDimension(first, 'channel'),
+          if (!averaged.contains('segment')) displayDimension(first, 'segment'),
+        ];
+        differenceSeries.add(
+          _SeriesData(
+            label: labelParts.join(' · '),
+            color: psdDifferenceTraceColor(variantIndex++),
+            subtitle: '$length bins',
+            points: List<FlSpot>.generate(
+              length,
+              (int index) => FlSpot(
+                firstAverage.points[index].x,
+                firstAverage.points[index].y - secondAverage.points[index].y,
+              ),
+              growable: false,
+            ),
+          ),
+        );
+      }
+
+      if (differenceSeries.isEmpty) continue;
+      final _PsdTraceRecord first = panelRecords.first;
+      final String title = separated.isEmpty
+          ? '$minuend − $subtrahend'
+          : '$minuend − $subtrahend · ${separated.map((String dimension) => displayDimension(first, dimension)).join(' · ')}';
+      panels.add(_PsdPanelData(title: title, series: differenceSeries));
+    }
+    return panels;
+  }
+
   final Map<String, List<_PsdTraceRecord>> panelGroups =
       <String, List<_PsdTraceRecord>>{};
   for (final _PsdTraceRecord record in records) {
@@ -3293,6 +3396,13 @@ class _PsdChart extends StatelessWidget {
     final double windowHz =
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
+    final String storedConditionMode =
+        (params['psd_condition_mode'] ?? 'separate').toString();
+    final String conditionMode = storedConditionMode == 'overlay'
+        ? 'butterfly'
+        : storedConditionMode;
+    params['psd_condition_mode'] = conditionMode;
+    final bool displayLogY = logY && conditionMode != 'difference';
     final List<_PsdTraceRecord> traceRecords = <_PsdTraceRecord>[];
     final Set<String> psdConditionLabels = datasets
         .expand(
@@ -3330,7 +3440,7 @@ class _PsdChart extends StatelessWidget {
               final double sourcePower = power[i];
               return FlSpot(
                 freqs[i],
-                logY
+                displayLogY
                     ? math.log(sourcePower <= 0 ? 1.0e-12 : sourcePower) /
                           math.ln10
                     : sourcePower,
@@ -3360,12 +3470,6 @@ class _PsdChart extends StatelessWidget {
         }
       }
     }
-    final String storedConditionMode =
-        (params['psd_condition_mode'] ?? 'separate').toString();
-    final String conditionMode = storedConditionMode == 'overlay'
-        ? 'butterfly'
-        : storedConditionMode;
-    params['psd_condition_mode'] = conditionMode;
     final String storedChannelMode = (params['psd_channel_mode'] ?? 'average')
         .toString();
     final String channelMode = storedChannelMode == 'stack'
@@ -3380,7 +3484,7 @@ class _PsdChart extends StatelessWidget {
       channelMode: channelMode,
       segmentMode: segmentMode,
       channelLabels: channelLabels,
-      logY: logY,
+      logY: displayLogY,
     );
     final List<_SeriesData> series = panels
         .expand((_PsdPanelData panel) => panel.series)
@@ -3405,8 +3509,16 @@ class _PsdChart extends StatelessWidget {
         (params['psd_view_max_power'] as num?)?.toDouble() ?? 10.0;
     final double dataMinY = allY.reduce(math.min);
     final double dataMaxY = allY.reduce(math.max);
-    final double minY = math.min(0.0, dataMinY);
-    final double maxY = scaleMode == 'fixed'
+    final double differenceExtent = math.max(
+      0.001,
+      math.max(dataMinY.abs(), dataMaxY.abs()) * 1.1,
+    );
+    final double minY = conditionMode == 'difference'
+        ? -differenceExtent
+        : math.min(0.0, dataMinY);
+    final double maxY = conditionMode == 'difference'
+        ? differenceExtent
+        : scaleMode == 'fixed'
         ? math.max(configuredMaxPower, minY + 0.001)
         : math.max(dataMaxY * 1.1, minY + 0.001);
     final double maxX = allX.reduce(math.max);
@@ -3445,7 +3557,7 @@ class _PsdChart extends StatelessWidget {
                           final String label = index < visibleSeries.length
                               ? visibleSeries[index].label
                               : 'Spectrum ${index + 1}';
-                          final String power = logY
+                          final String power = displayLogY
                               ? '${spot.y.toStringAsFixed(2)} log₁₀(μV²/Hz)'
                               : '${spot.y.toStringAsFixed(2)} μV²/Hz';
                           return LineTooltipItem(
@@ -3467,10 +3579,16 @@ class _PsdChart extends StatelessWidget {
                   maxX: maxX,
                   minY: minY,
                   maxY: maxY,
-                  logY: logY,
+                  logY: displayLogY,
                   xAxisLabel: 'Frequency (Hz)',
-                  yAxisLabel: logY ? 'log₁₀(μV²/Hz)' : 'μV²/Hz',
+                  yAxisLabel: conditionMode == 'difference'
+                      ? 'Δ μV²/Hz'
+                      : displayLogY
+                      ? 'log₁₀(μV²/Hz)'
+                      : 'μV²/Hz',
                   yAxisReservedSize: 84,
+                  xAxisNameSize: 32,
+                  yAxisNameSize: 32,
                 ),
                 clipData: const FlClipData.all(),
                 lineBarsData: visibleSeries
@@ -3558,6 +3676,7 @@ class _PsdChart extends StatelessWidget {
             _PsdDimensionModeControl(
               label: 'Conditions',
               value: conditionMode,
+              allowDifference: true,
               onChanged: (String value) {
                 params['psd_condition_mode'] = value;
                 onChanged();
@@ -3658,11 +3777,13 @@ class _PsdDimensionModeControl extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onChanged,
+    this.allowDifference = false,
   });
 
   final String label;
   final String value;
   final ValueChanged<String> onChanged;
+  final bool allowDifference;
 
   @override
   Widget build(BuildContext context) {
@@ -3676,10 +3797,24 @@ class _PsdDimensionModeControl extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         SegmentedButton<String>(
-          segments: const <ButtonSegment<String>>[
-            ButtonSegment<String>(value: 'separate', label: Text('Separate')),
-            ButtonSegment<String>(value: 'butterfly', label: Text('Butterfly')),
-            ButtonSegment<String>(value: 'average', label: Text('Average')),
+          segments: <ButtonSegment<String>>[
+            const ButtonSegment<String>(
+              value: 'separate',
+              label: Text('Separate'),
+            ),
+            const ButtonSegment<String>(
+              value: 'butterfly',
+              label: Text('Butterfly'),
+            ),
+            if (allowDifference)
+              const ButtonSegment<String>(
+                value: 'difference',
+                label: Text('Difference'),
+              ),
+            const ButtonSegment<String>(
+              value: 'average',
+              label: Text('Average'),
+            ),
           ],
           selected: <String>{value},
           onSelectionChanged: (Set<String> selection) {
@@ -5981,7 +6116,30 @@ Color _channelOverlayColor(Color baseColor, int channelIndex) {
 }
 
 Color psdConditionTraceColor(Color baseColor, int variantIndex) {
-  return _segmentTraceShade(baseColor, variantIndex, 0).withValues(alpha: 0.9);
+  const List<double> lightnessOffsets = <double>[
+    0.00,
+    0.055,
+    -0.045,
+    0.095,
+    -0.075,
+    0.025,
+  ];
+  final HSLColor hsl = HSLColor.fromColor(baseColor);
+  return hsl
+      .withLightness(
+        (hsl.lightness +
+                lightnessOffsets[variantIndex % lightnessOffsets.length])
+            .clamp(0.22, 0.82),
+      )
+      .withSaturation(
+        (hsl.saturation - (variantIndex % 3) * 0.035).clamp(0.55, 1.0),
+      )
+      .toColor()
+      .withValues(alpha: 0.9);
+}
+
+Color psdDifferenceTraceColor(int variantIndex) {
+  return psdConditionTraceColor(const Color(0xFFC77DFF), variantIndex);
 }
 
 Color _segmentTraceShade(Color baseColor, int channelIndex, int segmentIndex) {
