@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' show PathMetric;
 
 import 'package:brainstory_gui/model/data_artifacts.dart';
 import 'package:brainstory_gui/model/dataset.dart';
@@ -507,6 +508,22 @@ void main() {
       clearEndpoints[clearEndpoints.length - 2].dx,
       lessThanOrEqualTo(child.left),
     );
+  });
+
+  test('wire painter rounds elbows without moving endpoints', () {
+    final Path path = buildRoundedConnectionPath(const <Offset>[
+      Offset.zero,
+      Offset(100, 0),
+      Offset(100, 100),
+    ]);
+    final PathMetric metric = path.computeMetrics().single;
+    expect(metric.getTangentForOffset(0)!.position, Offset.zero);
+    expect(
+      metric.getTangentForOffset(metric.length)!.position,
+      const Offset(100, 100),
+    );
+    expect(metric.length, lessThan(200));
+    expect(metric.length, greaterThan(190));
   });
 
   test('wires sharing a port fan out into adjacent endpoint lanes', () {

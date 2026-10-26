@@ -139,8 +139,10 @@ List<Offset> buildConnectionPolyline({
     if (_polylineConflictCount(candidate, existingPolylines) > 0) {
       continue;
     }
+    final int bendCount = math.max(0, candidate.length - 2);
     final double score =
         _polylineLength(candidate) +
+        (bendCount * 18.0) +
         ((preferVertical == _isVerticalCandidate(candidate)) ? 0.0 : 4.0);
     if (score < bestScore) {
       best = candidate;
@@ -255,10 +257,7 @@ List<Offset> _findClearOrthogonalRoute({
   final _RoutePriorityQueue queue = _RoutePriorityQueue();
 
   Offset pointForIndex(int pointIndex) {
-    return Offset(
-      sortedXs[pointIndex % width],
-      sortedYs[pointIndex ~/ width],
-    );
+    return Offset(sortedXs[pointIndex % width], sortedYs[pointIndex ~/ width]);
   }
 
   Iterable<int> neighborPoints(int pointIndex) sync* {
@@ -611,7 +610,8 @@ class _RoutePriorityQueue {
       final int left = (index * 2) + 1;
       if (left >= _entries.length) break;
       final int right = left + 1;
-      final int child = right < _entries.length &&
+      final int child =
+          right < _entries.length &&
               _entries[right].distance < _entries[left].distance
           ? right
           : left;
@@ -655,11 +655,6 @@ class ConnectionPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
-      ..color = selected ? Colors.white : color
-      ..strokeWidth = selected ? 4 : 2
-      ..style = PaintingStyle.stroke;
-
     final List<Offset> points = buildConnectionPolyline(
       start: start,
       end: end,
@@ -672,10 +667,22 @@ class ConnectionPainter extends CustomPainter {
       obstacles: obstacles,
       existingPolylines: existingPolylines,
     );
-    final Path path = Path()..moveTo(points.first.dx, points.first.dy);
-    for (final Offset point in points.skip(1)) {
-      path.lineTo(point.dx, point.dy);
-    }
+    if (points.length < 2) return;
+    final Path path = buildRoundedConnectionPath(points);
+    final Paint underlay = Paint()
+      ..color = Colors.black.withValues(alpha: selected ? 0.8 : 0.58)
+      ..strokeWidth = selected ? 7 : 5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+    final Paint paint = Paint()
+      ..color = selected ? Colors.white : color
+      ..strokeWidth = selected ? 3.5 : 2.2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawPath(path, underlay);
     canvas.drawPath(path, paint);
   }
 
@@ -694,4 +701,38 @@ class ConnectionPainter extends CustomPainter {
         obstacles != oldDelegate.obstacles ||
         existingPolylines != oldDelegate.existingPolylines;
   }
+}
+
+Path buildRoundedConnectionPath(
+  List<Offset> points, {
+  double cornerRadius = 10,
+}) {
+  final Path path = Path();
+  if (points.isEmpty) return path;
+  path.moveTo(points.first.dx, points.first.dy);
+  if (points.length == 1) return path;
+
+  for (int index = 1; index < points.length - 1; index++) {
+    final Offset previous = points[index - 1];
+    final Offset corner = points[index];
+    final Offset next = points[index + 1];
+    final Offset incoming = corner - previous;
+    final Offset outgoing = next - corner;
+    final double incomingLength = incoming.distance;
+    final double outgoingLength = outgoing.distance;
+    if (incomingLength < 0.001 || outgoingLength < 0.001) {
+      continue;
+    }
+    final double radius = math.min(
+      cornerRadius,
+      math.min(incomingLength / 2, outgoingLength / 2),
+    );
+    final Offset before = corner - (incoming / incomingLength) * radius;
+    final Offset after = corner + (outgoing / outgoingLength) * radius;
+    path
+      ..lineTo(before.dx, before.dy)
+      ..quadraticBezierTo(corner.dx, corner.dy, after.dx, after.dy);
+  }
+  path.lineTo(points.last.dx, points.last.dy);
+  return path;
 }
