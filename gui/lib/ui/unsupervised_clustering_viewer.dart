@@ -606,6 +606,10 @@ class _ClusteringPainter extends CustomPainter {
     _SceneTransform transform,
     List<_GaussianSlice> slices,
   ) {
+    for (final _GaussianSlice slice in slices) {
+      if (slice.visibility < 0.015 || slice.radiusScale <= 0.01) continue;
+      _drawGaussianVolume(canvas, transform, slice);
+    }
     final List<_MeshTriangle> triangles = <_MeshTriangle>[];
     for (final _GaussianSlice slice in slices) {
       if (slice.visibility < 0.015 || slice.radiusScale <= 0.01) continue;
@@ -640,9 +644,9 @@ class _ClusteringPainter extends CustomPainter {
         ..close();
       final double depthShade = ((triangle.depth + 1.5) / 3).clamp(0.0, 1.0);
       final double alpha =
-          ((0.16 + depthShade * 0.22) * triangle.slice.visibility).clamp(
+          ((0.22 + depthShade * 0.28) * triangle.slice.visibility).clamp(
             0,
-            0.42,
+            0.55,
           );
       canvas.drawPath(
         path,
@@ -654,12 +658,48 @@ class _ClusteringPainter extends CustomPainter {
         path,
         Paint()
           ..color = triangle.slice.color.withValues(
-            alpha: (0.24 * triangle.slice.visibility).clamp(0, 0.32),
+            alpha: (0.38 * triangle.slice.visibility).clamp(0, 0.46),
           )
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.45,
+          ..strokeWidth = 0.7,
       );
     }
+  }
+
+  void _drawGaussianVolume(
+    Canvas canvas,
+    _SceneTransform transform,
+    _GaussianSlice slice,
+  ) {
+    final _ScreenPoint center = transform.project(slice.mean);
+    final List<List<double>> l = _cholesky3(slice.covariance);
+    final List<double> projectedRadii = <double>[];
+    for (int axis = 0; axis < 3; axis++) {
+      final _Vec3 extent =
+          _Vec3(l[0][axis], l[1][axis], l[2][axis]) * (2 * slice.radiusScale);
+      projectedRadii.add(
+        (transform.project(slice.mean + extent).offset - center.offset)
+            .distance,
+      );
+    }
+    final double radius = math.max(
+      18,
+      projectedRadii.fold<double>(0, math.max),
+    );
+    final double alpha = (0.48 * slice.visibility).clamp(0.0, 0.5);
+    canvas.drawCircle(
+      center.offset,
+      radius,
+      Paint()
+        ..shader = RadialGradient(
+          colors: <Color>[
+            slice.color.withValues(alpha: alpha),
+            slice.color.withValues(alpha: alpha * 0.55),
+            slice.color.withValues(alpha: 0),
+          ],
+          stops: const <double>[0, 0.58, 1],
+        ).createShader(Rect.fromCircle(center: center.offset, radius: radius)),
+    );
   }
 
   List<_ProjectedObservation> _drawObservations(
