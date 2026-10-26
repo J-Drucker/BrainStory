@@ -3611,7 +3611,6 @@ class CanvasLogic {
           value: 'algorithm',
           child: Text('Review Algorithm'),
         ),
-        const PopupMenuItem<String>(value: 'export', child: Text('Export')),
         if (showSelectedCombination)
           PopupMenuItem<String>(
             value: 'combine_selected',
@@ -3763,14 +3762,6 @@ class CanvasLogic {
           node: node,
           update: update,
           initialTabIndex: 1,
-        );
-        return;
-      case 'export':
-        _openNodeEditor(
-          context: context,
-          node: node,
-          update: update,
-          startInExportMode: true,
         );
         return;
       case 'edit':

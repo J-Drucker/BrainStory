@@ -236,7 +236,6 @@ class NodeRegistry {
     NodeRegistryEntry(
       group: NodeGroup.endpoints,
       create: () => ExportNodeType(),
-      visible: false,
     ),
     NodeRegistryEntry(
       group: NodeGroup.endpoints,

@@ -799,6 +799,10 @@ void main() {
         logic.availableNodes.map((NodeType type) => type.title),
         isNot(contains('Interactive Artifact Detection')),
       );
+      expect(
+        logic.availableNodes.map((NodeType type) => type.title),
+        contains('Export'),
+      );
     },
   );
 
@@ -908,7 +912,7 @@ void main() {
     expect(find.byType(PopupMenuItem<String>), findsNothing);
   });
 
-  testWidgets('selected node menu does not duplicate run all', (
+  testWidgets('selected node menu omits graph-wide and export actions', (
     WidgetTester tester,
   ) async {
     final CanvasLogic logic = CanvasLogic();
@@ -932,6 +936,13 @@ void main() {
     expect(find.text('Run All'), findsOneWidget);
     expect(find.text('Run This Step'), findsOneWidget);
     expect(find.text('Run From Start'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(PopupMenuItem<String>),
+        matching: find.text('Export'),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('recent jobs is collapsible below the project controls', (
