@@ -6,10 +6,30 @@ import 'package:brainstory_gui/nodes/node_registry.dart';
 import 'package:brainstory_gui/nodes/node_type.dart';
 import 'package:brainstory_gui/platform/brainstory_engine.dart';
 import 'package:brainstory_gui/ui/unsupervised_clustering_viewer.dart';
+import 'package:brainstory_gui/ui/condition_palette.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('condition colors stay stable when dataset label order changes', () {
+    expect(
+      conditionColor('hit', const <String>['hit', 'miss']),
+      conditionColor('hit', const <String>['miss', 'hit']),
+    );
+    expect(
+      conditionColor('miss', const <String>['hit', 'miss']),
+      conditionColor('miss', const <String>['miss', 'hit']),
+    );
+    expect(
+      conditionColor('hit', const <String>['hit', 'miss']),
+      conditionPalette[0],
+    );
+    expect(
+      conditionColor('miss', const <String>['hit', 'miss']),
+      conditionPalette[1],
+    );
+  });
+
   test('Gaussian mixture is a visible clustering node', () {
     final NodeRegistryEntry entry = NodeRegistry.entries.firstWhere(
       (NodeRegistryEntry item) => item.create() is GaussianMixtureNodeType,

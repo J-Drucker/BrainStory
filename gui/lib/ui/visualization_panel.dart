@@ -14,6 +14,7 @@ import '../nodes/sleep_staging_node.dart';
 import '../nodes/edit_channels_node.dart';
 import '../nodes/segmentation_node.dart';
 import 'canvas_logic.dart';
+import 'condition_palette.dart';
 import 'bridge_viewer.dart';
 import 'channel_positions_dialog.dart';
 import 'ica_viewer.dart';
@@ -3293,6 +3294,14 @@ class _PsdChart extends StatelessWidget {
         (params['psd_view_max_hz'] as num?)?.toDouble() ?? 40.0;
     final bool logY = params['psd_view_log_y'] as bool? ?? false;
     final List<_PsdTraceRecord> traceRecords = <_PsdTraceRecord>[];
+    final Set<String> psdConditionLabels = datasets
+        .expand(
+          (Dataset dataset) =>
+              dataset.segmentedTimeSeries?.segments ??
+              const <SignalSegmentData>[],
+        )
+        .map(_normalizedSegmentLabel)
+        .toSet();
     final Map<String, Color> conditionColors = <String, Color>{};
     for (int datasetIndex = 0; datasetIndex < datasets.length; datasetIndex++) {
       final Dataset dataset = datasets[datasetIndex];
@@ -3306,9 +3315,9 @@ class _PsdChart extends StatelessWidget {
             _psdConditionSegmentPowers(dataset, spectrum, channelIndex);
         for (final MapEntry<String, List<List<double>>> entry
             in conditionPowers.entries) {
-          final Color conditionColor = conditionColors.putIfAbsent(
+          final Color traceConditionColor = conditionColors.putIfAbsent(
             entry.key,
-            () => _segmentLabelColor(entry.key, conditionColors.length),
+            () => conditionColor(entry.key, psdConditionLabels),
           );
           for (
             int segmentIndex = 0;
@@ -3337,7 +3346,7 @@ class _PsdChart extends StatelessWidget {
                 series: _SeriesData(
                   label: dataset.label,
                   color: psdConditionTraceColor(
-                    conditionColor,
+                    traceConditionColor,
                     (datasetIndex * channelCount * entry.value.length) +
                         (channelIndex * entry.value.length) +
                         segmentIndex,
@@ -4231,13 +4240,17 @@ List<_SegmentLabelGroup> _segmentGroupsByLabel(
         : segment.label.trim();
     grouped.putIfAbsent(label, () => <SignalSegmentData>[]).add(segment);
   }
-  int index = 0;
-  return grouped.entries
+  final List<String> labels = grouped.keys.toList(growable: false)..sort();
+  return labels
+      .map(
+        (String label) =>
+            MapEntry<String, List<SignalSegmentData>>(label, grouped[label]!),
+      )
       .map((MapEntry<String, List<SignalSegmentData>> entry) {
         return _SegmentLabelGroup(
           label: entry.key,
           segments: entry.value,
-          color: _segmentLabelColor(entry.key, index++),
+          color: conditionColor(entry.key, labels),
         );
       })
       .toList(growable: false);
@@ -5956,22 +5969,6 @@ double _ceilToStep(double value, double step) {
     return value;
   }
   return (value / step).ceilToDouble() * step;
-}
-
-Color _segmentLabelColor(String label, int index) {
-  const List<Color> palette = <Color>[
-    Color(0xFFFFD23F),
-    Color(0xFF2F80ED),
-    Color(0xFF34D399),
-    Color(0xFFFF5C8A),
-    Color(0xFFFF8A3D),
-    Color(0xFF8B5CF6),
-    Color(0xFF00C2A8),
-    Color(0xFFE84855),
-    Color(0xFF7DD3FC),
-    Color(0xFFA3E635),
-  ];
-  return palette[index % palette.length];
 }
 
 Color _channelOverlayColor(Color baseColor, int channelIndex) {

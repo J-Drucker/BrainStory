@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../model/data_artifacts.dart';
 import '../model/dataset.dart';
+import 'condition_palette.dart';
 
 class UnsupervisedClusteringViewer extends StatefulWidget {
   const UnsupervisedClusteringViewer({super.key, required this.dataset});
@@ -580,21 +581,21 @@ class _ClusteringPainter extends CustomPainter {
       final double major = math.sqrt(math.max(1.0e-9, (trace + root) / 2));
       final double minor = math.sqrt(math.max(1.0e-9, (trace - root) / 2));
       final double angle = 0.5 * math.atan2(2 * b, a - d);
-      final double scale = transform.scenePixelsPerUnit * 2 * slice.radiusScale;
+      final double scale = transform.scenePixelsPerUnit * 4 * slice.radiusScale;
       canvas.save();
       canvas.translate(center.offset.dx, center.offset.dy);
       canvas.rotate(-angle);
-      for (int layer = 12; layer >= 1; layer--) {
-        final double fraction = layer / 12;
+      for (int layer = 40; layer >= 1; layer--) {
+        final double fraction = layer / 40;
         final double alpha =
-            (0.035 + (1 - fraction) * 0.075) * slice.visibility;
+            _gaussianAlphaAtStandardDeviations(4 * fraction) * slice.visibility;
         canvas.drawOval(
           Rect.fromCenter(
             center: Offset.zero,
             width: major * scale * 2 * fraction,
             height: minor * scale * 2 * fraction,
           ),
-          Paint()..color = slice.color.withValues(alpha: alpha.clamp(0, 0.2)),
+          Paint()..color = slice.color.withValues(alpha: alpha.clamp(0, 0.5)),
         );
       }
       canvas.restore();
@@ -642,12 +643,7 @@ class _ClusteringPainter extends CustomPainter {
         ..lineTo(triangle.b.offset.dx, triangle.b.offset.dy)
         ..lineTo(triangle.c.offset.dx, triangle.c.offset.dy)
         ..close();
-      final double depthShade = ((triangle.depth + 1.5) / 3).clamp(0.0, 1.0);
-      final double alpha =
-          ((0.22 + depthShade * 0.28) * triangle.slice.visibility).clamp(
-            0,
-            0.55,
-          );
+      final double alpha = (0.1 * triangle.slice.visibility).clamp(0, 0.1);
       canvas.drawPath(
         path,
         Paint()
@@ -658,7 +654,7 @@ class _ClusteringPainter extends CustomPainter {
         path,
         Paint()
           ..color = triangle.slice.color.withValues(
-            alpha: (0.38 * triangle.slice.visibility).clamp(0, 0.46),
+            alpha: (0.14 * triangle.slice.visibility).clamp(0, 0.14),
           )
           ..style = PaintingStyle.stroke
           ..strokeWidth = 0.7,
@@ -676,7 +672,7 @@ class _ClusteringPainter extends CustomPainter {
     final List<double> projectedRadii = <double>[];
     for (int axis = 0; axis < 3; axis++) {
       final _Vec3 extent =
-          _Vec3(l[0][axis], l[1][axis], l[2][axis]) * (2 * slice.radiusScale);
+          _Vec3(l[0][axis], l[1][axis], l[2][axis]) * (4 * slice.radiusScale);
       projectedRadii.add(
         (transform.project(slice.mean + extent).offset - center.offset)
             .distance,
@@ -686,18 +682,19 @@ class _ClusteringPainter extends CustomPainter {
       18,
       projectedRadii.fold<double>(0, math.max),
     );
-    final double alpha = (0.48 * slice.visibility).clamp(0.0, 0.5);
+    final double centerAlpha = (0.48 * slice.visibility).clamp(0.0, 0.5);
+    final double threeSdAlpha = (0.1 * slice.visibility).clamp(0.0, 0.1);
     canvas.drawCircle(
       center.offset,
       radius,
       Paint()
         ..shader = RadialGradient(
           colors: <Color>[
-            slice.color.withValues(alpha: alpha),
-            slice.color.withValues(alpha: alpha * 0.55),
+            slice.color.withValues(alpha: centerAlpha),
+            slice.color.withValues(alpha: threeSdAlpha),
             slice.color.withValues(alpha: 0),
           ],
-          stops: const <double>[0, 0.58, 1],
+          stops: const <double>[0, 0.75, 1],
         ).createShader(Rect.fromCircle(center: center.offset, radius: radius)),
     );
   }
@@ -777,8 +774,7 @@ class _ClusteringPainter extends CustomPainter {
             .toSet()
             .toList(growable: false)
           ..sort();
-    final int index = math.max(0, values.indexOf(value));
-    return _clusterPointColor(index, values.length);
+    return conditionColor(value, values);
   }
 
   void _drawAssessmentLegend(Canvas canvas, Size size) {
@@ -908,7 +904,7 @@ class _ClusteringPainter extends CustomPainter {
           math.sin(phi),
           math.cos(phi) * math.sin(theta),
         ];
-        final double scale = 2 * slice.radiusScale;
+        final double scale = 3 * slice.radiusScale;
         return slice.mean +
             _Vec3(
               scale * (l[0][0] * sphere[0]),
@@ -1050,7 +1046,7 @@ class _SceneTransform {
         axis >= slice.covariance[axis].length) {
       return 0;
     }
-    return 2 *
+    return 4 *
         slice.radiusScale *
         math.sqrt(math.max(0, slice.covariance[axis][axis]));
   }
@@ -1179,6 +1175,14 @@ _Range _rangeOf(Iterable<double> values) {
 }
 
 double _pingPong(double value) => value <= 0.5 ? value * 2 : (1 - value) * 2;
+
+double _gaussianAlphaAtStandardDeviations(double standardDeviations) {
+  final double sd = standardDeviations.clamp(0.0, 4.0);
+  if (sd <= 3) {
+    return 0.48 + (0.1 - 0.48) * (sd / 3);
+  }
+  return 0.1 * (4 - sd);
+}
 
 Color _clusterColor(int index, int count) {
   final double position = count <= 1 ? 0.5 : index / (count - 1);
